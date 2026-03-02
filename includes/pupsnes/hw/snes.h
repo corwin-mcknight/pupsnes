@@ -22,4 +22,4 @@ class SNES {
     time_master_t getMasterTime() const { return time_now; }
     void setMasterTime(time_master_t t) { time_now = t; }
 };
-}; // namespace pupsnes
+} // namespace pupsnes

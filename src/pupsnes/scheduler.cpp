@@ -59,13 +59,13 @@ void Scheduler::step() {
     switch (event.subphase) {
     case SchedulerPhase::CommitComplete:
     case SchedulerPhase::WakeSample:
-        event.source->on_event(event);
+        event.source->onEvent(event);
         break;
     case SchedulerPhase::Run: {
         if (event.type == EventType::DeviceRun) {
             event.source->tick(computeBudget(event.time));
         } else {
-            event.source->on_event(event);
+            event.source->onEvent(event);
         }
         break;
     }
@@ -109,4 +109,4 @@ void Scheduler::debugPrintEventQueue() {
     }
 }
 
-}; // namespace pupsnes
+} // namespace pupsnes

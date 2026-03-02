@@ -15,4 +15,4 @@ typedef uint64_t time_apu_t;
 // 24-bit SNES address. 0xWWXXYYZZ where WW is invalid, XX is bank, YYZZ is address within bank.
 typedef uint32_t snes_addr_t;
 
-}; // namespace pupsnes
+} // namespace pupsnes

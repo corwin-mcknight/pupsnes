@@ -25,8 +25,8 @@ class Device {
     Device(SNES *snes) : snes(snes) {}
     virtual ~Device() = default;
     virtual TickResult tick(time_master_delta_t budget) = 0;
-    virtual void on_event(const SchedulerEvent &event) = 0;
+    virtual void onEvent(const SchedulerEvent &event) = 0;
 
-    time_master_t get_time() const { return time_now; }
+    time_master_t getTime() const { return time_now; }
 };
-}; // namespace pupsnes
+} // namespace pupsnes

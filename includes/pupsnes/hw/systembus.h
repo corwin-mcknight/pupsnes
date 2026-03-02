@@ -20,4 +20,4 @@ class SystemBus {
     void getDeviceAtAddress(snes_addr_t address);
     time_master_t getBusAccessTiming(snes_addr_t address);
 };
-}; // namespace pupsnes
+} // namespace pupsnes

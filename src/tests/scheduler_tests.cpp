@@ -2,6 +2,7 @@
 
 #include "pupsnes/hw/device.h"
 #include "pupsnes/hw/scheduler.h"
+#include "scheduler_test_access.h"
 
 #include <memory>
 #include <vector>
@@ -17,7 +18,7 @@ class FakeDevice : public pupsnes::Device {
         return {budget, pupsnes::TickStopReason::BudgetExhausted};
     }
 
-    void on_event(const pupsnes::SchedulerEvent &) override { ++event_calls; }
+    void onEvent(const pupsnes::SchedulerEvent &) override { ++event_calls; }
 
     int tick_calls = 0;
     int event_calls = 0;

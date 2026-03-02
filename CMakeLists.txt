@@ -100,7 +100,6 @@ if(BUILD_TESTING)
   add_executable(pupsnes_tests ${PUPSNES_TEST_SOURCES})
   target_compile_features(pupsnes_tests PUBLIC cxx_std_20)
   target_include_directories(pupsnes_tests PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/includes)
-  target_compile_definitions(pupsnes_tests PRIVATE PUPSNES_TESTING=1)
   target_link_libraries(pupsnes_tests PRIVATE pupsnes Catch2::Catch2WithMain)
   pupsnes_apply_warnings(pupsnes_tests)
 
