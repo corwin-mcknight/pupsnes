@@ -1,7 +1,8 @@
 #include "pupsnes/hw/snes.h"
 #include "pupsnes/hw/scheduler.h"
 
-pupsnes::SNES::SNES() { scheduler = new Scheduler(this); }
+pupsnes::SNES::SNES() : scheduler(std::make_unique<Scheduler>(this)) {}
+pupsnes::SNES::~SNES() = default;
 
 void pupsnes::SNES::debugPrintInfo() {
     printf("SNES Info:\n");

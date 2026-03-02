@@ -76,7 +76,7 @@ function(pupsnes_apply_warnings target)
     -Wall
     -Wextra
     -Wpedantic
-    -Wconversation
+    -Wconversion
     -Wshadow
     -Wnull-dereference
     -Wdouble-promotion

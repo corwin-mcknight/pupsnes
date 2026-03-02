@@ -89,15 +89,15 @@ TEST_CASE("Scheduler step runs devices scheduled for Run", "[unit]") {
 
 TEST_CASE("Scheduler processes 10 DeviceRun events in chronological order", "[unit]") {
     pupsnes::SNES snes;
-    constexpr int N = 10;
+    constexpr std::size_t N = 10;
 
     std::vector<std::unique_ptr<FakeDevice>> devices;
     devices.reserve(N);
-    for (int i = 0; i < N; ++i) {
+    for (std::size_t i = 0; i < N; ++i) {
         devices.push_back(std::make_unique<FakeDevice>(&snes));
     }
 
-    for (int i = 0; i < N; ++i) {
+    for (std::size_t i = 0; i < N; ++i) {
         snes.scheduler->scheduleEvent(static_cast<pupsnes::time_master_t>((i + 1) * 10),
                                       devices[i].get(), pupsnes::SchedulerPhase::Run,
                                       pupsnes::EventType::DeviceRun);
@@ -105,7 +105,7 @@ TEST_CASE("Scheduler processes 10 DeviceRun events in chronological order", "[un
 
     REQUIRE(pupsnes::SchedulerTestAccess::eventQueueSize(*snes.scheduler) == N);
 
-    for (int i = 0; i < N; ++i) {
+    for (std::size_t i = 0; i < N; ++i) {
         snes.scheduler->step();
         // Time must advance to each event's timestamp.
         REQUIRE(snes.time_now == static_cast<pupsnes::time_master_t>((i + 1) * 10));
@@ -118,28 +118,28 @@ TEST_CASE("Scheduler processes 10 DeviceRun events in chronological order", "[un
 
 TEST_CASE("Scheduler budget is capped by next event time with 10 devices", "[unit]") {
     pupsnes::SNES snes;
-    constexpr int N = 10;
+    constexpr std::size_t N = 10;
     // Spacing smaller than MAX_CYCLES_STEP so the cap is exercised.
     constexpr pupsnes::time_master_t spacing = 3;
 
     std::vector<std::unique_ptr<FakeDevice>> devices;
     devices.reserve(N);
-    for (int i = 0; i < N; ++i) {
+    for (std::size_t i = 0; i < N; ++i) {
         devices.push_back(std::make_unique<FakeDevice>(&snes));
     }
 
-    for (int i = 0; i < N; ++i) {
+    for (std::size_t i = 0; i < N; ++i) {
         snes.scheduler->scheduleEvent(static_cast<pupsnes::time_master_t>((i + 1) * spacing),
                                       devices[i].get(), pupsnes::SchedulerPhase::Run,
                                       pupsnes::EventType::DeviceRun);
     }
 
-    for (int i = 0; i < N; ++i) {
+    for (std::size_t i = 0; i < N; ++i) {
         snes.scheduler->step();
     }
 
     // The first N-1 devices must have been capped at `spacing` cycles.
-    for (int i = 0; i < N - 1; ++i) {
+    for (std::size_t i = 0; i < N - 1; ++i) {
         REQUIRE(devices[i]->tick_calls == 1);
         REQUIRE(devices[i]->last_budget == spacing);
     }
@@ -150,28 +150,28 @@ TEST_CASE("Scheduler budget is capped by next event time with 10 devices", "[uni
 
 TEST_CASE("Scheduler processes 10 DeviceRun events at the same timestamp", "[unit]") {
     pupsnes::SNES snes;
-    constexpr int N = 10;
+    constexpr std::size_t N = 10;
     constexpr pupsnes::time_master_t T = 42;
 
     std::vector<std::unique_ptr<FakeDevice>> devices;
     devices.reserve(N);
-    for (int i = 0; i < N; ++i) {
+    for (std::size_t i = 0; i < N; ++i) {
         devices.push_back(std::make_unique<FakeDevice>(&snes));
     }
 
-    for (int i = 0; i < N; ++i) {
+    for (std::size_t i = 0; i < N; ++i) {
         snes.scheduler->scheduleEvent(T, devices[i].get(), pupsnes::SchedulerPhase::Run,
                                       pupsnes::EventType::DeviceRun);
     }
 
-    for (int i = 0; i < N; ++i) {
+    for (std::size_t i = 0; i < N; ++i) {
         snes.scheduler->step();
     }
 
     // All same-time Run events must be dispatched and time must stay at T.
     REQUIRE(snes.time_now == T);
     REQUIRE(pupsnes::SchedulerTestAccess::eventQueueSize(*snes.scheduler) == 0);
-    for (int i = 0; i < N; ++i) {
+    for (std::size_t i = 0; i < N; ++i) {
         REQUIRE(devices[i]->tick_calls == 1);
         // Same-time Run events are not hazards to each other (CommitComplete/WakeSample
         // already settled via subphase ordering), so each device still gets full budget.
@@ -182,16 +182,16 @@ TEST_CASE("Scheduler processes 10 DeviceRun events at the same timestamp", "[uni
 TEST_CASE("Scheduler dispatches CommitComplete and WakeSample to on_event for 10 devices",
           "[unit]") {
     pupsnes::SNES snes;
-    constexpr int N = 10;
+    constexpr std::size_t N = 10;
 
     std::vector<std::unique_ptr<FakeDevice>> devices;
     devices.reserve(N);
-    for (int i = 0; i < N; ++i) {
+    for (std::size_t i = 0; i < N; ++i) {
         devices.push_back(std::make_unique<FakeDevice>(&snes));
     }
 
     // Assign phases in rotation: CommitComplete, WakeSample, Run, repeat.
-    for (int i = 0; i < N; ++i) {
+    for (std::size_t i = 0; i < N; ++i) {
         pupsnes::SchedulerPhase phase;
         if (i % 3 == 0) {
             phase = pupsnes::SchedulerPhase::CommitComplete;
@@ -204,13 +204,13 @@ TEST_CASE("Scheduler dispatches CommitComplete and WakeSample to on_event for 10
                                       devices[i].get(), phase, pupsnes::EventType::DeviceRun);
     }
 
-    for (int i = 0; i < N; ++i) {
+    for (std::size_t i = 0; i < N; ++i) {
         snes.scheduler->step();
     }
 
     REQUIRE(pupsnes::SchedulerTestAccess::eventQueueSize(*snes.scheduler) == 0);
 
-    for (int i = 0; i < N; ++i) {
+    for (std::size_t i = 0; i < N; ++i) {
         if (i % 3 == 2) {
             // Run phase: tick() must be called, on_event() must not.
             REQUIRE(devices[i]->tick_calls == 1);

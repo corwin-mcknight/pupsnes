@@ -1,7 +1,7 @@
 #pragma once
 
 #include "pupsnes/types.h"
-#include <vector>
+#include <memory>
 
 namespace pupsnes {
 class Scheduler;
@@ -12,9 +12,10 @@ class SNES {
   public:
     time_master_t time_now = 0;
     time_apu_t time_apu_now = 0;
-    Scheduler *scheduler = nullptr;
+    std::unique_ptr<Scheduler> scheduler;
 
     SNES();
+    ~SNES();
 
     void debugPrintInfo();
 
