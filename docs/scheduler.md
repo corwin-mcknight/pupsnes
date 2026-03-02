@@ -1,0 +1,515 @@
+# Scheduler
+
+This document specifies the emulator scheduler: how time advances, how devices execute, how external effects become observable, and how we guarantee determinism across runs and save-states.
+
+The scheduler is the single authority for simulated time. Devices never “run ahead” of global time, and no device may observe an external effect earlier than the moment it becomes observable.
+
+This design is intended for cycle-accurate / event-accurate emulation where bus contention, open bus behavior, DMA, IRQ sampling, MMIO timing, and other cross-device interactions must be modeled without “time travel” artifacts.
+
+---
+
+## Goals
+
+1. **Single source of truth for time**
+   - Only the scheduler advances global time.
+   - Global time is measured in master clock cycles.
+2. **No time travel**
+   - No device can observe any external effect before it becomes observable.
+   - No device can commit an external effect “in the past” relative to other devices.
+3. **Determinism**
+   - Given the same initial state, the same input stream, and the same configuration, the emulator produces identical results:
+     - identical event order
+     - identical internal transitions
+     - identical outputs
+   - Reloading a save-state resumes with the same event ordering and produces the same continuation behavior.
+4. **Separation of concerns**
+   - Devices do not directly call into other devices.
+   - Devices interact only through connectors (wires, buses, latches, etc.) that obey scheduler semantics.
+5. **Bounded execution**
+   - Devices are given a budget (maximum safe time to run) that never crosses a hazard boundary.
+   - Devices must not exceed their budget.
+   - The scheduler detects and reports zero-time livelocks (bugs).
+
+---
+
+## Key definitions
+
+### Master time (t)
+
+Global time in integer master clock cycles. There is no fractional time. If a real phenomenon behaves “analog” or “sub-cycle,” it is approximated via discrete rules (e.g., open-bus decay after N cycles).
+
+### Device
+
+A simulated hardware unit (CPU, PPU, APU, DMA engine, cartridge, etc.) that:
+- has internal state
+- interacts with connectors
+- is schedulable by the kernel
+
+### External effect
+
+Any effect that can be observed by another device or can change another device’s future behavior. Examples:
+- bus transactions (address/data/control)
+- MMIO reads/writes
+- IRQ/NMI lines changing level/edge
+- DMA stealing cycles or performing transfers
+- latches, edge-triggered behavior
+- any connector that crosses device boundaries
+
+### Internal operation
+
+Any computation that is not externally visible until a later external effect is committed. Internal operations may run without preemption within the provided budget.
+
+### Hazard boundary
+
+A time boundary past which a device may not run without returning to the scheduler, because something external could change. Common hazards:
+- the next scheduled event time
+- device-local timing boundary (e.g., PPU dot boundary, timer tick boundary)
+- completion of a pending bus request
+- an external sampling point (e.g., IRQ sample edge)
+
+---
+
+## Core invariants
+
+1. Only the scheduler advances time.
+2. No device observes an external effect “early.”
+3. Every external read/write is represented by an event (token) with a defined observability time.
+4. Same-timestamp determinism requires stable tie-breakers.
+5. Devices cannot interact directly; all cross-device behavior must go through connectors or scheduled events.
+6. A device may not execute past its granted budget.
+7. The system must not livelock at the same timestamp (zero-time infinite work).
+
+---
+
+## High-level model: discrete-event kernel
+
+The emulator runs as a discrete-event simulation:
+- The scheduler maintains an event queue keyed by time and ordering rules.
+- The scheduler pops the next event(s), advances now to that event’s time, performs commit/wake work, and runs devices within safe budgets.
+- Devices yield back to the scheduler when:
+  - they exhaust budget,
+  - they must wait on an event token,
+  - they reach a device-local boundary,
+  - they must emit an external effect that requires scheduling.
+
+This approach avoids “tick everything every cycle” while preserving cycle-level correctness where it matters.
+
+---
+
+## Event ordering and determinism
+
+All events are totally ordered using a deterministic key:
+
+```
+(time,
+ subphase,
+ class_priority,
+ device_priority,
+ stable_seq)
+```
+
+**Field meanings**
+- `time`: master cycle timestamp when the event is processed / becomes observable
+- `subphase`: a strict ordering partition inside the same time (see Phases below)
+- `class_priority`: stable ordering between broad event categories (should be used sparingly)
+- `device_priority`: stable ordering within a class for specific devices (e.g., fixed ID)
+- `stable_seq`: monotonic sequence number assigned at event creation (stable across save/load)
+
+**Determinism requirements**
+- Every device has a stable numeric ID (not pointer-based).
+- Every event token has a stable ID (not pointer-based).
+- `stable_seq` is stored in save-states.
+- The event queue contents and ordering state are serialized in save-states.
+
+---
+
+## Phases inside a timestamp
+
+Within a single master cycle timestamp `T`, work is processed in explicit phases to prevent early observation and to produce a consistent ordering of effects.
+
+### Phase 1: Commit / Complete
+
+Purpose: make external effects observable.
+
+This phase applies all scheduled “becomes observable at time T” effects:
+- complete bus transactions (read data becomes valid, write commits)
+- release bus locks
+- commit staged connector writes
+- resolve event tokens and wake blockers
+
+Rules:
+- Commit must run before any device is allowed to sample the new external state.
+- If completing one event causes new same-time commits to be generated, they must also be committed before sampling.
+
+### Phase 2: Wake / Sample
+
+Purpose: devices observe external state at well-defined sampling points.
+
+This phase allows devices to:
+- sample shared lines (IRQ/NMI, status lines, etc.)
+- detect edges (if modeled)
+- update latched “input view” state derived from committed connectors
+
+Rules:
+- Sampling happens only after commit has quiesced.
+- Sampling does not consume time.
+- If sampling results in the creation of same-time completion work (rare but possible in some models), it must be committed before sampling continues.
+
+### Quiescence rule (Phase 1 & 2 loop)
+
+Phases 1 and 2 repeat until no new same-time work is created:
+
+1. Commit/Complete
+2. Wake/Sample
+
+(repeat) until stable
+
+This ensures that within timestamp `T`, all “observable at T” effects settle before devices proceed.
+
+### Phase 3: Run
+
+Purpose: devices consume time, executing internal operations and issuing external requests.
+
+During Run:
+- devices may execute internal logic up to their granted budget
+- devices may queue staged connector writes (not immediately visible)
+- devices may request external actions (bus reads/writes), which produce event tokens
+
+Rules:
+- Run is the only phase where time can be consumed.
+- Devices must not cross hazards within a single run slice.
+
+---
+
+## Device interface: ISchedulable
+
+Every device that can be scheduled implements the schedulable interface:
+
+```
+tick(budget)
+```
+
+The scheduler calls `tick(budget)` where:
+- `budget` is the maximum number of master cycles the device may safely consume
+- `budget` is chosen so the device cannot cross a hazard boundary
+
+`tick(budget)` returns:
+1. `consumed_cycles`: integer in `[0, budget]`
+2. wait token / event (optional): if the device is blocked waiting for an external event
+3. stop reason + metadata: why execution ended and what the scheduler should do next
+
+Device status is updated accordingly:
+- running (wants reschedule at a time)
+- blocked (waiting for token)
+- idle (no work until a future time or external wake)
+- error (contract violation, etc.)
+
+**Stop reasons (typical)**
+- `BudgetExhausted`: used entire budget; scheduler may reschedule later
+- `ReachedLocalBoundary`: hit device-internal boundary; scheduler schedules at that boundary
+- `BlockedOnToken(token_id)`: device must sleep until token resolves
+- `IssuedExternalRequest(token_id, observable_time)`: device requested bus/MMIO action and must block or yield
+- `NoWork`: device has nothing to do until something changes
+
+---
+
+## Budget calculation
+
+A device budget is always the maximum “safe” amount of time to execute without missing hazards:
+
+```
+budget = min(
+  next_event_time - now,
+  device_local_boundary_time - now
+)
+```
+
+- `next_event_time` is the time of the earliest event in the global queue that could affect external state.
+- `device_local_boundary_time` is the device’s next internal boundary (if applicable), e.g.:
+  - PPU dot / H/V boundary
+  - timer tick edge
+  - APU DSP frame boundary
+  - scheduled self-wake time
+
+Rules:
+- If `budget == 0`, the device must not be run in Phase 3; instead the scheduler should process same-time commit/wake work or advance time to the next event.
+- Devices are not allowed to consume time without being scheduled.
+- Devices must never consume more cycles than granted.
+
+---
+
+## External reads/writes and tokens
+
+### Two-phase model
+
+All external I/O is modeled as request + completion:
+
+1. **Request issued at time `t_request`**
+   - device asks for an external action (e.g., bus read)
+   - the interconnect determines:
+     - when it can start
+     - when it becomes observable / completes
+2. **Completion at time `t_complete`**
+   - data becomes valid (read)
+   - write commits
+   - locks are released
+   - token resolves and blockers are woken
+
+### Tokens
+
+An event token represents a pending external action. Tokens have:
+- stable token ID
+- type (bus read, bus write, DMA step, latch update, etc.)
+- scheduled completion time
+- payload / result slot (for read data, etc.)
+
+Tokens must be:
+- stable IDs (not pointers)
+- serializable
+- deterministically resolved at the scheduled time
+
+### Blocking rule
+
+If a device depends on the completion of an external action, it must:
+- return `BlockedOnToken(token_id)` and give up remaining budget
+
+This guarantees it cannot observe results early.
+
+---
+
+## Connectors and isolation
+
+Devices cannot directly access each other. They interact through connectors that obey scheduler semantics.
+
+**Examples of connectors**
+- single wire / line (IRQ, NMI, RDY, etc.)
+- tri-state bus (address/data/control)
+- latched signals
+- open-bus decay line state
+- clocked registers at boundaries
+
+### Connector rules
+
+Connectors support staged updates:
+- During Run, devices enqueue proposed changes to connectors.
+- During Commit, the scheduler (or interconnect) applies staged changes to become externally visible.
+- During Wake, devices sample connector states.
+
+This prevents “mid-run instantaneous visibility” and avoids ordering bugs.
+
+Important: not all connectors are the same. Some are best modeled as “staged until commit,” while others may be modeled as combinational-within-timestamp. If combinational behavior is allowed, it must still respect the commit/wake quiescence rule to prevent early sampling.
+
+### No direct references
+
+Devices are constructed with:
+- their own internal state
+- attached connector endpoints
+- stable IDs
+- no direct pointers to other devices
+
+This enforces modularity and prevents accidental time travel via direct calls.
+
+---
+
+## Same-timestamp work and quiescence
+
+Some effects happen at the same master cycle and must be processed without advancing time.
+
+**Correctness requirement**
+
+At time `T`:
+- all completions that become observable at `T` must commit before sampling at `T`
+- all sampling at `T` must occur before any device consumes time beyond `T`
+
+**Quiescence guardrails**
+
+Because Phase 1 and 2 can repeat at the same time, the scheduler must prevent livelock:
+- max commit/wake iterations per timestamp
+- if exceeded:
+  - break execution
+  - dump debug state (events at time, connectors changed, devices involved)
+  - treat as a bug in modeling (combinational oscillation, improper scheduling, etc.)
+
+---
+
+## Zero-time livelock detection
+
+Devices must not perform infinite work that consumes zero time.
+
+Rules:
+- A device may return `consumed_cycles == 0` only if:
+  - it blocked on a token, or
+  - it is purely reacting in same-time commit/wake, or
+  - it legitimately has no work
+- Repeated zero-time runs in Phase 3 are a bug.
+
+**Global guardrail**
+- The emulator enforces an upper bound on “events processed per frame” or “same-timestamp iterations.”
+- If exceeded, the scheduler stops and emits diagnostics.
+
+**Diagnostics should include**
+- current time
+- last N events processed
+- device stop reasons
+- pending tokens
+- staged connector writes
+- stable ordering keys for relevant events
+
+---
+
+## Save-state requirements
+
+To preserve determinism across load, a save-state must include:
+
+1. **Global scheduler state**
+   - now time
+   - event queue contents (all events, with ordering keys)
+   - `stable_seq` counter state
+   - any phase/subphase internal state if mid-timestamp
+2. **All tokens**
+   - token table (IDs, types, completion time, payload/result slots)
+   - blocked device lists (or device wait states referencing token IDs)
+3. **All connector state**
+   - committed visible values
+   - staged pending writes (if any exist at save moment)
+   - decay metadata (e.g., last-driven time per bit)
+   - bus lock ownership/tickets
+4. **All device state**
+   - internal registers/state
+   - run status (running/blocked/idle)
+   - continuation state (micro-step index, pipeline stage, etc.)
+   - next local boundary time if applicable
+
+If any of the above is omitted, you will get nondeterministic behavior after load.
+
+---
+
+## Recommended event classes
+
+To keep `class_priority` minimal and semantics-driven, use classes like:
+- `CommitComplete`: applies external observability changes
+- `WakeSample`: allows devices to sample
+- `RunSlice`: schedules device execution
+- `Boundary`: device-local timed boundaries (dot, timer, etc.)
+- `TokenComplete`: token completion events (often part of `CommitComplete`)
+
+The primary ordering should come from time + subphase. Avoid SNES-specific “CPU always before PPU” global rules unless you have a hard hardware reason; prefer to fix modeling at connector/token level instead.
+
+---
+
+## Practical device modeling guidance
+
+### CPU core
+
+Best modeled as:
+- internal micro-steps (not full instruction as a monolith)
+- bus actions issue tokens and block
+- interrupts are sampled at defined sampling points (Wake phase)
+
+Do not attempt “preempt mid-C++ stack.” Instead:
+- represent continuation explicitly in CPU state (micro-step index, pending operand, etc.)
+- yield at micro-steps and external boundaries
+
+### PPU
+
+Model boundaries explicitly:
+- dot boundaries
+- H/V counters
+- fetch phases if needed
+- output latching points
+
+It should run until its next boundary or hazard.
+
+### DMA
+
+DMA is inherently external:
+- it should schedule transfers as tokens or boundary events
+- it may affect bus lock availability and CPU wait states
+
+### Open bus / decay
+
+Open bus is modeled on connectors:
+- retain last-driven state per line/bit
+- track last-refresh time
+- decay after configured duration
+- resolution happens during commit (or via scheduled decay events), but must never be “observed early.”
+
+---
+
+## Debugging and traceability
+
+The scheduler should be able to produce a trace that answers:
+- Why did device X stop?
+- What token is it waiting on?
+- What became observable at time `T`?
+- What was the event ordering key at time `T`?
+- Which staged connector writes were committed?
+
+**Recommended debug features**
+- event log with ordering keys
+- token resolution log
+- per-device stop reason ring buffer
+- connector commit history (recent changes)
+- deterministic replay hooks (input log + save-states)
+
+---
+
+## Example timeline (conceptual)
+
+At time `T`:
+
+1. Commit completes a pending bus read token -> data becomes valid
+2. Wake allows CPU to sample “read complete” and update its input view
+3. Run gives CPU budget until next hazard; CPU consumes N cycles, issues next bus request token, blocks
+4. Scheduler advances time to the next event
+
+At no point does the CPU observe the read result before the token completion at `T`.
+
+---
+
+## Contract violations (bugs)
+
+The following are considered bugs and should assert/fail loudly in debug builds:
+- Device consumes more than its budget
+- Device performs an external read/write without producing a token/event
+- Device directly mutates another device’s state
+- Device repeatedly yields zero cycles in Run phase without blocking
+- Commit/wake loop fails to quiesce at a timestamp (oscillation)
+- Event IDs or ordering keys are pointer-derived / non-stable
+- Save-state omits required scheduler/token/connector state
+
+---
+
+## Summary
+
+This scheduler is designed to:
+- enforce strict time ownership (scheduler only)
+- prevent early observation via explicit external effect tokens
+- provide a deterministic total order for same-time work
+- isolate devices behind connectors
+- remain testable and reproducible across save/load
+
+The result is a robust foundation for high-accuracy behavior (bus contention, decay/open bus, DMA interactions) without relying on fragile “call order discipline” or allowing time-travel artifacts.
+
+---
+
+## Implementation status
+
+The following parts of this specification are implemented:
+
+- Event queue with `(time, subphase, type, seq)` ordering (simplified from the full 5-tuple; `class_priority` and `device_priority` are deferred until needed)
+- `Scheduler::step()`: pops next event, advances global time, dispatches to `Device::tick()` or `Device::on_event()` based on subphase
+- `Scheduler::computeBudget()`: `min(MAX_CYCLES_STEP, next_event_time - now)`
+- `Device` base class with `tick(budget)` returning `TickResult` and `on_event(event)`
+- `TickStopReason`: `BudgetExhausted`, `BlockedOnIO`
+- Three scheduler phases: CommitComplete, WakeSample, Run
+
+Not yet implemented:
+
+- Tokens and two-phase external I/O
+- Connectors and device isolation
+- Quiescence loop (commit/wake repeat until stable)
+- Zero-time livelock detection
+- Save-state serialization
+- Device-local boundary time in budget calculation
+- Stable device IDs (currently uses pointers)

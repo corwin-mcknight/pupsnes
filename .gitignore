@@ -1,0 +1,62 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors / IDEs
+.vscode/
+.idea/
+*.iml
+*.swp
+*.swo
+.claude
+
+# CMake / build artifacts
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+compile_commands.json
+CTestTestfile.cmake
+*.ninja
+*.ninja_deps
+*.ninja_log
+build/
+build*/
+cmake-build-*/
+out/
+
+# Conan
+conan.lock
+conanbuildinfo.*
+conaninfo.txt
+conan*.cmake
+conan_toolchain.cmake
+generators/
+
+# Clang / tooling caches
+.cache/
+.clangd/
+
+# Tests / coverage
+Testing/
+*.gcda
+*.gcno
+*.gcov
+*.profraw
+*.profdata
+
+# Binaries / objects
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dylib
+*.dll
+*.exe
+*.out
+*.app
+*.dSYM
+
+# Logs
+*.log

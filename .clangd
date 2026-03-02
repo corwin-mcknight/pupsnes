@@ -1,0 +1,12 @@
+CompileFlags:
+  CompilationDatabase: build/dev
+  Add:
+    - -std=c++20
+  Remove:
+    - -Werror
+
+Index:
+  Background: Build
+
+Diagnostics:
+  UnusedIncludes: Strict
