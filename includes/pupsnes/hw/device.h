@@ -1,10 +1,12 @@
 #pragma once
 
-#include "pupsnes/hw/snes.h"
 #include "pupsnes/types.h"
+
+#include <cstdint>
 
 namespace pupsnes {
 
+class SNES;
 struct SchedulerEvent;
 
 enum TickStopReason : uint8_t {
@@ -18,15 +20,15 @@ struct TickResult {
 
 class Device {
   protected:
-    time_master_t time_now = 0;
+    time_master_t local_time = 0;
     SNES *snes = nullptr;
 
   public:
     Device(SNES *snes) : snes(snes) {}
     virtual ~Device() = default;
-    virtual TickResult tick(time_master_delta_t budget) = 0;
+    [[nodiscard]] virtual TickResult tick(time_master_delta_t budget) = 0;
     virtual void onEvent(const SchedulerEvent &event) = 0;
 
-    time_master_t getTime() const { return time_now; }
+    [[nodiscard]] time_master_t getTime() const { return local_time; }
 };
 } // namespace pupsnes

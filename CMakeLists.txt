@@ -2,42 +2,34 @@ cmake_minimum_required(VERSION 3.23)
 
 project(pupsnes LANGUAGES CXX)
 
-file(GLOB_RECURSE PUPSNES_LIB_SOURCES CONFIGURE_DEPENDS
-  RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
-  "src/pupsnes/*.c"
-  "src/pupsnes/*.cc"
-  "src/pupsnes/*.cpp"
-  "src/pupsnes/*.cxx"
+set(PUPSNES_LIB_SOURCES
+  src/pupsnes/scheduler.cpp
+  src/pupsnes/snes.cpp
 )
 
-file(GLOB_RECURSE PUPSNES_CLI_SOURCES CONFIGURE_DEPENDS
-  RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
-  "src/cli/*.c"
-  "src/cli/*.cc"
-  "src/cli/*.cpp"
-  "src/cli/*.cxx"
+set(PUPSNES_CLI_SOURCES
 )
 
-file(GLOB_RECURSE PUPSNES_TEST_SOURCES CONFIGURE_DEPENDS
-  RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
-  "src/tests/*.c"
-  "src/tests/*.cc"
-  "src/tests/*.cpp"
-  "src/tests/*.cxx"
+set(PUPSNES_TEST_SOURCES
+  src/tests/unit/catch2_smoke_tests.cpp
+  src/tests/scheduler_tests.cpp
+  src/tests/mem_tests.cpp
 )
 
 add_library(pupsnes STATIC ${PUPSNES_LIB_SOURCES})
 target_compile_features(pupsnes PUBLIC cxx_std_20)
 target_include_directories(pupsnes PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/includes)
 
-add_executable(pupsnes_cli ${PUPSNES_CLI_SOURCES})
-target_compile_features(pupsnes_cli PUBLIC cxx_std_20)
-target_include_directories(pupsnes_cli PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/includes)
-target_link_libraries(pupsnes_cli PRIVATE pupsnes)
-set_target_properties(pupsnes_cli PROPERTIES OUTPUT_NAME pupsnes)
+if(PUPSNES_CLI_SOURCES)
+  add_executable(pupsnes_cli ${PUPSNES_CLI_SOURCES})
+  target_compile_features(pupsnes_cli PRIVATE cxx_std_20)
+  target_include_directories(pupsnes_cli PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/includes)
+  target_link_libraries(pupsnes_cli PRIVATE pupsnes)
+  set_target_properties(pupsnes_cli PROPERTIES OUTPUT_NAME pupsnes)
+endif()
 
-find_package(zlib CONFIG REQUIRED)
-target_link_libraries(pupsnes PUBLIC ZLIB::ZLIB)
+find_package(spdlog CONFIG REQUIRED)
+target_link_libraries(pupsnes PUBLIC spdlog::spdlog)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
@@ -91,14 +83,16 @@ function(pupsnes_apply_warnings target)
 endfunction()
 
 pupsnes_apply_warnings(pupsnes)
-pupsnes_apply_warnings(pupsnes_cli)
+if(TARGET pupsnes_cli)
+  pupsnes_apply_warnings(pupsnes_cli)
+endif()
 
 include(CTest)
 if(BUILD_TESTING)
   find_package(Catch2 CONFIG REQUIRED)
 
   add_executable(pupsnes_tests ${PUPSNES_TEST_SOURCES})
-  target_compile_features(pupsnes_tests PUBLIC cxx_std_20)
+  target_compile_features(pupsnes_tests PRIVATE cxx_std_20)
   target_include_directories(pupsnes_tests PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/includes)
   target_link_libraries(pupsnes_tests PRIVATE pupsnes Catch2::Catch2WithMain)
   pupsnes_apply_warnings(pupsnes_tests)
@@ -110,11 +104,13 @@ endif()
 find_program(CLANG_FORMAT_EXE NAMES clang-format)
 find_program(CLANG_TIDY_EXE NAMES clang-tidy)
 
-file(GLOB_RECURSE PUPSNES_HEADERS CONFIGURE_DEPENDS
-  "${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/*.h"
-  "${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/*.hpp"
-  "${CMAKE_CURRENT_SOURCE_DIR}/includes/cli/*.h"
-  "${CMAKE_CURRENT_SOURCE_DIR}/includes/cli/*.hpp"
+set(PUPSNES_HEADERS
+  ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/types.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/mem.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/device.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/scheduler.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/snes.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/systembus.h
 )
 
 set(PUPSNES_ALL_SOURCES

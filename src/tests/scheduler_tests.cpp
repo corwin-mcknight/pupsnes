@@ -2,6 +2,7 @@
 
 #include "pupsnes/hw/device.h"
 #include "pupsnes/hw/scheduler.h"
+#include "pupsnes/hw/snes.h"
 #include "scheduler_test_access.h"
 
 #include <memory>
@@ -68,11 +69,11 @@ TEST_CASE("Scheduler step advances time and consumes the next event", "[unit]") 
     snes.scheduler->scheduleEvent(5, &device, pupsnes::SchedulerPhase::Run, pupsnes::EventType::DeviceRun);
 
     REQUIRE(pupsnes::SchedulerTestAccess::eventQueueSize(*snes.scheduler) == 1);
-    REQUIRE(snes.time_now == 0);
+    REQUIRE(snes.getMasterTime() == 0);
 
     snes.scheduler->step();
 
-    REQUIRE(snes.time_now == 5);
+    REQUIRE(snes.getMasterTime() == 5);
     REQUIRE(pupsnes::SchedulerTestAccess::eventQueueSize(*snes.scheduler) == 0);
 }
 
@@ -109,7 +110,7 @@ TEST_CASE("Scheduler processes 10 DeviceRun events in chronological order", "[un
     for (std::size_t i = 0; i < N; ++i) {
         snes.scheduler->step();
         // Time must advance to each event's timestamp.
-        REQUIRE(snes.time_now == static_cast<pupsnes::time_master_t>((i + 1) * 10));
+        REQUIRE(snes.getMasterTime() == static_cast<pupsnes::time_master_t>((i + 1) * 10));
         // Only the device whose event was just processed should have been ticked so far.
         REQUIRE(devices[i]->tick_calls == 1);
     }
@@ -170,7 +171,7 @@ TEST_CASE("Scheduler processes 10 DeviceRun events at the same timestamp", "[uni
     }
 
     // All same-time Run events must be dispatched and time must stay at T.
-    REQUIRE(snes.time_now == T);
+    REQUIRE(snes.getMasterTime() == T);
     REQUIRE(pupsnes::SchedulerTestAccess::eventQueueSize(*snes.scheduler) == 0);
     for (std::size_t i = 0; i < N; ++i) {
         REQUIRE(devices[i]->tick_calls == 1);
@@ -222,4 +223,21 @@ TEST_CASE("Scheduler dispatches CommitComplete and WakeSample to on_event for 10
             REQUIRE(devices[i]->tick_calls == 0);
         }
     }
+}
+
+TEST_CASE("Scheduler does not tick device for past events", "[unit]") {
+    pupsnes::SNES snes;
+    FakeDevice device(&snes);
+
+    // Advance time past where the event is scheduled.
+    snes.setMasterTime(100);
+    snes.scheduler->scheduleEvent(50, &device, pupsnes::SchedulerPhase::Run,
+                                  pupsnes::EventType::DeviceRun);
+
+    // In debug builds the assert fires before we get here.
+    // In release builds (NDEBUG), the event is skipped via early return.
+    snes.scheduler->step();
+
+    REQUIRE(device.tick_calls == 0);
+    REQUIRE(device.event_calls == 0);
 }

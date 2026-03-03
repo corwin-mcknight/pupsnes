@@ -4,24 +4,25 @@
 #include "pupsnes/hw/snes.h"
 
 #include <algorithm>
-#include <cstdio>
+#include <cassert>
+#include <spdlog/spdlog.h>
 
 namespace pupsnes {
 
 namespace {
-void debugPrintSchedulerEvent(const SchedulerEvent &event, const char *indent, bool multiline) {
+void debugPrintSchedulerEvent(const SchedulerEvent &event, bool multiline) {
     if (multiline) {
-        printf("%sTime: %llu\n", indent, static_cast<unsigned long long>(event.time));
-        printf("%sSource: %p\n", indent, static_cast<void *>(event.source));
-        printf("%sSeq: %llu\n", indent, static_cast<unsigned long long>(event.seq));
-        printf("%sSubphase: %d\n", indent, static_cast<int>(event.subphase));
-        printf("%sType: %d\n", indent, static_cast<int>(event.type));
+        spdlog::debug("  Time: {}", event.time);
+        spdlog::debug("  Source: {}", static_cast<const void *>(event.source));
+        spdlog::debug("  Seq: {}", event.seq);
+        spdlog::debug("  Subphase: {}", static_cast<int>(event.subphase));
+        spdlog::debug("  Type: {}", static_cast<int>(event.type));
         return;
     }
 
-    printf("%sTime: %llu, Source: %p, Seq: %llu, Subphase: %d, Type: %d\n", indent,
-           static_cast<unsigned long long>(event.time), static_cast<void *>(event.source),
-           static_cast<unsigned long long>(event.seq), static_cast<int>(event.subphase), static_cast<int>(event.type));
+    spdlog::debug("  Time: {}, Source: {}, Seq: {}, Subphase: {}, Type: {}",
+                  event.time, static_cast<const void *>(event.source),
+                  event.seq, static_cast<int>(event.subphase), static_cast<int>(event.type));
 }
 } // namespace
 
@@ -42,10 +43,9 @@ void Scheduler::step() {
     SchedulerEvent event = eventQueue.top();
     eventQueue.pop();
 
-    // Is this event valid (scheduled for now or in the future?) we don't support past events.
+    // Past events indicate a scheduling bug. Assert in debug, skip in release.
     if (event.time < snes->getMasterTime()) {
-        printf("Warning: Scheduler event in the past. Event time: %llu, Current time: %llu\n",
-               static_cast<unsigned long long>(event.time), static_cast<unsigned long long>(snes->getMasterTime()));
+        assert(false && "Scheduler event in the past");
         return;
     }
 
@@ -63,7 +63,7 @@ void Scheduler::step() {
         break;
     case SchedulerPhase::Run: {
         if (event.type == EventType::DeviceRun) {
-            event.source->tick(computeBudget(event.time));
+            [[maybe_unused]] auto result = event.source->tick(computeBudget(event.time));
         } else {
             event.source->onEvent(event);
         }
@@ -85,26 +85,25 @@ time_master_delta_t Scheduler::computeBudget(time_master_t now) const {
 
 void Scheduler::debugPrintNextEvent() {
     if (eventQueue.empty()) {
-        printf("No scheduled events.\n");
+        spdlog::debug("No scheduled events.");
         return;
     }
     const SchedulerEvent &event = eventQueue.top();
-    printf("Next Event:\n");
-    debugPrintSchedulerEvent(event, "  ", true);
+    spdlog::debug("Next Event:");
+    debugPrintSchedulerEvent(event, true);
 }
 
 void Scheduler::debugPrintEventQueue() {
     if (eventQueue.empty()) {
-        printf("Event queue is empty.\n");
+        spdlog::debug("Event queue is empty.");
         return;
     }
 
-    // Create a copy of the event queue to print without modifying the original
     EventMinHeap tempQueue = eventQueue;
-    printf("Scheduled Events:\n");
+    spdlog::debug("Scheduled Events:");
     while (!tempQueue.empty()) {
         const SchedulerEvent &event = tempQueue.top();
-        debugPrintSchedulerEvent(event, "  ", false);
+        debugPrintSchedulerEvent(event, false);
         tempQueue.pop();
     }
 }

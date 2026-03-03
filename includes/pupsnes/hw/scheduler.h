@@ -32,14 +32,6 @@ struct SchedulerEvent {
     SchedulerEvent(time_master_t time, Device *source, uint64_t seq, SchedulerPhase subphase,
                    EventType type)
         : time(time), source(source), seq(seq), subphase(subphase), type(type) {}
-    SchedulerEvent()
-        : time(0), source(nullptr), seq(0), subphase(SchedulerPhase::CommitComplete),
-          type(EventType::DeviceRun) {}
-
-    SchedulerEvent(const SchedulerEvent &) = default;
-    SchedulerEvent &operator=(const SchedulerEvent &) = default;
-    SchedulerEvent(SchedulerEvent &&) noexcept = default;
-    SchedulerEvent &operator=(SchedulerEvent &&) noexcept = default;
 };
 
 struct SchedulerEventComparator {
@@ -72,7 +64,7 @@ class Scheduler {
     void scheduleEvent(time_master_t time, Device *source, SchedulerPhase subphase, EventType type);
 
     void step();
-    time_master_delta_t computeBudget(time_master_t now) const;
+    [[nodiscard]] time_master_delta_t computeBudget(time_master_t now) const;
 
     void debugPrintNextEvent();
     void debugPrintEventQueue();
