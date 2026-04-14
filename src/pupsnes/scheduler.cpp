@@ -109,6 +109,19 @@ const Token *Scheduler::getToken(token_id_t id) const { return token_table_.get(
 
 void Scheduler::removeToken(token_id_t id) { token_table_.remove(id); }
 
+void Scheduler::catchUpDevice(device_id_t device_id, time_master_t target_time) {
+    Device *device = snes->getDevice(device_id);
+    if (device == nullptr) {
+        return;
+    }
+    if (device->getTime() >= target_time) {
+        return;
+    }
+    time_master_delta_t delta = target_time - device->getTime();
+    auto result = device->tick(delta);
+    device->advanceLocalTime(result.completedCycles);
+}
+
 void Scheduler::debugPrintNextEvent() {
     if (eventQueue.empty()) {
         spdlog::debug("No scheduled events.");

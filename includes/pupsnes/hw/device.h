@@ -31,6 +31,8 @@ class Device {
     virtual ~Device() = default;
     [[nodiscard]] virtual TickResult tick(time_master_delta_t budget) = 0;
     virtual void onEvent(const SchedulerEvent &event) = 0;
+    virtual uint8_t readRegister(uint32_t offset) { (void)offset; return 0; }
+    virtual void writeRegister(uint32_t offset, uint8_t data) { (void)offset; (void)data; }
 
     [[nodiscard]] time_master_t getTime() const { return local_time; }
     void advanceLocalTime(time_master_delta_t delta) { local_time += delta; }

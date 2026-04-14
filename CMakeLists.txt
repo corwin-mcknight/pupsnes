@@ -6,6 +6,7 @@ set(PUPSNES_LIB_SOURCES
   src/pupsnes/scheduler.cpp
   src/pupsnes/snes.cpp
   src/pupsnes/token.cpp
+  src/pupsnes/systembus.cpp
 )
 
 set(PUPSNES_CLI_SOURCES
@@ -16,6 +17,7 @@ set(PUPSNES_TEST_SOURCES
   src/tests/scheduler_tests.cpp
   src/tests/token_tests.cpp
   src/tests/mem_tests.cpp
+  src/tests/systembus_tests.cpp
 )
 
 add_library(pupsnes STATIC ${PUPSNES_LIB_SOURCES})

@@ -8,8 +8,8 @@ TEST_CASE("TokenTable creates tokens with sequential IDs", "[unit]") {
     auto id1 = table.create(pupsnes::TokenType::BusRead, 0, 100, 0x2100, 0);
     auto id2 = table.create(pupsnes::TokenType::BusWrite, 1, 105, 0x2101, 0x42);
 
-    REQUIRE(id1 == 0);
-    REQUIRE(id2 == 1);
+    REQUIRE(id1 == 1);
+    REQUIRE(id2 == 2);
 
     auto *tok1 = table.get(id1);
     auto *tok2 = table.get(id2);

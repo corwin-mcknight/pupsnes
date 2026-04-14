@@ -1,6 +1,7 @@
 #include "pupsnes/hw/snes.h"
 #include "pupsnes/hw/device.h"
 #include "pupsnes/hw/scheduler.h"
+#include "pupsnes/hw/systembus.h"
 
 #include <spdlog/spdlog.h>
 
@@ -14,7 +15,8 @@ pupsnes::Device::Device(SNES *snes) : snes(snes) {
 
 // --- SNES ---
 
-pupsnes::SNES::SNES() : scheduler(std::make_unique<Scheduler>(this)) {}
+pupsnes::SNES::SNES()
+    : scheduler(std::make_unique<Scheduler>(this)), system_bus(std::make_unique<SystemBus>(this)) {}
 pupsnes::SNES::~SNES() = default;
 
 pupsnes::device_id_t pupsnes::SNES::registerDevice(Device *device) {

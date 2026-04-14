@@ -73,6 +73,8 @@ class Scheduler {
     [[nodiscard]] const Token *getToken(token_id_t id) const;
     void removeToken(token_id_t id);
 
+    void catchUpDevice(device_id_t device_id, time_master_t target_time);
+
     void debugPrintNextEvent();
     void debugPrintEventQueue();
 };

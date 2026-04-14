@@ -7,11 +7,13 @@
 
 namespace pupsnes {
 class Scheduler;
+class SystemBus;
 class Device;
 
 class SNES {
   public:
     std::unique_ptr<Scheduler> scheduler;
+    std::unique_ptr<SystemBus> system_bus;
 
     SNES();
     ~SNES();
