@@ -73,9 +73,9 @@ A time boundary past which a device may not run without returning to the schedul
 
 1. Only the scheduler advances time.
 2. No device observes an external effect “early.”
-3. Every external read/write is represented by an event (token) with a defined observability time.
+3. Every external read/write is represented by a token. Same-clock tokens resolve synchronously via catch-up on access. Cross-clock tokens resolve asynchronously at a defined observability time.
 4. Same-timestamp determinism requires stable tie-breakers.
-5. Devices cannot interact directly; all cross-device behavior must go through connectors or scheduled events.
+5. Devices cannot interact directly; all cross-device behavior must go through the SystemBus (bus transactions), the signal region of the state block (control signals), or scheduled events.
 6. A device may not execute past its granted budget.
 7. The system must not livelock at the same timestamp (zero-time infinite work).
 
@@ -240,70 +240,67 @@ Rules:
 
 ## External reads/writes and tokens
 
-### Two-phase model
+### Token model
 
-All external I/O is modeled as request + completion:
+All external I/O is represented by tokens. A token represents a bus transaction (read or write) with a stable ID, type, and payload/result slot.
 
-1. **Request issued at time `t_request`**
-   - device asks for an external action (e.g., bus read)
-   - the interconnect determines:
-     - when it can start
-     - when it becomes observable / completes
-2. **Completion at time `t_complete`**
-   - data becomes valid (read)
-   - write commits
-   - locks are released
-   - token resolves and blockers are woken
+Token resolution semantics depend on the clock domain of the target:
+
+**Same-clock tokens** (e.g., CPU → PPU register write):
+1. Device issues a bus transaction via the SystemBus
+2. SystemBus decodes the address and identifies the target device
+3. Target device is caught up to the current master cycle (scheduler runs target's `tick()` until its local time matches)
+4. Transaction is applied to the target's state
+5. Token resolves synchronously — the issuing device continues immediately
+
+**Cross-clock tokens** (e.g., CPU → APU port write at `$2140`–`$2143`):
+1. Device issues a bus transaction via the SystemBus
+2. SystemBus identifies a cross-clock target
+3. Token is queued with a completion time derived from the clock domain conversion
+4. At completion time, the target is caught up to the equivalent time in its own clock domain
+5. Transaction is applied, token resolves, and blockers are woken
 
 ### Tokens
 
-An event token represents a pending external action. Tokens have:
-- stable token ID
-- type (bus read, bus write, DMA step, latch update, etc.)
-- scheduled completion time
+Tokens have:
+- stable token ID (not pointer-based)
+- type (bus read, bus write, DMA step, etc.)
+- target clock domain (same-clock or cross-clock)
 - payload / result slot (for read data, etc.)
+- for cross-clock: scheduled completion time
 
-Tokens must be:
-- stable IDs (not pointers)
-- serializable
-- deterministically resolved at the scheduled time
+Tokens must be serializable and deterministically resolved.
 
 ### Blocking rule
 
-If a device depends on the completion of an external action, it must:
+If a device depends on the completion of a cross-clock external action, it must:
 - return `BlockedOnToken(token_id)` and give up remaining budget
 
-This guarantees it cannot observe results early.
+Same-clock tokens resolve synchronously and never require blocking.
 
 ---
 
-## Connectors and isolation
+## Device isolation and signals
 
-Devices cannot directly access each other. They interact through connectors that obey scheduler semantics.
+Devices cannot directly access each other's state. Cross-device interaction happens through two mechanisms:
 
-**Examples of connectors**
-- single wire / line (IRQ, NMI, RDY, etc.)
-- tri-state bus (address/data/control)
-- latched signals
-- open-bus decay line state
-- clocked registers at boundaries
+### Bus transactions (SystemBus)
 
-### Connector rules
+All addressed read/write operations go through the SystemBus, which handles address decoding via the page table, clock domain detection, and catch-up synchronization. See `docs/systembus.md`.
 
-Connectors support staged updates:
-- During Run, devices enqueue proposed changes to connectors.
-- During Commit, the scheduler (or interconnect) applies staged changes to become externally visible.
-- During Wake, devices sample connector states.
+### Control signals (Signal Region)
 
-This prevents “mid-run instantaneous visibility” and avoids ordering bugs.
+Control signals (NMI, IRQ, HALT) are modeled as flat fields in the signal region of the state block:
 
-Important: not all connectors are the same. Some are best modeled as “staged until commit,” while others may be modeled as combinational-within-timestamp. If combinational behavior is allowed, it must still respect the commit/wake quiescence rule to prevent early sampling.
+- **Edge-triggered signals** (NMI): two fields — `current_level` and `previous_level`. The CPU detects a rising edge by checking `current && !previous` at its interrupt sampling micro-op step. After sampling, `previous = current`.
+- **Level-triggered signals** (IRQ, HALT): one field — `current_level`. The CPU checks the level directly.
+
+Devices write signal fields during their execution (including during catch-up). The CPU reads them at defined sampling points within its micro-op table.
 
 ### No direct references
 
 Devices are constructed with:
-- their own internal state
-- attached connector endpoints
+- their own internal state (residing in the state block)
 - stable IDs
 - no direct pointers to other devices
 
@@ -359,28 +356,19 @@ Rules:
 
 ## Save-state requirements
 
-To preserve determinism across load, a save-state must include:
+All emulator state resides in a single contiguous **state block**. Save state = `memcpy` of the block. Load state = `memcpy` back. This guarantees nothing is omitted.
 
-1. **Global scheduler state**
-   - now time
-   - event queue contents (all events, with ordering keys)
-   - `stable_seq` counter state
-   - any phase/subphase internal state if mid-timestamp
-2. **All tokens**
-   - token table (IDs, types, completion time, payload/result slots)
-   - blocked device lists (or device wait states referencing token IDs)
-3. **All connector state**
-   - committed visible values
-   - staged pending writes (if any exist at save moment)
-   - decay metadata (e.g., last-driven time per bit)
-   - bus lock ownership/tickets
-4. **All device state**
-   - internal registers/state
-   - run status (running/blocked/idle)
-   - continuation state (micro-step index, pipeline stage, etc.)
-   - next local boundary time if applicable
+The state block contains:
 
-If any of the above is omitted, you will get nondeterministic behavior after load.
+1. **Global scheduler state**: current time, event queue (fixed-size array with known upper bound), `stable_seq` counter, phase/subphase state
+2. **Token table**: all outstanding tokens (fixed-size, bounded by max outstanding tokens), blocked device references by token ID
+3. **Signal region**: NMI (current + previous level), IRQ level, HALT level
+4. **All device state**: registers, internal counters, continuation state (micro-op index, pipeline stage), run status, local boundary times
+5. **Memory arrays**: WRAM (128KB), VRAM (64KB), APU RAM (64KB), OAM (544B), CGRAM (512B)
+
+Device code accesses state through typed POD struct overlays at known offsets in the block, providing natural field access (`state->A`, `state->scanline`) with zero overhead.
+
+Rewind uses a ring buffer of state block snapshots. Determinism verification uses `memcmp` of two blocks run from identical initial state.
 
 ---
 
@@ -401,24 +389,22 @@ The primary ordering should come from time + subphase. Avoid SNES-specific “CP
 
 ### CPU core
 
-Best modeled as:
-- internal micro-steps (not full instruction as a monolith)
-- bus actions issue tokens and block
-- interrupts are sampled at defined sampling points (Wake phase)
+Table-driven micro-ops: each instruction is a table of per-cycle bus actions, matching the WDC 65C816 datasheet cycle-by-cycle timing. One table entry per bus cycle — each entry specifies address source, read/write direction, and internal operation.
 
-Do not attempt “preempt mid-C++ stack.” Instead:
-- represent continuation explicitly in CPU state (micro-step index, pending operand, etc.)
-- yield at micro-steps and external boundaries
+- DMA can steal the bus between any two micro-op entries
+- IRQ/NMI are sampled at specific micro-op steps (not every cycle)
+- Same-clock bus accesses (e.g., reads from WRAM, writes to PPU registers) resolve synchronously via catch-up
+- Continuation state is the micro-op table index and pending operand — no “preempt mid-C++ stack”
 
 ### PPU
 
-Model boundaries explicitly:
-- dot boundaries
-- H/V counters
-- fetch phases if needed
+Dot-accurate from day one. The PPU advances one dot (pixel clock) at a time, with explicit modeling of:
+- dot boundaries and H/V counters
+- fetch phases (tile, sprite, attribute)
 - output latching points
+- mode register effects at the exact dot they apply
 
-It should run until its next boundary or hazard.
+The PPU is a bus target — it never initiates system bus transactions (it has its own VRAM bus). When a CPU or DMA write targets a PPU register, the PPU is caught up to the current master cycle before the write is applied. This guarantees mid-scanline register writes take effect at the correct dot.
 
 ### DMA
 

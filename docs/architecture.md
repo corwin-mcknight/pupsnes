@@ -17,9 +17,72 @@ PupSNES has a dynamic topology of interconnected objects that represent the SNES
 * **SNES**: The top-level object that contains all other components. Owns global master and APU time, and the Scheduler instance.
 * **Scheduler**: Part of the SNES. Maintains an event queue ordered by `(time, subphase, type, seq)`. Dispatches events to devices via `tick()` (Run phase) or `on_event()` (CommitComplete/WakeSample phases). Computes per-device budgets capped by `MAX_CYCLES_STEP` and the next event time.
 * **Device**: Base class for all hardware units (CPU, PPU, APU, etc.). Each device has internal state, a reference to the SNES, and implements `tick(budget)` and `on_event(event)`.
-* **SystemBus**: Authority for CPU-visible bus transactions. Stub interface exists; Plan/Follow model described in `docs/systembus.md`. (planned)
-* **Wires and Lanes**: Connections between devices. Wires can have multiple lanes for multi-bit buses. (planned)
-* **Buses**: Collections of wires that connect multiple devices together, and arbitrate access when multiple devices drive the same bus. (planned)
+* **SystemBus**: Authority for CPU-visible bus transactions. Decodes addresses via a flat page table (256×256 bank×page → device+offset), precalculated at ROM load. Same-clock targets are synchronized via catch-up on access; cross-clock targets use async tokens. See `docs/systembus.md`. (planned)
+* **State Block**: A single contiguous memory allocation containing all device state — registers, counters, VRAM, WRAM, APU RAM. Save state = `memcpy`. Rewind = ring buffer of snapshots. Determinism verification = `memcmp`. (planned)
+* **Signal Region**: Part of the State Block. Models control signals (NMI, IRQ, HALT) as flat fields rather than wire objects. Edge-triggered signals (NMI) use two fields (current + previous level). Level-triggered signals (IRQ, HALT) use one field. (planned)
 * **Port**: Allows connecting external peripherals to the SNES, such as controllers or cartridges. (planned)
 
-All devices will have a stable numeric id for deterministic ordering and save-state support. (planned)
+All devices have a stable numeric ID (`device_id_t`) for deterministic ordering and save-state support.
+
+## Synchronization Model
+
+PupSNES uses **catch-up on access** for same-clock-domain synchronization. When a bus master (CPU or DMA) issues a transaction targeting a same-clock device (e.g., a CPU write to a PPU register), the target device is advanced to the current master cycle before the transaction is applied. This ensures the target's internal state is consistent at the exact cycle of access.
+
+**Bus masters** (CPU, DMA) initiate transactions and drive the clock forward. **Bus targets** (PPU registers, WRAM) respond to transactions and can be caught up. Catch-up applies only to targets — devices whose internal state evolution does not require issuing bus transactions. On the SNES, the PPU qualifies because it uses its own VRAM bus during rendering and never initiates system bus transactions.
+
+Cross-clock-domain transactions (e.g., CPU ↔ APU via ports `$2140`–`$2143`) use asynchronous tokens. The token is queued and resolved when the target is caught up to the equivalent time in its own clock domain.
+
+Tokens are the universal abstraction for external I/O. Same-clock tokens resolve synchronously (via catch-up). Cross-clock tokens resolve asynchronously. The token type is the same; the resolution semantics differ by clock domain.
+
+## Clock Domains
+
+Two independent timing domains:
+
+* **Master clock** (~21.477 MHz): drives CPU, PPU, DMA. All same-clock synchronization uses catch-up on access.
+* **APU clock** (~1.024 MHz): independent crystal. The APU tracks its own cycle count with a known conversion ratio to master time (~20.97 master cycles per APU cycle). On port access (`$2140`–`$2143`), the APU is caught up by converting the current master time to APU cycles.
+
+Time is measured in integer cycles (no fractional time) within each domain.
+
+## State Management
+
+All device state resides in a single contiguous **State Block** allocation. This includes:
+
+* Device registers and internal counters
+* Large memory arrays (128KB WRAM, 64KB VRAM, 64KB APU RAM, OAM, CGRAM)
+* Scheduler state (event queue as fixed-size array, sequence counters)
+* Signal region (NMI, IRQ, HALT fields)
+* Token table (fixed-size, bounded by max outstanding tokens)
+
+Save state is `memcpy` of the block. Rewind is a ring buffer of block snapshots. Determinism verification is `memcmp` of two blocks.
+
+Device code accesses state through typed overlays (POD structs placed at known offsets in the block), providing natural field access with zero overhead.
+
+## Memory Map
+
+Address decoding uses a flat **page table**: a 256×256 array indexed by bank and page (256-byte granularity). Each entry contains a target device pointer and a device-relative offset. The table is precalculated at ROM load time based on the cartridge mapper type (LoROM, HiROM, etc.).
+
+* Mirrors are free — multiple entries point to the same backing memory/handler.
+* I/O register ranges (`$2100`–`$44FF`) point to device handlers with a flag distinguishing them from raw memory.
+* Co-processor cartridges overlay their regions by modifying table entries.
+
+This is the hottest path in the emulator (called on every bus cycle), so O(1) lookup with no branching is critical.
+
+## Frontend
+
+The emulation core uses a **callback-based** interface. The core owns the master clock; the frontend is a passive consumer:
+
+* `onFrameReady(buffer)`: PPU signals frame completion at V-blank
+* `onAudioSample(left, right)`: APU emits samples at the exact cycle produced
+* `pollInput() → buttons`: core polls controller state when needed
+
+For headless/CI testing, stub callbacks capture output for assertions without requiring a display or audio device.
+
+## Verification
+
+Accuracy verification is layered:
+
+* **Determinism**: run the same ROM twice from the same state, `memcmp` state blocks at every frame boundary
+* **Framebuffer comparison**: run test ROMs headless, hash the framebuffer, compare against known-good values
+* **Execution trace diffing**: log CPU bus cycles with timestamps, diff against reference traces from hardware or other emulators
+
+Instrumentation hooks are built into the core from day one (conditional trace logging in the CPU micro-op stepper, compiled out in release builds). The full test suite is built incrementally as hardware knowledge grows.
