@@ -20,9 +20,9 @@ void debugPrintSchedulerEvent(const SchedulerEvent &event, bool multiline) {
         return;
     }
 
-    spdlog::debug("  Time: {}, Source: {}, Seq: {}, Subphase: {}, Type: {}",
-                  event.time, static_cast<const void *>(event.source),
-                  event.seq, static_cast<int>(event.subphase), static_cast<int>(event.type));
+    spdlog::debug("  Time: {}, Source: {}, Seq: {}, Subphase: {}, Type: {}", event.time,
+                  static_cast<const void *>(event.source), event.seq, static_cast<int>(event.subphase),
+                  static_cast<int>(event.type));
 }
 } // namespace
 
@@ -76,7 +76,7 @@ time_master_delta_t Scheduler::computeBudget(time_master_t now) const {
     time_master_delta_t budget = MAX_CYCLES_STEP;
     if (!eventQueue.empty()) {
         time_master_t next_time = eventQueue.top().time;
-        if (next_time > now) {
+        if (next_time >= now) {
             budget = std::min(budget, next_time - now);
         }
     }

@@ -4,10 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 CI_DIR="${ROOT_DIR}/build/ci"
 
-echo "[ci-verify] Installing Conan dependencies (ci preset)"
-conan install "${ROOT_DIR}" --output-folder="${CI_DIR}" --build=missing -s build_type=RelWithDebInfo
-
-echo "[ci-verify] Configuring (ci preset)"
+echo "[ci-verify] Configuring (ci preset — conan runs automatically if needed)"
 cmake --preset ci
 
 echo "[ci-verify] Building (ci preset)"

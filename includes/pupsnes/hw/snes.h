@@ -20,6 +20,6 @@ class SNES {
 
   private:
     time_master_t time_now = 0;
-    time_apu_t time_apu_now = 0;
+    // time_apu_t time_apu_now = 0;
 };
 } // namespace pupsnes

@@ -1,10 +1,8 @@
 # Building
 
-This project uses CMake with the Ninja generator.
+This project uses CMake with the Ninja generator. Conan dependencies are installed automatically during the configure step — no separate `conan install` command is needed.
 
-## Presets
-
-Configure and build with presets
+## Quick start
 
 ```sh
 cmake --preset dev
@@ -15,28 +13,15 @@ Available presets: `dev`, `ci`, `release`.
 
 The `pupsnes` executable will be in the relevant build directory under `build/`.
 
-## Conan
+## How it works
 
-Each configure preset expects a matching Conan output folder so the toolchain file exists at
-`build/<preset>/conan_toolchain.cmake`.
+CMake presets include `cmake/ConanAutoInstall.cmake` via `CMAKE_PROJECT_TOP_LEVEL_INCLUDES`. On configure, this script:
 
-```sh
-# dev preset
-conan install . --output-folder=build/dev --build=missing -s build_type=Debug
+1. Checks if `conan_toolchain.cmake` exists in the build directory
+2. Re-runs `conan install` if the toolchain is missing or `conanfile.txt` has changed
+3. Includes the generated toolchain
 
-# ci preset
-conan install . --output-folder=build/ci --build=missing -s build_type=RelWithDebInfo
-
-# release preset
-conan install . --output-folder=build/release --build=missing -s build_type=Release
-```
-
-After installing dependencies for a preset:
-
-```sh
-cmake --preset dev
-cmake --build --preset dev
-```
+You can still run `conan install` manually if you need to pass extra flags.
 
 ## Warnings
 

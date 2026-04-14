@@ -9,7 +9,7 @@ pupsnes::SNES::~SNES() = default;
 void pupsnes::SNES::debugPrintInfo() {
     spdlog::debug("SNES Info:");
     spdlog::debug("  Time (master): {}", time_now);
-    spdlog::debug("  Time (APU): {}", time_apu_now);
+    // spdlog::debug("  Time (APU): {}", time_apu_now);
 
     scheduler->debugPrintNextEvent();
     scheduler->debugPrintEventQueue();
