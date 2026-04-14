@@ -7,9 +7,9 @@
 
 using namespace pupsnes;
 
-int main(int argc, char **argv) {
-    (void)argc;
-    (void)argv;
+int main(int /*argc*/, char ** /*argv*/) {
+
+    std::printf("PupSNES");
 
     SNES snes;
     snes.debugPrintInfo();

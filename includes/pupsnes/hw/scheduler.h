@@ -18,40 +18,34 @@ enum class SchedulerPhase : uint8_t { CommitComplete = 0, WakeSample = 1, Run = 
 
 /// Priority levels for scheduled events.
 enum class EventType : uint8_t {
-    DeviceRun = 0, // Normal device execution, scheduled rarely but is how to "unpause" a device.
+    DeviceRun = 0,      // Normal device execution, scheduled rarely but is how to "unpause" a device.
     DeviceBoundary = 1, // Device running normally but is communicating a sync boundary.
 };
 
 /// An event scheduled in the scheduler.
 struct SchedulerEvent {
     time_master_t time;
-    Device *source;
-    uint64_t seq;
+    Device *source; // Non-owning. Caller-owned device that generated this event.
+    event_seq_t seq;
     SchedulerPhase subphase;
     EventType type;
-
-    SchedulerEvent(time_master_t time, Device *source, uint64_t seq, SchedulerPhase subphase,
-                   EventType type)
-        : time(time), source(source), seq(seq), subphase(subphase), type(type) {}
 };
 
 struct SchedulerEventComparator {
     bool operator()(const SchedulerEvent &a, const SchedulerEvent &b) const {
-        return std::tie(a.time, a.subphase, a.type, a.seq) >
-               std::tie(b.time, b.subphase, b.type, b.seq);
+        return std::tie(a.time, a.subphase, a.type, a.seq) > std::tie(b.time, b.subphase, b.type, b.seq);
     }
 };
 
 class Scheduler {
   private:
-    using EventMinHeap =
-        std::priority_queue<SchedulerEvent, std::vector<SchedulerEvent>, SchedulerEventComparator>;
+    using EventMinHeap = std::priority_queue<SchedulerEvent, std::vector<SchedulerEvent>, SchedulerEventComparator>;
 
-    SNES *snes;
+    SNES *snes; // Non-owning. SNES owns this Scheduler; pointer back to parent.
     SchedulerPhase phase = SchedulerPhase::CommitComplete;
     EventMinHeap eventQueue;
 
-    uint64_t nextEventSeq = 0;
+    event_seq_t nextEventSeq = 0;
     TokenTable token_table_;
 
     friend struct SchedulerTestAccess;
@@ -68,8 +62,7 @@ class Scheduler {
     void step();
     [[nodiscard]] time_master_delta_t computeBudget(time_master_t now) const;
 
-    token_id_t createToken(TokenType type, device_id_t source, time_master_t completion_time,
-                           snes_addr_t address, uint8_t data);
+    token_id_t createToken(const TokenCreateParams &params);
     [[nodiscard]] const Token *getToken(token_id_t id) const;
     void removeToken(token_id_t id);
 

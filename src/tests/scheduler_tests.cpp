@@ -117,9 +117,8 @@ TEST_CASE("Scheduler processes 10 DeviceRun events in chronological order", "[un
     }
 
     for (std::size_t i = 0; i < N; ++i) {
-        snes.scheduler->scheduleEvent(static_cast<pupsnes::time_master_t>((i + 1) * 10),
-                                      devices[i].get(), pupsnes::SchedulerPhase::Run,
-                                      pupsnes::EventType::DeviceRun);
+        snes.scheduler->scheduleEvent(static_cast<pupsnes::time_master_t>((i + 1) * 10), devices[i].get(),
+                                      pupsnes::SchedulerPhase::Run, pupsnes::EventType::DeviceRun);
     }
 
     REQUIRE(pupsnes::SchedulerTestAccess::eventQueueSize(*snes.scheduler) == N);
@@ -148,9 +147,8 @@ TEST_CASE("Scheduler budget is capped by next event time with 10 devices", "[uni
     }
 
     for (std::size_t i = 0; i < N; ++i) {
-        snes.scheduler->scheduleEvent(static_cast<pupsnes::time_master_t>((i + 1) * spacing),
-                                      devices[i].get(), pupsnes::SchedulerPhase::Run,
-                                      pupsnes::EventType::DeviceRun);
+        snes.scheduler->scheduleEvent(static_cast<pupsnes::time_master_t>((i + 1) * spacing), devices[i].get(),
+                                      pupsnes::SchedulerPhase::Run, pupsnes::EventType::DeviceRun);
     }
 
     for (std::size_t i = 0; i < N; ++i) {
@@ -179,8 +177,7 @@ TEST_CASE("Scheduler processes 10 DeviceRun events at the same timestamp", "[uni
     }
 
     for (std::size_t i = 0; i < N; ++i) {
-        snes.scheduler->scheduleEvent(T, devices[i].get(), pupsnes::SchedulerPhase::Run,
-                                      pupsnes::EventType::DeviceRun);
+        snes.scheduler->scheduleEvent(T, devices[i].get(), pupsnes::SchedulerPhase::Run, pupsnes::EventType::DeviceRun);
     }
 
     for (std::size_t i = 0; i < N; ++i) {
@@ -201,8 +198,7 @@ TEST_CASE("Scheduler processes 10 DeviceRun events at the same timestamp", "[uni
     REQUIRE(devices[N - 1]->last_budget == pupsnes::Scheduler::MAX_CYCLES_STEP);
 }
 
-TEST_CASE("Scheduler dispatches CommitComplete and WakeSample to on_event for 10 devices",
-          "[unit]") {
+TEST_CASE("Scheduler dispatches CommitComplete and WakeSample to on_event for 10 devices", "[unit]") {
     pupsnes::SNES snes;
     constexpr std::size_t N = 10;
 
@@ -222,8 +218,8 @@ TEST_CASE("Scheduler dispatches CommitComplete and WakeSample to on_event for 10
         } else {
             phase = pupsnes::SchedulerPhase::Run;
         }
-        snes.scheduler->scheduleEvent(static_cast<pupsnes::time_master_t>(10 + i),
-                                      devices[i].get(), phase, pupsnes::EventType::DeviceRun);
+        snes.scheduler->scheduleEvent(static_cast<pupsnes::time_master_t>(10 + i), devices[i].get(), phase,
+                                      pupsnes::EventType::DeviceRun);
     }
 
     for (std::size_t i = 0; i < N; ++i) {
@@ -251,8 +247,7 @@ TEST_CASE("Scheduler updates device local_time after tick", "[unit]") {
 
     REQUIRE(device.getTime() == 0);
 
-    snes.scheduler->scheduleEvent(10, &device, pupsnes::SchedulerPhase::Run,
-                                  pupsnes::EventType::DeviceRun);
+    snes.scheduler->scheduleEvent(10, &device, pupsnes::SchedulerPhase::Run, pupsnes::EventType::DeviceRun);
     snes.scheduler->step();
 
     // FakeDevice returns {budget, BudgetExhausted}, so local_time should advance by budget.
@@ -291,11 +286,9 @@ TEST_CASE("Scheduler wakes device blocked on token after CommitComplete resolves
     pupsnes::SNES snes;
     BlockingDevice device(&snes);
 
-    auto token_id = snes.scheduler->createToken(pupsnes::TokenType::BusRead,
-                                                device.getDeviceId(), 50, 0x2100, 0);
+    auto token_id = snes.scheduler->createToken({pupsnes::TokenType::BusRead, device.getDeviceId(), 50, 0x2100, 0});
 
-    snes.scheduler->scheduleEvent(10, &device, pupsnes::SchedulerPhase::Run,
-                                  pupsnes::EventType::DeviceRun);
+    snes.scheduler->scheduleEvent(10, &device, pupsnes::SchedulerPhase::Run, pupsnes::EventType::DeviceRun);
 
     device.should_block = true;
     device.block_token = token_id;
@@ -350,22 +343,19 @@ TEST_CASE("Device can poll token state on natural clock cycle", "[unit]") {
     pupsnes::SNES snes;
     PollingDevice device(&snes);
 
-    auto token_id = snes.scheduler->createToken(pupsnes::TokenType::BusRead,
-                                                device.getDeviceId(), 50, 0x2100, 0);
+    auto token_id = snes.scheduler->createToken({pupsnes::TokenType::BusRead, device.getDeviceId(), 50, 0x2100, 0});
 
     device.poll_token = token_id;
     device.has_poll_token = true;
 
     // Run at time 10 — before token completes
-    snes.scheduler->scheduleEvent(10, &device, pupsnes::SchedulerPhase::Run,
-                                  pupsnes::EventType::DeviceRun);
+    snes.scheduler->scheduleEvent(10, &device, pupsnes::SchedulerPhase::Run, pupsnes::EventType::DeviceRun);
     snes.scheduler->step();
     REQUIRE(device.tick_calls == 1);
     REQUIRE_FALSE(device.token_was_ready);
 
     // CommitComplete at 50 resolves the token
-    snes.scheduler->scheduleEvent(60, &device, pupsnes::SchedulerPhase::Run,
-                                  pupsnes::EventType::DeviceRun);
+    snes.scheduler->scheduleEvent(60, &device, pupsnes::SchedulerPhase::Run, pupsnes::EventType::DeviceRun);
     snes.scheduler->step();
     REQUIRE(snes.getMasterTime() == 50);
 
@@ -379,8 +369,7 @@ TEST_CASE("Scheduler createToken returns valid token and schedules CommitComplet
     pupsnes::SNES snes;
     FakeDevice device(&snes);
 
-    auto token_id = snes.scheduler->createToken(pupsnes::TokenType::BusRead, device.getDeviceId(),
-                                                50, 0x2100, 0);
+    auto token_id = snes.scheduler->createToken({pupsnes::TokenType::BusRead, device.getDeviceId(), 50, 0x2100, 0});
 
     auto *token = snes.scheduler->getToken(token_id);
     REQUIRE(token != nullptr);
@@ -398,8 +387,7 @@ TEST_CASE("Scheduler does not tick device for past events", "[unit]") {
 
     // Advance time past where the event is scheduled.
     snes.setMasterTime(100);
-    snes.scheduler->scheduleEvent(50, &device, pupsnes::SchedulerPhase::Run,
-                                  pupsnes::EventType::DeviceRun);
+    snes.scheduler->scheduleEvent(50, &device, pupsnes::SchedulerPhase::Run, pupsnes::EventType::DeviceRun);
 
     // In debug builds the assert fires before we get here.
     // In release builds (NDEBUG), the event is skipped via early return.

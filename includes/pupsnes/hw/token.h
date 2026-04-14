@@ -28,12 +28,19 @@ struct Token {
     uint8_t data;
 };
 
+struct TokenCreateParams {
+    TokenType type;
+    device_id_t source_device;
+    time_master_t completion_time;
+    snes_addr_t address;
+    uint8_t data = 0;
+};
+
 class TokenTable {
   public:
     TokenTable() = default;
 
-    token_id_t create(TokenType type, device_id_t source, time_master_t completion_time,
-                      snes_addr_t address, uint8_t data);
+    token_id_t create(const TokenCreateParams &params);
 
     [[nodiscard]] const Token *get(token_id_t id) const;
 

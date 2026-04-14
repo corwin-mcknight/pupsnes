@@ -5,8 +5,8 @@
 TEST_CASE("TokenTable creates tokens with sequential IDs", "[unit]") {
     pupsnes::TokenTable table;
 
-    auto id1 = table.create(pupsnes::TokenType::BusRead, 0, 100, 0x2100, 0);
-    auto id2 = table.create(pupsnes::TokenType::BusWrite, 1, 105, 0x2101, 0x42);
+    auto id1 = table.create({pupsnes::TokenType::BusRead, 0, 100, 0x2100, 0});
+    auto id2 = table.create({pupsnes::TokenType::BusWrite, 1, 105, 0x2101, 0x42});
 
     REQUIRE(id1 == 1);
     REQUIRE(id2 == 2);
@@ -33,7 +33,7 @@ TEST_CASE("TokenTable get returns nullptr for unknown ID", "[unit]") {
 
 TEST_CASE("TokenTable complete sets state and data", "[unit]") {
     pupsnes::TokenTable table;
-    auto id = table.create(pupsnes::TokenType::BusRead, 0, 100, 0x2100, 0);
+    auto id = table.create({pupsnes::TokenType::BusRead, 0, 100, 0x2100, 0});
 
     table.complete(id, 0xAB);
 
@@ -46,9 +46,9 @@ TEST_CASE("TokenTable complete sets state and data", "[unit]") {
 TEST_CASE("TokenTable resolveAt completes tokens due at given time", "[unit]") {
     pupsnes::TokenTable table;
 
-    auto id1 = table.create(pupsnes::TokenType::BusRead, 0, 100, 0x2100, 0);
-    auto id2 = table.create(pupsnes::TokenType::BusRead, 1, 200, 0x2101, 0);
-    auto id3 = table.create(pupsnes::TokenType::BusWrite, 2, 100, 0x2102, 0xFF);
+    auto id1 = table.create({pupsnes::TokenType::BusRead, 0, 100, 0x2100, 0});
+    auto id2 = table.create({pupsnes::TokenType::BusRead, 1, 200, 0x2101, 0});
+    auto id3 = table.create({pupsnes::TokenType::BusWrite, 2, 100, 0x2102, 0xFF});
 
     auto woken = table.resolveAt(100);
 
@@ -62,7 +62,7 @@ TEST_CASE("TokenTable resolveAt completes tokens due at given time", "[unit]") {
 
 TEST_CASE("TokenTable remove deletes a token", "[unit]") {
     pupsnes::TokenTable table;
-    auto id = table.create(pupsnes::TokenType::BusRead, 0, 100, 0x2100, 0);
+    auto id = table.create({pupsnes::TokenType::BusRead, 0, 100, 0x2100, 0});
 
     table.remove(id);
 
@@ -72,8 +72,8 @@ TEST_CASE("TokenTable remove deletes a token", "[unit]") {
 TEST_CASE("TokenTable resolveAt returns device IDs to wake", "[unit]") {
     pupsnes::TokenTable table;
 
-    auto id1 = table.create(pupsnes::TokenType::BusRead, 0, 100, 0x2100, 0);
-    auto id2 = table.create(pupsnes::TokenType::BusRead, 1, 100, 0x2101, 0);
+    auto id1 = table.create({pupsnes::TokenType::BusRead, 0, 100, 0x2100, 0});
+    auto id2 = table.create({pupsnes::TokenType::BusRead, 1, 100, 0x2101, 0});
 
     table.setBlocked(id1, 0);
     table.setBlocked(id2, 1);
@@ -90,7 +90,7 @@ TEST_CASE("TokenTable resolveAt returns device IDs to wake", "[unit]") {
 TEST_CASE("TokenTable resolveAt does not wake non-blocked tokens", "[unit]") {
     pupsnes::TokenTable table;
 
-    auto id1 = table.create(pupsnes::TokenType::BusRead, 0, 100, 0x2100, 0);
+    auto id1 = table.create({pupsnes::TokenType::BusRead, 0, 100, 0x2100, 0});
 
     auto woken = table.resolveAt(100);
 

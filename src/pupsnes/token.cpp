@@ -2,11 +2,10 @@
 
 namespace pupsnes {
 
-token_id_t TokenTable::create(TokenType type, device_id_t source, time_master_t completion_time,
-                              snes_addr_t address, uint8_t data) {
+token_id_t TokenTable::create(const TokenCreateParams &params) {
     token_id_t id = next_token_id_++;
-    Token token{id, type, TokenState::Pending, source, completion_time, address, data};
-    tokens_.emplace(id, token);
+    tokens_.emplace(id, Token{id, params.type, TokenState::Pending, params.source_device, params.completion_time,
+                              params.address, params.data});
     return id;
 }
 
@@ -50,8 +49,6 @@ void TokenTable::remove(token_id_t id) {
     blocked_.erase(id);
 }
 
-void TokenTable::setBlocked(token_id_t token_id, device_id_t device_id) {
-    blocked_[token_id] = device_id;
-}
+void TokenTable::setBlocked(token_id_t token_id, device_id_t device_id) { blocked_[token_id] = device_id; }
 
 } // namespace pupsnes

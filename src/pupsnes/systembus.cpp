@@ -5,26 +5,21 @@
 #include "pupsnes/hw/snes.h"
 #include "pupsnes/mem.h"
 
-#include <cstring>
-
 namespace pupsnes {
 
-SystemBus::SystemBus(SNES *snes) : snes_(snes) { std::memset(page_table_, 0, sizeof(page_table_)); }
+SystemBus::SystemBus(SNES *snes) : snes_(snes) {}
 
 SystemBus::~SystemBus() = default;
 
-void SystemBus::mapPage(uint8_t bank, uint8_t page, device_id_t device, uint32_t base_offset,
-                        PageDeviceKind kind, uint8_t access_speed) {
-    PageTableEntry &entry = page_table_[bank][page];
-    entry.device_id = device;
-    entry.base_offset = base_offset;
-    entry.kind = kind;
-    entry.access_speed = access_speed;
+void SystemBus::mapPage(const PageMapParams &params) {
+    PageTableEntry &entry = page_table_[params.bank][params.page];
+    entry.device_id = params.device;
+    entry.base_offset = params.base_offset;
+    entry.kind = params.kind;
+    entry.access_speed = params.access_speed;
 }
 
-void SystemBus::unmapPage(uint8_t bank, uint8_t page) {
-    page_table_[bank][page] = PageTableEntry{};
-}
+void SystemBus::unmapPage(uint8_t bank, uint8_t page) { page_table_[bank][page] = PageTableEntry{}; }
 
 BusPlan SystemBus::plan(snes_addr_t address, BusAccessType type, uint8_t write_data) const {
     snes_addr_t addr = util::wrapAddr(address);
@@ -57,8 +52,7 @@ BusPlan SystemBus::plan(snes_addr_t address, BusAccessType type, uint8_t write_d
     return plan;
 }
 
-BusFollowResult SystemBus::follow(const BusPlan &plan, time_master_t current_time,
-                                  device_id_t source_device) {
+BusFollowResult SystemBus::follow(const BusPlan &plan, time_master_t current_time, device_id_t source_device) {
     switch (plan.outcome) {
     case BusPlanOutcome::InlineComplete:
         return followInline(plan, current_time);
@@ -76,9 +70,8 @@ BusFollowResult SystemBus::followInline(const BusPlan &plan, time_master_t curre
         return {BusPlanOutcome::Rejected, 0, 0};
     }
 
-    const PageTableEntry &entry =
-        page_table_[static_cast<uint8_t>(plan.original_address >> 16)]
-                   [static_cast<uint8_t>((plan.original_address >> 8) & 0xFF)];
+    const PageTableEntry &entry = page_table_[static_cast<uint8_t>(plan.original_address >> 16)]
+                                             [static_cast<uint8_t>((plan.original_address >> 8) & 0xFF)];
 
     if (entry.kind == PageDeviceKind::SameClockMMIO) {
         snes_->scheduler->catchUpDevice(plan.target_device, current_time);
@@ -98,15 +91,14 @@ BusFollowResult SystemBus::followInline(const BusPlan &plan, time_master_t curre
     return result;
 }
 
-BusFollowResult SystemBus::followScheduled(const BusPlan &plan, time_master_t current_time,
-                                           device_id_t source_device) {
-    TokenType token_type =
-        (plan.access_type == BusAccessType::Read) ? TokenType::BusRead : TokenType::BusWrite;
-
-    time_master_t completion_time = current_time + plan.access_cycles;
-
-    token_id_t token_id = snes_->scheduler->createToken(token_type, source_device, completion_time,
-                                                        plan.original_address, plan.write_data);
+BusFollowResult SystemBus::followScheduled(const BusPlan &plan, time_master_t current_time, device_id_t source_device) {
+    token_id_t token_id = snes_->scheduler->createToken({
+        .type = (plan.access_type == BusAccessType::Read) ? TokenType::BusRead : TokenType::BusWrite,
+        .source_device = source_device,
+        .completion_time = current_time + plan.access_cycles,
+        .address = plan.original_address,
+        .data = plan.write_data,
+    });
 
     return {BusPlanOutcome::ScheduledComplete, 0, token_id};
 }

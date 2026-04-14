@@ -19,17 +19,11 @@ class MockMemoryDevice : public Device {
 
     explicit MockMemoryDevice(SNES *snes) : Device(snes) {}
 
-    TickResult tick(time_master_delta_t budget) override {
-        return {budget, TickStopReason::BudgetExhausted};
-    }
+    TickResult tick(time_master_delta_t budget) override { return {budget, TickStopReason::BudgetExhausted}; }
     void onEvent(const SchedulerEvent &) override {}
 
-    uint8_t readRegister(uint32_t offset) override {
-        return memory[offset % SIZE];
-    }
-    void writeRegister(uint32_t offset, uint8_t data) override {
-        memory[offset % SIZE] = data;
-    }
+    uint8_t readRegister(uint32_t offset) override { return memory[offset % SIZE]; }
+    void writeRegister(uint32_t offset, uint8_t data) override { memory[offset % SIZE] = data; }
 };
 
 class MockMMIODevice : public Device {
@@ -64,7 +58,7 @@ TEST_CASE("mapPage and unmapPage populate and clear entries", "[unit]") {
     SNES snes;
     MockMemoryDevice dev(&snes);
 
-    snes.system_bus->mapPage(0x00, 0x21, dev.getDeviceId(), 0, PageDeviceKind::SameClockMMIO, 8);
+    snes.system_bus->mapPage({0x00, 0x21, dev.getDeviceId(), 0, PageDeviceKind::SameClockMMIO, 8});
 
     auto &entry = SystemBusTestAccess::getPageEntry(*snes.system_bus, 0x00, 0x21);
     REQUIRE(entry.device_id == dev.getDeviceId());
@@ -82,7 +76,7 @@ TEST_CASE("plan decodes address to correct target and offset", "[unit]") {
     MockMemoryDevice dev(&snes);
 
     // Map page at bank 0x7E, page 0x00 with base_offset 0
-    snes.system_bus->mapPage(0x7E, 0x00, dev.getDeviceId(), 0, PageDeviceKind::Memory, 8);
+    snes.system_bus->mapPage({0x7E, 0x00, dev.getDeviceId(), 0, PageDeviceKind::Memory, 8});
 
     BusPlan p = snes.system_bus->plan(0x7E0042, BusAccessType::Read);
     REQUIRE(p.outcome == BusPlanOutcome::InlineComplete);
@@ -103,7 +97,7 @@ TEST_CASE("plan is pure and idempotent", "[unit]") {
     SNES snes;
     MockMMIODevice dev(&snes);
 
-    snes.system_bus->mapPage(0x00, 0x21, dev.getDeviceId(), 0x100, PageDeviceKind::SameClockMMIO, 6);
+    snes.system_bus->mapPage({0x00, 0x21, dev.getDeviceId(), 0x100, PageDeviceKind::SameClockMMIO, 6});
 
     BusPlan p1 = snes.system_bus->plan(0x002105, BusAccessType::Read);
     BusPlan p2 = snes.system_bus->plan(0x002105, BusAccessType::Read);
@@ -119,7 +113,7 @@ TEST_CASE("follow InlineComplete read/write for Memory", "[unit]") {
     SNES snes;
     MockMemoryDevice dev(&snes);
 
-    snes.system_bus->mapPage(0x7E, 0x00, dev.getDeviceId(), 0, PageDeviceKind::Memory, 8);
+    snes.system_bus->mapPage({0x7E, 0x00, dev.getDeviceId(), 0, PageDeviceKind::Memory, 8});
 
     // Pre-fill a byte
     dev.memory[0x10] = 0xAB;
@@ -141,7 +135,7 @@ TEST_CASE("follow InlineComplete for SameClockMMIO triggers catch-up", "[unit]")
     SNES snes;
     MockMMIODevice mmio_dev(&snes);
 
-    snes.system_bus->mapPage(0x00, 0x21, mmio_dev.getDeviceId(), 0x100, PageDeviceKind::SameClockMMIO, 6);
+    snes.system_bus->mapPage({0x00, 0x21, mmio_dev.getDeviceId(), 0x100, PageDeviceKind::SameClockMMIO, 6});
 
     // Device starts at time 0; we access at time 100
     REQUIRE(mmio_dev.getTime() == 0);
@@ -150,7 +144,7 @@ TEST_CASE("follow InlineComplete for SameClockMMIO triggers catch-up", "[unit]")
     BusFollowResult result = snes.system_bus->follow(p, 100, mmio_dev.getDeviceId());
 
     REQUIRE(result.outcome == BusPlanOutcome::InlineComplete);
-    REQUIRE(result.data == 0x42); // MockMMIODevice returns 0x42
+    REQUIRE(result.data == 0x42);       // MockMMIODevice returns 0x42
     REQUIRE(mmio_dev.getTime() == 100); // Caught up
     REQUIRE(mmio_dev.tick_calls == 1);
     REQUIRE(mmio_dev.last_read_offset == 0x100); // base_offset + (0x00 & 0xFF)
@@ -160,7 +154,7 @@ TEST_CASE("follow InlineComplete for SameClockMMIO write", "[unit]") {
     SNES snes;
     MockMMIODevice mmio_dev(&snes);
 
-    snes.system_bus->mapPage(0x00, 0x21, mmio_dev.getDeviceId(), 0, PageDeviceKind::SameClockMMIO, 6);
+    snes.system_bus->mapPage({0x00, 0x21, mmio_dev.getDeviceId(), 0, PageDeviceKind::SameClockMMIO, 6});
 
     BusPlan p = snes.system_bus->plan(0x002105, BusAccessType::Write, 0xFF);
     BusFollowResult result = snes.system_bus->follow(p, 50, mmio_dev.getDeviceId());
@@ -176,7 +170,7 @@ TEST_CASE("follow ScheduledComplete for CrossClockMMIO creates token", "[unit]")
     MockMMIODevice source_dev(&snes);
     MockMMIODevice target_dev(&snes);
 
-    snes.system_bus->mapPage(0x00, 0x21, target_dev.getDeviceId(), 0, PageDeviceKind::CrossClockMMIO, 12);
+    snes.system_bus->mapPage({0x00, 0x21, target_dev.getDeviceId(), 0, PageDeviceKind::CrossClockMMIO, 12});
 
     BusPlan p = snes.system_bus->plan(0x002140, BusAccessType::Write, 0xAA);
     REQUIRE(p.outcome == BusPlanOutcome::ScheduledComplete);
@@ -210,8 +204,8 @@ TEST_CASE("page table mirrors: two entries point to same device at different off
     MockMemoryDevice dev(&snes);
 
     // Map two pages to the same device with different base_offsets
-    snes.system_bus->mapPage(0x00, 0x00, dev.getDeviceId(), 0, PageDeviceKind::Memory, 8);
-    snes.system_bus->mapPage(0x80, 0x00, dev.getDeviceId(), 0, PageDeviceKind::Memory, 8);
+    snes.system_bus->mapPage({0x00, 0x00, dev.getDeviceId(), 0, PageDeviceKind::Memory, 8});
+    snes.system_bus->mapPage({0x80, 0x00, dev.getDeviceId(), 0, PageDeviceKind::Memory, 8});
 
     // Write via first mirror
     dev.memory[0x10] = 0xEE;
@@ -227,7 +221,7 @@ TEST_CASE("catch-up does not tick device already at or past target time", "[unit
     SNES snes;
     MockMMIODevice mmio_dev(&snes);
 
-    snes.system_bus->mapPage(0x00, 0x21, mmio_dev.getDeviceId(), 0, PageDeviceKind::SameClockMMIO, 6);
+    snes.system_bus->mapPage({0x00, 0x21, mmio_dev.getDeviceId(), 0, PageDeviceKind::SameClockMMIO, 6});
 
     // Advance device past the access time
     mmio_dev.advanceLocalTime(200);
@@ -237,7 +231,7 @@ TEST_CASE("catch-up does not tick device already at or past target time", "[unit
     BusFollowResult result = snes.system_bus->follow(p, 100, mmio_dev.getDeviceId());
 
     REQUIRE(result.outcome == BusPlanOutcome::InlineComplete);
-    REQUIRE(mmio_dev.tick_calls == 0); // No catch-up needed
+    REQUIRE(mmio_dev.tick_calls == 0);  // No catch-up needed
     REQUIRE(mmio_dev.getTime() == 200); // Unchanged
 }
 
@@ -245,7 +239,7 @@ TEST_CASE("multiple sequential plan/follow operations", "[unit]") {
     SNES snes;
     MockMemoryDevice dev(&snes);
 
-    snes.system_bus->mapPage(0x7E, 0x00, dev.getDeviceId(), 0, PageDeviceKind::Memory, 8);
+    snes.system_bus->mapPage({0x7E, 0x00, dev.getDeviceId(), 0, PageDeviceKind::Memory, 8});
 
     // Write then read at two different offsets
     BusPlan w1 = snes.system_bus->plan(0x7E0000, BusAccessType::Write, 0x11);

@@ -30,8 +30,7 @@ Scheduler::Scheduler(SNES *snes) : snes(snes) {}
 Scheduler::~Scheduler() = default;
 
 void Scheduler::scheduleEvent(time_master_t time, Device *source, SchedulerPhase subphase, EventType type) {
-    SchedulerEvent event(time, source, nextEventSeq++, subphase, type);
-    eventQueue.push(event);
+    eventQueue.push({time, source, nextEventSeq++, subphase, type});
 }
 
 void Scheduler::step() {
@@ -74,7 +73,7 @@ void Scheduler::step() {
     case SchedulerPhase::Run: {
         if (event.type == EventType::DeviceRun) {
             auto result = event.source->tick(computeBudget(event.time));
-            event.source->advanceLocalTime(result.completedCycles);
+            event.source->advanceLocalTime(result.completed_cycles);
             if (result.reason == TickStopReason::BlockedOnToken) {
                 token_table_.setBlocked(result.blocked_token, event.source->getDeviceId());
             }
@@ -97,11 +96,10 @@ time_master_delta_t Scheduler::computeBudget(time_master_t now) const {
     return budget;
 }
 
-token_id_t Scheduler::createToken(TokenType type, device_id_t source,
-                                  time_master_t completion_time, snes_addr_t address, uint8_t data) {
-    token_id_t id = token_table_.create(type, source, completion_time, address, data);
-    Device *device = snes->getDevice(source);
-    scheduleEvent(completion_time, device, SchedulerPhase::CommitComplete, EventType::DeviceRun);
+token_id_t Scheduler::createToken(const TokenCreateParams &params) {
+    token_id_t id = token_table_.create(params);
+    Device *device = snes->getDevice(params.source_device);
+    scheduleEvent(params.completion_time, device, SchedulerPhase::CommitComplete, EventType::DeviceRun);
     return id;
 }
 
@@ -119,7 +117,7 @@ void Scheduler::catchUpDevice(device_id_t device_id, time_master_t target_time) 
     }
     time_master_delta_t delta = target_time - device->getTime();
     auto result = device->tick(delta);
-    device->advanceLocalTime(result.completedCycles);
+    device->advanceLocalTime(result.completed_cycles);
 }
 
 void Scheduler::debugPrintNextEvent() {

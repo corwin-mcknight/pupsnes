@@ -15,8 +15,7 @@ pupsnes::Device::Device(SNES *snes) : snes(snes) {
 
 // --- SNES ---
 
-pupsnes::SNES::SNES()
-    : scheduler(std::make_unique<Scheduler>(this)), system_bus(std::make_unique<SystemBus>(this)) {}
+pupsnes::SNES::SNES() : scheduler(std::make_unique<Scheduler>(this)), system_bus(std::make_unique<SystemBus>(this)) {}
 pupsnes::SNES::~SNES() = default;
 
 pupsnes::device_id_t pupsnes::SNES::registerDevice(Device *device) {
