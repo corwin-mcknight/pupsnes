@@ -36,6 +36,11 @@ struct TokenCreateParams {
     uint8_t data = 0;
 };
 
+struct TokenWake {
+    token_id_t token_id;
+    device_id_t device_id;
+};
+
 class TokenTable {
   public:
     TokenTable() = default;
@@ -47,8 +52,8 @@ class TokenTable {
     void complete(token_id_t id, uint8_t data);
 
     /// Resolve all pending tokens whose completion_time == now.
-    /// Returns device IDs that were blocked and should be woken.
-    std::vector<device_id_t> resolveAt(time_master_t now);
+    /// Returns token/device pairs that were blocked and should be considered for wake.
+    std::vector<TokenWake> resolveAt(time_master_t now);
 
     void remove(token_id_t id);
 

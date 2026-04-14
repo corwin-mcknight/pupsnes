@@ -109,24 +109,24 @@ void CPU::executeInternalOp(MicroInternalOp op) {
     }
 }
 
-std::optional<TickResult> CPU::busRead(snes_addr_t addr, time_master_delta_t consumed) {
+std::optional<TickResult> CPU::busRead(snes_addr_t addr, time_master_delta_t cycle_time) {
     auto plan = snes->system_bus->plan(addr, BusAccessType::Read);
-    auto result = snes->system_bus->follow(plan, local_time, device_id_);
+    auto result = snes->system_bus->follow(plan, local_time + cycle_time, device_id_);
 
     if (result.outcome == BusPlanOutcome::ScheduledComplete) {
-        return TickResult{consumed, TickStopReason::BlockedOnToken, result.token};
+        return TickResult{cycle_time, TickStopReason::BlockedOnToken, result.token};
     }
 
     fetch_data_ = result.data;
     return std::nullopt;
 }
 
-std::optional<TickResult> CPU::busWrite(snes_addr_t addr, uint8_t data, time_master_delta_t consumed) {
+std::optional<TickResult> CPU::busWrite(snes_addr_t addr, uint8_t data, time_master_delta_t cycle_time) {
     auto plan = snes->system_bus->plan(addr, BusAccessType::Write, data);
-    auto result = snes->system_bus->follow(plan, local_time, device_id_);
+    auto result = snes->system_bus->follow(plan, local_time + cycle_time, device_id_);
 
     if (result.outcome == BusPlanOutcome::ScheduledComplete) {
-        return TickResult{consumed, TickStopReason::BlockedOnToken, result.token};
+        return TickResult{cycle_time, TickStopReason::BlockedOnToken, result.token};
     }
 
     return std::nullopt;
@@ -135,12 +135,12 @@ std::optional<TickResult> CPU::busWrite(snes_addr_t addr, uint8_t data, time_mas
 snes_addr_t CPU::pcAddr() const { return (static_cast<uint32_t>(regs_.PBR) << 16U) | static_cast<uint32_t>(regs_.PC); }
 
 TickResult CPU::tick(time_master_delta_t budget) {
-    time_master_delta_t consumed = 0;
+    time_master_delta_t cycle_time = 0;
 
-    while (consumed < budget) {
+    while (cycle_time < budget) {
         if (micro_op_index_ == 0) {
             // Cycle 0 of every instruction: fetch opcode from PBR:PC.
-            if (auto blocked = busRead(pcAddr(), consumed)) {
+            if (auto blocked = busRead(pcAddr(), cycle_time)) {
                 return *blocked;
             }
             regs_.PC = static_cast<uint16_t>(regs_.PC + 1U);
@@ -161,20 +161,20 @@ TickResult CPU::tick(time_master_delta_t budget) {
 
             switch (mop.bus_action) {
             case MicroBusAction::FetchPC: {
-                if (auto blocked = busRead(pcAddr(), consumed)) {
+                if (auto blocked = busRead(pcAddr(), cycle_time)) {
                     return *blocked;
                 }
                 regs_.PC = static_cast<uint16_t>(regs_.PC + 1U);
                 break;
             }
             case MicroBusAction::ReadAddr: {
-                if (auto blocked = busRead(addr_, consumed)) {
+                if (auto blocked = busRead(addr_, cycle_time)) {
                     return *blocked;
                 }
                 break;
             }
             case MicroBusAction::WriteAddr: {
-                if (auto blocked = busWrite(addr_, fetch_data_, consumed)) {
+                if (auto blocked = busWrite(addr_, fetch_data_, cycle_time)) {
                     return *blocked;
                 }
                 break;
@@ -187,15 +187,15 @@ TickResult CPU::tick(time_master_delta_t budget) {
             micro_op_index_++;
         }
 
-        consumed++;
-        local_time++;
+        cycle_time++;
     }
 
-    return {consumed, TickStopReason::BudgetExhausted, 0};
+    return {cycle_time, TickStopReason::BudgetExhausted};
 }
 
 void CPU::onEvent(const SchedulerEvent & /*event*/) {
-    // TODO: handle CommitComplete (token wake) and WakeSample (signal sampling).
+    // CommitComplete/WakeSample do not currently require CPU-side mutation.
+    // The scheduler wakes blocked CPU runs by replacing the authoritative Run wake.
 }
 
 } // namespace pupsnes

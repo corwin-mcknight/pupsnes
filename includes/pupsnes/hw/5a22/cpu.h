@@ -106,10 +106,10 @@ class CPU : public Device {
     // Execute a bus read. Returns a TickResult if the access blocks (caller must return it).
     // On inline completion, writes the read byte to fetch_data_ and returns nullopt.
     // On rejected (unmapped), writes 0xFF to fetch_data_ and returns nullopt.
-    [[nodiscard]] std::optional<TickResult> busRead(snes_addr_t addr, time_master_delta_t consumed);
+    [[nodiscard]] std::optional<TickResult> busRead(snes_addr_t addr, time_master_delta_t cycle_time);
 
     // Execute a bus write. Returns a TickResult if the access blocks, nullopt otherwise.
-    [[nodiscard]] std::optional<TickResult> busWrite(snes_addr_t addr, uint8_t data, time_master_delta_t consumed);
+    [[nodiscard]] std::optional<TickResult> busWrite(snes_addr_t addr, uint8_t data, time_master_delta_t cycle_time);
 };
 
 } // namespace pupsnes

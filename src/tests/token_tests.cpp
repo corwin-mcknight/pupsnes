@@ -50,7 +50,7 @@ TEST_CASE("TokenTable resolveAt completes tokens due at given time", "[unit]") {
     auto id2 = table.create({pupsnes::TokenType::BusRead, 1, 200, 0x2101, 0});
     auto id3 = table.create({pupsnes::TokenType::BusWrite, 2, 100, 0x2102, 0xFF});
 
-    auto woken = table.resolveAt(100);
+    (void)table.resolveAt(100);
 
     REQUIRE(table.get(id1)->state == pupsnes::TokenState::Completed);
     REQUIRE(table.get(id3)->state == pupsnes::TokenState::Completed);
@@ -81,8 +81,8 @@ TEST_CASE("TokenTable resolveAt returns device IDs to wake", "[unit]") {
     auto woken = table.resolveAt(100);
 
     REQUIRE(woken.size() == 2);
-    bool has_dev0 = (woken[0] == 0 || woken[1] == 0);
-    bool has_dev1 = (woken[0] == 1 || woken[1] == 1);
+    bool has_dev0 = (woken[0].device_id == 0 || woken[1].device_id == 0);
+    bool has_dev1 = (woken[0].device_id == 1 || woken[1].device_id == 1);
     REQUIRE(has_dev0);
     REQUIRE(has_dev1);
 }

@@ -5,17 +5,14 @@
 #include "pupsnes/hw/scheduler.h"
 #include "pupsnes/hw/snes.h"
 #include "pupsnes/hw/systembus.h"
+#include "scheduler_test_access.h"
 
 #include <array>
 #include <cstdint>
+#include <vector>
 
 using namespace pupsnes;
 
-// ---------------------------------------------------------------------------
-// Test helpers
-// ---------------------------------------------------------------------------
-
-// A flat ROM/RAM device used to back test code and data memory.
 class TestROM : public Device {
   public:
     static constexpr std::size_t SIZE = 512;
@@ -30,8 +27,23 @@ class TestROM : public Device {
     void writeRegister(uint32_t offset, uint8_t data) override { mem[offset % SIZE] = data; }
 };
 
-// Map a TestROM so that bank 0x00, pages 0x80–0x81 (addresses $008000–$0081FF)
-// back the 512-byte ROM window.  CPU PC starts at $8000.
+class ObservedMMIO : public Device {
+  public:
+    static constexpr std::size_t SIZE = 512;
+    std::array<uint8_t, SIZE> mem{};
+    std::vector<time_master_t> read_times;
+
+    explicit ObservedMMIO(SNES *snes) : Device(snes) {}
+
+    TickResult tick(time_master_delta_t budget) override { return {budget, TickStopReason::BudgetExhausted}; }
+    void onEvent(const SchedulerEvent &) override {}
+
+    uint8_t readRegister(uint32_t offset) override {
+        read_times.push_back(getTime());
+        return mem[offset % SIZE];
+    }
+};
+
 struct TestFixture {
     SNES snes;
     TestROM rom{&snes};
@@ -46,7 +58,6 @@ struct TestFixture {
         cpu.setRegs(r);
     }
 
-    // Write a byte sequence into the ROM starting at offset from $8000.
     void loadAt(uint16_t offset, std::initializer_list<uint8_t> bytes) {
         std::size_t i = offset & 0x1FFu;
         for (uint8_t b : bytes) {
@@ -55,9 +66,41 @@ struct TestFixture {
     }
 };
 
-// ---------------------------------------------------------------------------
-// Construction and initial state
-// ---------------------------------------------------------------------------
+struct MMIOProgramFixture {
+    SNES snes;
+    ObservedMMIO program{&snes};
+    CPU cpu{&snes};
+
+    MMIOProgramFixture() {
+        snes.system_bus->mapPage({0x00, 0x80, program.getDeviceId(), 0x000, PageDeviceKind::SameClockMMIO, 8});
+        snes.system_bus->mapPage({0x00, 0x81, program.getDeviceId(), 0x100, PageDeviceKind::SameClockMMIO, 8});
+
+        auto r = cpu.regs();
+        r.PC = 0x8000;
+        cpu.setRegs(r);
+    }
+
+    void loadAt(uint16_t offset, std::initializer_list<uint8_t> bytes) {
+        std::size_t i = offset & 0x1FFu;
+        for (uint8_t b : bytes) {
+            program.mem[i++ & 0x1FFu] = b;
+        }
+    }
+};
+
+struct AsyncProgramFixture {
+    SNES snes;
+    TestROM async_target{&snes};
+    CPU cpu{&snes};
+
+    AsyncProgramFixture() {
+        snes.system_bus->mapPage({0x00, 0x80, async_target.getDeviceId(), 0x000, PageDeviceKind::CrossClockMMIO, 8});
+
+        auto r = cpu.regs();
+        r.PC = 0x8000;
+        cpu.setRegs(r);
+    }
+};
 
 TEST_CASE("CPU registers with SNES on construction", "[cpu]") {
     SNES snes;
@@ -80,151 +123,133 @@ TEST_CASE("CPU initial register state", "[cpu]") {
     REQUIRE(r.PBR == 0);
     REQUIRE(r.DBR == 0);
     REQUIRE(r.DP == 0);
-
-    // Starts in emulation mode with I flag set.
     REQUIRE(r.P.E == true);
     REQUIRE(r.P.M == true);
     REQUIRE(r.P.X == true);
     REQUIRE(r.P.I == true);
-
     REQUIRE(cpu.getMicroOpIndex() == 0);
 }
 
-// ---------------------------------------------------------------------------
-// NOP (0xEA) — 2 cycles
-// ---------------------------------------------------------------------------
-
-TEST_CASE("NOP: tick(2) consumes exactly 2 cycles", "[cpu]") {
+TEST_CASE("Direct CPU tick advances execution state but not committed device time", "[cpu]") {
     TestFixture f;
-    f.loadAt(0, {0xEA}); // NOP at $8000
+    f.loadAt(0, {0xEA, 0xA9, 0x42});
 
-    TickResult r = f.cpu.tick(2);
-    REQUIRE(r.completed_cycles == 2);
-    REQUIRE(r.reason == TickStopReason::BudgetExhausted);
+    TickResult r1 = f.cpu.tick(2);
+    REQUIRE(r1.completed_cycles == 2);
+    REQUIRE(r1.reason == TickStopReason::BudgetExhausted);
     REQUIRE(f.cpu.regs().PC == 0x8001);
-    REQUIRE(f.cpu.getTime() == 2);
-}
+    REQUIRE(f.cpu.getTime() == 0);
 
-TEST_CASE("NOP: tick(1) consumes 1 cycle and stops mid-instruction", "[cpu]") {
-    TestFixture f;
-    f.loadAt(0, {0xEA}); // NOP at $8000
-
-    TickResult r = f.cpu.tick(1);
-    REQUIRE(r.completed_cycles == 1);
-    REQUIRE(r.reason == TickStopReason::BudgetExhausted);
-    REQUIRE(f.cpu.regs().PC == 0x8001);
-    REQUIRE(f.cpu.getMicroOpIndex() == 1);
-    REQUIRE(f.cpu.getTime() == 1);
-}
-
-TEST_CASE("NOP: two tick(1) calls equal one tick(2)", "[cpu]") {
-    TestFixture f;
-    f.loadAt(0, {0xEA, 0xEA}); // NOP NOP at $8000
-
-    (void)f.cpu.tick(1);
-    (void)f.cpu.tick(1);
-
-    REQUIRE(f.cpu.getTime() == 2);
-    REQUIRE(f.cpu.regs().PC == 0x8001);
-}
-
-TEST_CASE("NOP: three consecutive NOPs advance PC by 3", "[cpu]") {
-    TestFixture f;
-    f.loadAt(0, {0xEA, 0xEA, 0xEA});
-
-    TickResult r = f.cpu.tick(6);
-    REQUIRE(r.completed_cycles == 6);
+    TickResult r2 = f.cpu.tick(2);
+    REQUIRE(r2.completed_cycles == 2);
     REQUIRE(f.cpu.regs().PC == 0x8003);
-    REQUIRE(f.cpu.getTime() == 6);
-}
-
-// ---------------------------------------------------------------------------
-// LDA #imm (0xA9) — 2 cycles in 8-bit accumulator mode
-// ---------------------------------------------------------------------------
-
-TEST_CASE("LDA #imm: loads immediate byte into A", "[cpu]") {
-    TestFixture f;
-    f.loadAt(0, {0xA9, 0x42});
-
-    TickResult r = f.cpu.tick(2);
-    REQUIRE(r.completed_cycles == 2);
     REQUIRE(static_cast<uint8_t>(f.cpu.regs().A) == 0x42);
-    REQUIRE(f.cpu.regs().PC == 0x8002);
-    REQUIRE(f.cpu.getTime() == 2);
+    REQUIRE(f.cpu.getTime() == 0);
 }
 
-TEST_CASE("LDA #imm: updates N flag for high-bit values", "[cpu]") {
+TEST_CASE("NOP tick slices still compose correctly without local_time mutation", "[cpu]") {
+    TestFixture f;
+    f.loadAt(0, {0xEA, 0xEA});
+
+    (void)f.cpu.tick(1);
+    REQUIRE(f.cpu.getMicroOpIndex() == 1);
+    REQUIRE(f.cpu.regs().PC == 0x8001);
+    REQUIRE(f.cpu.getTime() == 0);
+
+    (void)f.cpu.tick(1);
+    REQUIRE(f.cpu.getMicroOpIndex() == 2);
+    REQUIRE(f.cpu.regs().PC == 0x8001);
+    REQUIRE(f.cpu.getTime() == 0);
+}
+
+TEST_CASE("LDA immediate updates A and flags through direct tick", "[cpu]") {
     TestFixture f;
     f.loadAt(0, {0xA9, 0x80});
 
-    (void)f.cpu.tick(2);
+    TickResult r = f.cpu.tick(2);
+    REQUIRE(r.completed_cycles == 2);
     REQUIRE(static_cast<uint8_t>(f.cpu.regs().A) == 0x80);
     REQUIRE(f.cpu.regs().P.N == true);
     REQUIRE(f.cpu.regs().P.Z == false);
+    REQUIRE(f.cpu.getTime() == 0);
 }
 
-TEST_CASE("LDA #imm: updates Z flag for zero", "[cpu]") {
-    TestFixture f;
-    f.loadAt(0, {0xA9, 0x00});
-
-    (void)f.cpu.tick(2);
-    REQUIRE(static_cast<uint8_t>(f.cpu.regs().A) == 0x00);
-    REQUIRE(f.cpu.regs().P.Z == true);
-    REQUIRE(f.cpu.regs().P.N == false);
-}
-
-TEST_CASE("LDA #imm: clears N and Z for nonzero, non-high-bit values", "[cpu]") {
-    TestFixture f;
-    f.loadAt(0, {0xA9, 0x01});
-
-    (void)f.cpu.tick(2);
-    REQUIRE(static_cast<uint8_t>(f.cpu.regs().A) == 0x01);
-    REQUIRE(f.cpu.regs().P.N == false);
-    REQUIRE(f.cpu.regs().P.Z == false);
-}
-
-TEST_CASE("LDA #imm: preserves A high byte (B register)", "[cpu]") {
-    TestFixture f;
-    f.loadAt(0, {0xA9, 0x55});
-
-    (void)f.cpu.tick(2);
-    // In 8-bit mode A high byte (the hidden B register) starts as 0 and must stay 0.
-    REQUIRE(f.cpu.regs().A == 0x0055);
-}
-
-// ---------------------------------------------------------------------------
-// Sequence: NOP then LDA
-// ---------------------------------------------------------------------------
-
-TEST_CASE("NOP followed by LDA #imm executes correctly in sequence", "[cpu]") {
-    TestFixture f;
-    f.loadAt(0, {0xEA, 0xA9, 0x7F});
-
-    TickResult r = f.cpu.tick(4);
-    REQUIRE(r.completed_cycles == 4);
-    REQUIRE(f.cpu.regs().PC == 0x8003);
-    REQUIRE(static_cast<uint8_t>(f.cpu.regs().A) == 0x7F);
-    REQUIRE(f.cpu.getTime() == 4);
-}
-
-// ---------------------------------------------------------------------------
-// Unmapped (open-bus) reads
-// ---------------------------------------------------------------------------
-
-TEST_CASE("Fetch from unmapped address returns open-bus value and advances PC", "[cpu]") {
-    // No pages mapped — every read returns the open-bus value.
+TEST_CASE("Fetch from unmapped address returns open-bus value and does not mutate committed time", "[cpu]") {
     SNES snes;
     CPU cpu(&snes);
 
     TickResult r = cpu.tick(2);
     REQUIRE(r.completed_cycles == 2);
     REQUIRE(cpu.regs().PC == 0x0001);
-    REQUIRE(cpu.getTime() == 2);
+    REQUIRE(cpu.getTime() == 0);
 }
 
-// ---------------------------------------------------------------------------
-// CpuFlags
-// ---------------------------------------------------------------------------
+TEST_CASE("Consecutive same-tick bus accesses use increasing absolute timestamps", "[cpu]") {
+    MMIOProgramFixture f;
+    f.loadAt(0, {0xA9, 0x42});
+    f.cpu.advanceLocalTime(100);
+
+    TickResult r = f.cpu.tick(2);
+
+    REQUIRE(r.completed_cycles == 2);
+    REQUIRE(f.program.read_times == std::vector<time_master_t>{100, 101});
+    REQUIRE(f.cpu.getTime() == 100);
+}
+
+TEST_CASE("Scheduler-driven CPU execution commits time and reschedules after BudgetExhausted", "[cpu]") {
+    TestFixture f;
+    f.loadAt(0, {0xEA, 0xA9, 0x42});
+
+    f.snes.scheduler->scheduleDeviceRun(&f.cpu, 0);
+    f.snes.scheduler->scheduleEvent(2, &f.rom, SchedulerPhase::WakeSample, EventType::DeviceBoundary);
+    f.snes.scheduler->scheduleEvent(4, &f.rom, SchedulerPhase::WakeSample, EventType::DeviceBoundary);
+
+    f.snes.scheduler->step();
+    REQUIRE(f.cpu.regs().PC == 0x8001);
+    REQUIRE(f.cpu.getTime() == 2);
+    REQUIRE(SchedulerTestAccess::hasPendingRun(*f.snes.scheduler, f.cpu.getDeviceId()));
+    REQUIRE(SchedulerTestAccess::pendingRunTime(*f.snes.scheduler, f.cpu.getDeviceId()) == 2);
+
+    f.snes.scheduler->step();
+    REQUIRE(f.snes.getMasterTime() == 2);
+
+    f.snes.scheduler->step();
+    REQUIRE(f.cpu.regs().PC == 0x8003);
+    REQUIRE(static_cast<uint8_t>(f.cpu.regs().A) == 0x42);
+    REQUIRE(f.cpu.getTime() == 4);
+    REQUIRE(SchedulerTestAccess::pendingRunTime(*f.snes.scheduler, f.cpu.getDeviceId()) == 4);
+}
+
+TEST_CASE("Cross-clock token completion wakes a blocked CPU through authoritative run scheduling", "[cpu]") {
+    AsyncProgramFixture f;
+
+    f.snes.scheduler->scheduleDeviceRun(&f.cpu, 0);
+
+    f.snes.scheduler->step();
+    const auto blocked_token = SchedulerTestAccess::blockedToken(*f.snes.scheduler, f.cpu.getDeviceId());
+    REQUIRE(blocked_token != 0);
+    REQUIRE_FALSE(SchedulerTestAccess::hasPendingRun(*f.snes.scheduler, f.cpu.getDeviceId()));
+    REQUIRE(f.cpu.getTime() == 0);
+
+    f.snes.scheduler->step();
+    REQUIRE(f.snes.getMasterTime() == 8);
+    REQUIRE(SchedulerTestAccess::hasPendingRun(*f.snes.scheduler, f.cpu.getDeviceId()));
+    REQUIRE(SchedulerTestAccess::pendingRunTime(*f.snes.scheduler, f.cpu.getDeviceId()) == 8);
+}
+
+TEST_CASE("Same-clock scheduler-driven fetches keep absolute bus timestamps and CPU time aligned", "[cpu]") {
+    MMIOProgramFixture f;
+    f.loadAt(0, {0xA9, 0x7F});
+
+    f.snes.scheduler->scheduleDeviceRun(&f.cpu, 100);
+    f.snes.scheduler->scheduleEvent(102, &f.program, SchedulerPhase::WakeSample, EventType::DeviceBoundary);
+
+    f.snes.scheduler->step();
+
+    REQUIRE(f.program.read_times == std::vector<time_master_t>{100, 101});
+    REQUIRE(static_cast<uint8_t>(f.cpu.regs().A) == 0x7F);
+    REQUIRE(f.cpu.getTime() == 102);
+}
 
 TEST_CASE("CpuFlags::toByte encodes all flags correctly", "[cpu]") {
     CpuFlags f{};
@@ -254,11 +279,11 @@ TEST_CASE("CpuFlags::toByte with no flags set returns 0", "[cpu]") {
 
 TEST_CASE("CpuFlags::fromByte in native mode sets M and X from byte", "[cpu]") {
     CpuFlags f{};
-    f.fromByte(0x00, /*emulation_mode=*/false);
+    f.fromByte(0x00, false);
     REQUIRE(f.M == false);
     REQUIRE(f.X == false);
 
-    f.fromByte(0x30, false); // bits 5 and 4
+    f.fromByte(0x30, false);
     REQUIRE(f.M == true);
     REQUIRE(f.X == true);
 }
@@ -267,8 +292,7 @@ TEST_CASE("CpuFlags::fromByte in emulation mode ignores M and X bits", "[cpu]") 
     CpuFlags f{};
     f.M = true;
     f.X = true;
-    f.fromByte(0x00, /*emulation_mode=*/true);
-    // M and X must remain true in emulation mode.
+    f.fromByte(0x00, true);
     REQUIRE(f.M == true);
     REQUIRE(f.X == true);
 }

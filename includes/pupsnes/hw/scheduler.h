@@ -12,6 +12,7 @@ namespace pupsnes {
 
 class SNES;
 class Device;
+struct TickResult;
 
 /// Phases a scheduler may be in.
 enum class SchedulerPhase : uint8_t { CommitComplete = 0, WakeSample = 1, Run = 2 };
@@ -29,6 +30,7 @@ struct SchedulerEvent {
     event_seq_t seq;
     SchedulerPhase subphase;
     EventType type;
+    uint64_t run_generation = 0;
 };
 
 struct SchedulerEventComparator {
@@ -40,13 +42,33 @@ struct SchedulerEventComparator {
 class Scheduler {
   private:
     using EventMinHeap = std::priority_queue<SchedulerEvent, std::vector<SchedulerEvent>, SchedulerEventComparator>;
+    struct DeviceRunState {
+        bool has_pending_run = false;
+        time_master_t pending_run_time = 0;
+        uint64_t run_generation = 0;
+        token_id_t blocked_token = 0;
+        time_master_t zero_progress_time = 0;
+        uint32_t zero_progress_count = 0;
+    };
 
     SNES *snes; // Non-owning. SNES owns this Scheduler; pointer back to parent.
     SchedulerPhase phase = SchedulerPhase::CommitComplete;
     EventMinHeap eventQueue;
+    std::vector<DeviceRunState> device_run_states_;
 
     event_seq_t nextEventSeq = 0;
     TokenTable token_table_;
+
+    [[nodiscard]] DeviceRunState &ensureRunState(device_id_t device_id);
+    [[nodiscard]] const DeviceRunState *findRunState(device_id_t device_id) const;
+    void alignDeviceTime(Device *device, time_master_t time);
+    void clearPendingRun(DeviceRunState &state);
+    void resetZeroProgressGuard(DeviceRunState &state);
+    void recordZeroProgressRun(DeviceRunState &state, const Device &device);
+    void validateTickResult(const Device &device, const TickResult &result, time_master_delta_t budget) const;
+    [[nodiscard]] bool isStaleRunEvent(const SchedulerEvent &event) const;
+    void discardStaleRunEventsAtHead();
+    void handleRunResult(Device *device, const TickResult &result);
 
     friend struct SchedulerTestAccess;
 
@@ -57,7 +79,9 @@ class Scheduler {
     Scheduler(SNES *snes);
     ~Scheduler();
 
-    void scheduleEvent(time_master_t time, Device *source, SchedulerPhase subphase, EventType type);
+    void scheduleEvent(time_master_t time, Device *source, SchedulerPhase subphase, EventType type,
+                       uint64_t run_generation = 0);
+    void scheduleDeviceRun(Device *device, time_master_t time);
 
     void step();
     [[nodiscard]] time_master_delta_t computeBudget(time_master_t now) const;

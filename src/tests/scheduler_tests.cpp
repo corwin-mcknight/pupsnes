@@ -6,33 +6,85 @@
 #include "pupsnes/hw/token.h"
 #include "scheduler_test_access.h"
 
+#include <cstddef>
+#include <deque>
+#include <functional>
 #include <memory>
+#include <stdexcept>
 #include <vector>
 
 namespace {
-class FakeDevice : public pupsnes::Device {
+
+class ScriptedDevice : public pupsnes::Device {
   public:
-    explicit FakeDevice(pupsnes::SNES *snes) : pupsnes::Device(snes) {}
+    using TickScript = std::function<pupsnes::TickResult(ScriptedDevice &, pupsnes::time_master_delta_t)>;
+
+    explicit ScriptedDevice(pupsnes::SNES *snes) : pupsnes::Device(snes) {}
+
+    pupsnes::TickResult tick(pupsnes::time_master_delta_t budget) override {
+        ++tick_calls;
+        start_times.push_back(getTime());
+        budgets.push_back(budget);
+
+        if (scripts.empty()) {
+            return {budget, pupsnes::TickStopReason::BudgetExhausted};
+        }
+
+        TickScript script = scripts.front();
+        scripts.pop_front();
+        return script(*this, budget);
+    }
+
+    void onEvent(const pupsnes::SchedulerEvent &event) override {
+        ++event_calls;
+        seen_events.push_back(event);
+    }
+
+    void pushScript(TickScript script) { scripts.push_back(std::move(script)); }
+
+    void pushResult(const pupsnes::TickResult &result) {
+        scripts.push_back([result](ScriptedDevice &, pupsnes::time_master_delta_t) { return result; });
+    }
+
+    int tick_calls = 0;
+    int event_calls = 0;
+    std::vector<pupsnes::time_master_t> start_times;
+    std::vector<pupsnes::time_master_delta_t> budgets;
+    std::vector<pupsnes::SchedulerEvent> seen_events;
+
+  private:
+    std::deque<TickScript> scripts;
+};
+
+class DynamicTokenObserverDevice : public pupsnes::Device {
+  public:
+    explicit DynamicTokenObserverDevice(pupsnes::SNES *snes) : pupsnes::Device(snes) {}
 
     pupsnes::TickResult tick(pupsnes::time_master_delta_t budget) override {
         ++tick_calls;
         last_budget = budget;
-        return {budget, pupsnes::TickStopReason::BudgetExhausted};
+        if (watched_token != 0) {
+            const auto *token = snes->scheduler->getToken(watched_token);
+            saw_completed_token = token != nullptr && token->state == pupsnes::TokenState::Completed;
+        }
+        return {budget, pupsnes::TickStopReason::NoWork};
     }
 
-    void onEvent(const pupsnes::SchedulerEvent &) override { ++event_calls; }
+    void onEvent(const pupsnes::SchedulerEvent &) override {}
 
+    pupsnes::token_id_t watched_token = 0;
+    bool saw_completed_token = false;
     int tick_calls = 0;
-    int event_calls = 0;
     pupsnes::time_master_delta_t last_budget = 0;
 };
+
 } // namespace
 
 TEST_CASE("SNES assigns stable device IDs", "[unit]") {
     pupsnes::SNES snes;
-    FakeDevice dev1(&snes);
-    FakeDevice dev2(&snes);
-    FakeDevice dev3(&snes);
+    ScriptedDevice dev1(&snes);
+    ScriptedDevice dev2(&snes);
+    ScriptedDevice dev3(&snes);
 
     REQUIRE(dev1.getDeviceId() == 0);
     REQUIRE(dev2.getDeviceId() == 1);
@@ -46,7 +98,7 @@ TEST_CASE("SNES assigns stable device IDs", "[unit]") {
 
 TEST_CASE("Scheduler orders events by time, subphase, type, and seq", "[unit]") {
     pupsnes::Scheduler scheduler(nullptr);
-    FakeDevice device(nullptr);
+    ScriptedDevice device(nullptr);
 
     scheduler.scheduleEvent(5, &device, pupsnes::SchedulerPhase::Run, pupsnes::EventType::DeviceBoundary);
     scheduler.scheduleEvent(5, &device, pupsnes::SchedulerPhase::Run, pupsnes::EventType::DeviceRun);
@@ -68,7 +120,7 @@ TEST_CASE("Scheduler orders events by time, subphase, type, and seq", "[unit]") 
 
 TEST_CASE("Scheduler uses sequence as final tiebreaker", "[unit]") {
     pupsnes::Scheduler scheduler(nullptr);
-    FakeDevice device(nullptr);
+    ScriptedDevice device(nullptr);
 
     scheduler.scheduleEvent(3, &device, pupsnes::SchedulerPhase::Run, pupsnes::EventType::DeviceRun);
     scheduler.scheduleEvent(3, &device, pupsnes::SchedulerPhase::Run, pupsnes::EventType::DeviceRun);
@@ -79,320 +131,358 @@ TEST_CASE("Scheduler uses sequence as final tiebreaker", "[unit]") {
     REQUIRE(first.seq < second.seq);
 }
 
-TEST_CASE("Scheduler step advances time and consumes the next event", "[unit]") {
+TEST_CASE("Scheduler step advances time and dispatches non-run events", "[unit]") {
     pupsnes::SNES snes;
-    FakeDevice device(&snes);
+    ScriptedDevice device(&snes);
 
-    snes.scheduler->scheduleEvent(5, &device, pupsnes::SchedulerPhase::Run, pupsnes::EventType::DeviceRun);
-
-    REQUIRE(pupsnes::SchedulerTestAccess::eventQueueSize(*snes.scheduler) == 1);
-    REQUIRE(snes.getMasterTime() == 0);
+    snes.scheduler->scheduleEvent(5, &device, pupsnes::SchedulerPhase::WakeSample, pupsnes::EventType::DeviceBoundary);
 
     snes.scheduler->step();
 
     REQUIRE(snes.getMasterTime() == 5);
-    REQUIRE(pupsnes::SchedulerTestAccess::eventQueueSize(*snes.scheduler) == 0);
+    REQUIRE(device.event_calls == 1);
+    REQUIRE(device.tick_calls == 0);
 }
 
-TEST_CASE("Scheduler step runs devices scheduled for Run", "[unit]") {
+TEST_CASE("Scheduler aligns device time to its wake and commits completed cycles exactly once", "[unit]") {
     pupsnes::SNES snes;
-    FakeDevice device(&snes);
+    ScriptedDevice device(&snes);
 
-    snes.scheduler->scheduleEvent(4, &device, pupsnes::SchedulerPhase::Run, pupsnes::EventType::DeviceRun);
-
+    device.pushResult({3, pupsnes::TickStopReason::NoWork});
+    snes.scheduler->scheduleDeviceRun(&device, 10);
     snes.scheduler->step();
 
-    REQUIRE(device.tick_calls >= 1);
-    REQUIRE(device.last_budget > 0);
-}
-
-TEST_CASE("Scheduler processes 10 DeviceRun events in chronological order", "[unit]") {
-    pupsnes::SNES snes;
-    constexpr std::size_t N = 10;
-
-    std::vector<std::unique_ptr<FakeDevice>> devices;
-    devices.reserve(N);
-    for (std::size_t i = 0; i < N; ++i) {
-        devices.push_back(std::make_unique<FakeDevice>(&snes));
-    }
-
-    for (std::size_t i = 0; i < N; ++i) {
-        snes.scheduler->scheduleEvent(static_cast<pupsnes::time_master_t>((i + 1) * 10), devices[i].get(),
-                                      pupsnes::SchedulerPhase::Run, pupsnes::EventType::DeviceRun);
-    }
-
-    REQUIRE(pupsnes::SchedulerTestAccess::eventQueueSize(*snes.scheduler) == N);
-
-    for (std::size_t i = 0; i < N; ++i) {
-        snes.scheduler->step();
-        // Time must advance to each event's timestamp.
-        REQUIRE(snes.getMasterTime() == static_cast<pupsnes::time_master_t>((i + 1) * 10));
-        // Only the device whose event was just processed should have been ticked so far.
-        REQUIRE(devices[i]->tick_calls == 1);
-    }
-
-    REQUIRE(pupsnes::SchedulerTestAccess::eventQueueSize(*snes.scheduler) == 0);
-}
-
-TEST_CASE("Scheduler budget is capped by next event time with 10 devices", "[unit]") {
-    pupsnes::SNES snes;
-    constexpr std::size_t N = 10;
-    // Spacing smaller than MAX_CYCLES_STEP so the cap is exercised.
-    constexpr pupsnes::time_master_t spacing = 3;
-
-    std::vector<std::unique_ptr<FakeDevice>> devices;
-    devices.reserve(N);
-    for (std::size_t i = 0; i < N; ++i) {
-        devices.push_back(std::make_unique<FakeDevice>(&snes));
-    }
-
-    for (std::size_t i = 0; i < N; ++i) {
-        snes.scheduler->scheduleEvent(static_cast<pupsnes::time_master_t>((i + 1) * spacing), devices[i].get(),
-                                      pupsnes::SchedulerPhase::Run, pupsnes::EventType::DeviceRun);
-    }
-
-    for (std::size_t i = 0; i < N; ++i) {
-        snes.scheduler->step();
-    }
-
-    // The first N-1 devices must have been capped at `spacing` cycles.
-    for (std::size_t i = 0; i < N - 1; ++i) {
-        REQUIRE(devices[i]->tick_calls == 1);
-        REQUIRE(devices[i]->last_budget == spacing);
-    }
-    // The last device has no successor in the queue, so it gets the full MAX_CYCLES_STEP.
-    REQUIRE(devices[N - 1]->tick_calls == 1);
-    REQUIRE(devices[N - 1]->last_budget == pupsnes::Scheduler::MAX_CYCLES_STEP);
-}
-
-TEST_CASE("Scheduler processes 10 DeviceRun events at the same timestamp", "[unit]") {
-    pupsnes::SNES snes;
-    constexpr std::size_t N = 10;
-    constexpr pupsnes::time_master_t T = 42;
-
-    std::vector<std::unique_ptr<FakeDevice>> devices;
-    devices.reserve(N);
-    for (std::size_t i = 0; i < N; ++i) {
-        devices.push_back(std::make_unique<FakeDevice>(&snes));
-    }
-
-    for (std::size_t i = 0; i < N; ++i) {
-        snes.scheduler->scheduleEvent(T, devices[i].get(), pupsnes::SchedulerPhase::Run, pupsnes::EventType::DeviceRun);
-    }
-
-    for (std::size_t i = 0; i < N; ++i) {
-        snes.scheduler->step();
-    }
-
-    // All same-time Run events must be dispatched and time must stay at T.
-    REQUIRE(snes.getMasterTime() == T);
-    REQUIRE(pupsnes::SchedulerTestAccess::eventQueueSize(*snes.scheduler) == 0);
-    for (std::size_t i = 0; i < N; ++i) {
-        REQUIRE(devices[i]->tick_calls == 1);
-    }
-    // First N-1 devices get budget=0 because next event is at the same time.
-    for (std::size_t i = 0; i < N - 1; ++i) {
-        REQUIRE(devices[i]->last_budget == 0);
-    }
-    // Last device has no successor, so it gets MAX_CYCLES_STEP.
-    REQUIRE(devices[N - 1]->last_budget == pupsnes::Scheduler::MAX_CYCLES_STEP);
-}
-
-TEST_CASE("Scheduler dispatches CommitComplete and WakeSample to on_event for 10 devices", "[unit]") {
-    pupsnes::SNES snes;
-    constexpr std::size_t N = 10;
-
-    std::vector<std::unique_ptr<FakeDevice>> devices;
-    devices.reserve(N);
-    for (std::size_t i = 0; i < N; ++i) {
-        devices.push_back(std::make_unique<FakeDevice>(&snes));
-    }
-
-    // Assign phases in rotation: CommitComplete, WakeSample, Run, repeat.
-    for (std::size_t i = 0; i < N; ++i) {
-        pupsnes::SchedulerPhase phase;
-        if (i % 3 == 0) {
-            phase = pupsnes::SchedulerPhase::CommitComplete;
-        } else if (i % 3 == 1) {
-            phase = pupsnes::SchedulerPhase::WakeSample;
-        } else {
-            phase = pupsnes::SchedulerPhase::Run;
-        }
-        snes.scheduler->scheduleEvent(static_cast<pupsnes::time_master_t>(10 + i), devices[i].get(), phase,
-                                      pupsnes::EventType::DeviceRun);
-    }
-
-    for (std::size_t i = 0; i < N; ++i) {
-        snes.scheduler->step();
-    }
-
-    REQUIRE(pupsnes::SchedulerTestAccess::eventQueueSize(*snes.scheduler) == 0);
-
-    for (std::size_t i = 0; i < N; ++i) {
-        if (i % 3 == 2) {
-            // Run phase: tick() must be called, on_event() must not.
-            REQUIRE(devices[i]->tick_calls == 1);
-            REQUIRE(devices[i]->event_calls == 0);
-        } else {
-            // CommitComplete / WakeSample: on_event() must be called, tick() must not.
-            REQUIRE(devices[i]->event_calls == 1);
-            REQUIRE(devices[i]->tick_calls == 0);
-        }
-    }
-}
-
-TEST_CASE("Scheduler updates device local_time after tick", "[unit]") {
-    pupsnes::SNES snes;
-    FakeDevice device(&snes);
-
-    REQUIRE(device.getTime() == 0);
-
-    snes.scheduler->scheduleEvent(10, &device, pupsnes::SchedulerPhase::Run, pupsnes::EventType::DeviceRun);
-    snes.scheduler->step();
-
-    // FakeDevice returns {budget, BudgetExhausted}, so local_time should advance by budget.
-    REQUIRE(device.getTime() == device.last_budget);
-    REQUIRE(device.getTime() > 0);
-}
-
-namespace {
-class BlockingDevice : public pupsnes::Device {
-  public:
-    explicit BlockingDevice(pupsnes::SNES *snes) : pupsnes::Device(snes) {}
-
-    pupsnes::TickResult tick(pupsnes::time_master_delta_t budget) override {
-        ++tick_calls;
-        last_budget = budget;
-        if (should_block && !has_blocked) {
-            has_blocked = true;
-            return {consumed_before_block, pupsnes::TickStopReason::BlockedOnToken, block_token};
-        }
-        return {budget, pupsnes::TickStopReason::BudgetExhausted};
-    }
-
-    void onEvent(const pupsnes::SchedulerEvent &) override { ++event_calls; }
-
-    int tick_calls = 0;
-    int event_calls = 0;
-    pupsnes::time_master_delta_t last_budget = 0;
-    bool should_block = false;
-    bool has_blocked = false;
-    pupsnes::token_id_t block_token = 0;
-    pupsnes::time_master_delta_t consumed_before_block = 0;
-};
-} // namespace
-
-TEST_CASE("Scheduler wakes device blocked on token after CommitComplete resolves it", "[unit]") {
-    pupsnes::SNES snes;
-    BlockingDevice device(&snes);
-
-    auto token_id = snes.scheduler->createToken({pupsnes::TokenType::BusRead, device.getDeviceId(), 50, 0x2100, 0});
-
-    snes.scheduler->scheduleEvent(10, &device, pupsnes::SchedulerPhase::Run, pupsnes::EventType::DeviceRun);
-
-    device.should_block = true;
-    device.block_token = token_id;
-    device.consumed_before_block = 4;
-
-    // Step 1: Device runs at time 10, returns BlockedOnToken
-    snes.scheduler->step();
     REQUIRE(device.tick_calls == 1);
+    REQUIRE(device.start_times.at(0) == 10);
+    REQUIRE(device.getTime() == 13);
+    REQUIRE_FALSE(pupsnes::SchedulerTestAccess::hasPendingRun(*snes.scheduler, device.getDeviceId()));
+}
+
+TEST_CASE("Scheduler reschedules BudgetExhausted devices at their committed time", "[unit]") {
+    pupsnes::SNES snes;
+    ScriptedDevice device(&snes);
+
+    device.pushResult({2, pupsnes::TickStopReason::BudgetExhausted});
+    snes.scheduler->scheduleDeviceRun(&device, 10);
+    snes.scheduler->step();
+
+    REQUIRE(device.getTime() == 12);
+    REQUIRE(pupsnes::SchedulerTestAccess::hasPendingRun(*snes.scheduler, device.getDeviceId()));
+    REQUIRE(pupsnes::SchedulerTestAccess::pendingRunTime(*snes.scheduler, device.getDeviceId()) == 12);
+}
+
+TEST_CASE("Scheduler schedules local-boundary wakes authoritatively", "[unit]") {
+    pupsnes::SNES snes;
+    ScriptedDevice device(&snes);
+
+    device.pushResult({3, pupsnes::TickStopReason::ReachedLocalBoundary, 0, 20});
+    snes.scheduler->scheduleDeviceRun(&device, 10);
+    snes.scheduler->step();
+
+    REQUIRE(device.getTime() == 13);
+    REQUIRE(pupsnes::SchedulerTestAccess::hasPendingRun(*snes.scheduler, device.getDeviceId()));
+    REQUIRE(pupsnes::SchedulerTestAccess::pendingRunTime(*snes.scheduler, device.getDeviceId()) == 20);
+}
+
+TEST_CASE("Scheduler schedules NoWork wakes and deschedules fully when none is provided", "[unit]") {
+    pupsnes::SNES snes;
+    ScriptedDevice sleeping(&snes);
+    ScriptedDevice idle(&snes);
+
+    sleeping.pushResult({1, pupsnes::TickStopReason::NoWork, 0, 40});
+    idle.pushResult({1, pupsnes::TickStopReason::NoWork});
+
+    snes.scheduler->scheduleDeviceRun(&sleeping, 10);
+    snes.scheduler->scheduleDeviceRun(&idle, 20);
+
+    snes.scheduler->step();
+    REQUIRE(pupsnes::SchedulerTestAccess::pendingRunTime(*snes.scheduler, sleeping.getDeviceId()) == 40);
+
+    snes.scheduler->step();
+    REQUIRE_FALSE(pupsnes::SchedulerTestAccess::hasPendingRun(*snes.scheduler, idle.getDeviceId()));
+}
+
+TEST_CASE("Scheduler rejects invalid TickResult combinations", "[unit]") {
+    pupsnes::SNES snes;
+    ScriptedDevice missing_token(&snes);
+    ScriptedDevice past_wake(&snes);
+
+    missing_token.pushResult({0, pupsnes::TickStopReason::BlockedOnToken});
+    past_wake.pushResult({2, pupsnes::TickStopReason::ReachedLocalBoundary, 0, 1});
+
+    snes.scheduler->scheduleDeviceRun(&missing_token, 10);
+    REQUIRE_THROWS_AS(snes.scheduler->step(), std::logic_error);
+
+    snes.scheduler->scheduleDeviceRun(&past_wake, 10);
+    REQUIRE_THROWS_AS(snes.scheduler->step(), std::logic_error);
+}
+
+TEST_CASE("Scheduler wakes blocked devices on token completion only when the token is still authoritative", "[unit]") {
+    pupsnes::SNES snes;
+    ScriptedDevice blocked(&snes);
+    ScriptedDevice replaced(&snes);
+
+    const auto blocked_token =
+        snes.scheduler->createToken({pupsnes::TokenType::BusRead, blocked.getDeviceId(), 50, 0x2100, 0});
+    const auto replaced_token =
+        snes.scheduler->createToken({pupsnes::TokenType::BusRead, replaced.getDeviceId(), 60, 0x2101, 0});
+
+    blocked.pushResult({4, pupsnes::TickStopReason::BlockedOnToken, blocked_token});
+    replaced.pushResult({1, pupsnes::TickStopReason::BlockedOnToken, replaced_token});
+    replaced.pushResult({1, pupsnes::TickStopReason::NoWork});
+
+    snes.scheduler->scheduleDeviceRun(&blocked, 10);
+    snes.scheduler->scheduleDeviceRun(&replaced, 20);
+
+    snes.scheduler->step();
+    REQUIRE(pupsnes::SchedulerTestAccess::blockedToken(*snes.scheduler, blocked.getDeviceId()) == blocked_token);
+
+    snes.scheduler->step();
+    REQUIRE(pupsnes::SchedulerTestAccess::blockedToken(*snes.scheduler, replaced.getDeviceId()) == replaced_token);
+
+    snes.scheduler->scheduleDeviceRun(&replaced, 70);
+    REQUIRE(pupsnes::SchedulerTestAccess::blockedToken(*snes.scheduler, replaced.getDeviceId()) == 0);
+
+    snes.scheduler->step();
+    REQUIRE(pupsnes::SchedulerTestAccess::hasPendingRun(*snes.scheduler, blocked.getDeviceId()));
+    REQUIRE(pupsnes::SchedulerTestAccess::pendingRunTime(*snes.scheduler, blocked.getDeviceId()) == 50);
+
+    snes.scheduler->step();
+    REQUIRE(pupsnes::SchedulerTestAccess::hasPendingRun(*snes.scheduler, replaced.getDeviceId()));
+    REQUIRE(pupsnes::SchedulerTestAccess::pendingRunTime(*snes.scheduler, replaced.getDeviceId()) == 70);
+}
+
+TEST_CASE("Token completion can be observed on a later natural run without an automatic wake", "[unit]") {
+    pupsnes::SNES snes;
+    DynamicTokenObserverDevice device(&snes);
+
+    const auto token_id = snes.scheduler->createToken({pupsnes::TokenType::BusRead, device.getDeviceId(), 50, 0x2100, 0});
+    device.watched_token = token_id;
+
+    snes.scheduler->scheduleDeviceRun(&device, 10);
+
+    snes.scheduler->step();
+    REQUIRE_FALSE(device.saw_completed_token);
+
+    snes.scheduler->scheduleDeviceRun(&device, 60);
+
+    snes.scheduler->step();
+    REQUIRE(snes.getMasterTime() == 50);
+
+    snes.scheduler->step();
+    REQUIRE(device.tick_calls == 2);
+    REQUIRE(device.saw_completed_token);
+}
+
+TEST_CASE("Authoritative run replacement prefers the newest wake in both directions", "[unit]") {
+    pupsnes::SNES snes;
+    ScriptedDevice earlier(&snes);
+    ScriptedDevice later(&snes);
+
+    earlier.pushResult({1, pupsnes::TickStopReason::NoWork});
+    snes.scheduler->scheduleDeviceRun(&earlier, 20);
+    const auto old_generation = pupsnes::SchedulerTestAccess::runGeneration(*snes.scheduler, earlier.getDeviceId());
+    snes.scheduler->scheduleDeviceRun(&earlier, 10);
+    const auto new_generation = pupsnes::SchedulerTestAccess::runGeneration(*snes.scheduler, earlier.getDeviceId());
+
+    REQUIRE(new_generation > old_generation);
+    REQUIRE(pupsnes::SchedulerTestAccess::pendingRunTime(*snes.scheduler, earlier.getDeviceId()) == 10);
+
+    snes.scheduler->step();
+    REQUIRE(earlier.tick_calls == 1);
     REQUIRE(snes.getMasterTime() == 10);
 
-    // Step 2: CommitComplete fires at time 50, resolves token, auto-schedules Run
     snes.scheduler->step();
-    REQUIRE(snes.getMasterTime() == 50);
+    REQUIRE(earlier.tick_calls == 1);
 
-    // Step 3: The auto-scheduled Run event fires, device runs again
+    later.pushResult({1, pupsnes::TickStopReason::NoWork});
+    snes.scheduler->scheduleDeviceRun(&later, 10);
+    snes.scheduler->scheduleDeviceRun(&later, 30);
+
     snes.scheduler->step();
-    REQUIRE(device.tick_calls == 2);
-
-    auto *token = snes.scheduler->getToken(token_id);
-    REQUIRE(token != nullptr);
-    REQUIRE(token->state == pupsnes::TokenState::Completed);
+    REQUIRE(later.tick_calls == 1);
+    REQUIRE(snes.getMasterTime() == 30);
 }
 
-namespace {
-class PollingDevice : public pupsnes::Device {
-  public:
-    explicit PollingDevice(pupsnes::SNES *snes) : pupsnes::Device(snes) {}
-
-    pupsnes::TickResult tick(pupsnes::time_master_delta_t budget) override {
-        ++tick_calls;
-        if (has_poll_token) {
-            auto *token = snes->scheduler->getToken(poll_token);
-            if (token != nullptr && token->state == pupsnes::TokenState::Completed) {
-                read_data = token->data;
-                token_was_ready = true;
-            }
-        }
-        return {budget, pupsnes::TickStopReason::BudgetExhausted};
-    }
-
-    void onEvent(const pupsnes::SchedulerEvent &) override {}
-
-    int tick_calls = 0;
-    bool has_poll_token = false;
-    pupsnes::token_id_t poll_token = 0;
-    uint8_t read_data = 0;
-    bool token_was_ready = false;
-};
-} // namespace
-
-TEST_CASE("Device can poll token state on natural clock cycle", "[unit]") {
+TEST_CASE("Only one authoritative pending run exists even if stale queue entries remain", "[unit]") {
     pupsnes::SNES snes;
-    PollingDevice device(&snes);
+    ScriptedDevice device(&snes);
 
-    auto token_id = snes.scheduler->createToken({pupsnes::TokenType::BusRead, device.getDeviceId(), 50, 0x2100, 0});
+    snes.scheduler->scheduleDeviceRun(&device, 20);
+    snes.scheduler->scheduleDeviceRun(&device, 10);
+    snes.scheduler->scheduleDeviceRun(&device, 15);
 
-    device.poll_token = token_id;
-    device.has_poll_token = true;
+    REQUIRE(pupsnes::SchedulerTestAccess::hasPendingRun(*snes.scheduler, device.getDeviceId()));
+    REQUIRE(pupsnes::SchedulerTestAccess::pendingRunTime(*snes.scheduler, device.getDeviceId()) == 15);
+    REQUIRE(pupsnes::SchedulerTestAccess::queuedRunEventsFor(*snes.scheduler, device.getDeviceId()) == 3);
+}
 
-    // Run at time 10 — before token completes
-    snes.scheduler->scheduleEvent(10, &device, pupsnes::SchedulerPhase::Run, pupsnes::EventType::DeviceRun);
+TEST_CASE("Scheduler fails loudly on repeated same-time zero-progress runs", "[unit]") {
+    pupsnes::SNES snes;
+    ScriptedDevice device(&snes);
+
+    device.pushResult({0, pupsnes::TickStopReason::BudgetExhausted});
+    device.pushResult({0, pupsnes::TickStopReason::BudgetExhausted});
+
+    snes.scheduler->scheduleDeviceRun(&device, 10);
+
     snes.scheduler->step();
     REQUIRE(device.tick_calls == 1);
-    REQUIRE_FALSE(device.token_was_ready);
 
-    // CommitComplete at 50 resolves the token
-    snes.scheduler->scheduleEvent(60, &device, pupsnes::SchedulerPhase::Run, pupsnes::EventType::DeviceRun);
-    snes.scheduler->step();
-    REQUIRE(snes.getMasterTime() == 50);
-
-    // Device runs at 60, polls and sees completed token
-    snes.scheduler->step();
-    REQUIRE(device.tick_calls == 2);
-    REQUIRE(device.token_was_ready);
+    REQUIRE_THROWS_AS(snes.scheduler->step(), std::logic_error);
 }
 
-TEST_CASE("Scheduler createToken returns valid token and schedules CommitComplete", "[unit]") {
+TEST_CASE("Stale run event at heap head does not cap budget for the next real event", "[unit]") {
     pupsnes::SNES snes;
-    FakeDevice device(&snes);
+    ScriptedDevice device(&snes);
+    ScriptedDevice other(&snes);
 
-    auto token_id = snes.scheduler->createToken({pupsnes::TokenType::BusRead, device.getDeviceId(), 50, 0x2100, 0});
+    // Schedule device at time 3, then replace with time 8. The stale event at 3 stays in the heap.
+    snes.scheduler->scheduleDeviceRun(&device, 3);
+    snes.scheduler->scheduleDeviceRun(&device, 8);
 
-    auto *token = snes.scheduler->getToken(token_id);
+    // Schedule other at time 0 so it runs first.
+    other.pushResult({1, pupsnes::TickStopReason::BudgetExhausted});
+    snes.scheduler->scheduleDeviceRun(&other, 0);
+
+    // other runs at time 0. If the stale event at 3 were used, budget would be 3.
+    // The real next event is device at 8, so budget should be min(MAX_CYCLES_STEP, 8) = 8.
+    snes.scheduler->step();
+    REQUIRE(other.tick_calls == 1);
+    REQUIRE(other.budgets.at(0) == 8);
+}
+
+TEST_CASE("catchUpDevice keeps iterating until the target time is reached", "[unit]") {
+    pupsnes::SNES snes;
+    ScriptedDevice device(&snes);
+
+    device.pushResult({2, pupsnes::TickStopReason::BudgetExhausted});
+    device.pushResult({3, pupsnes::TickStopReason::BudgetExhausted});
+
+    snes.scheduler->catchUpDevice(device.getDeviceId(), 5);
+
+    REQUIRE(device.tick_calls == 2);
+    REQUIRE(device.start_times == std::vector<pupsnes::time_master_t>{0, 2});
+    REQUIRE(device.getTime() == 5);
+}
+
+TEST_CASE("catchUpDevice continues across local boundaries whose wakes are within the target", "[unit]") {
+    pupsnes::SNES snes;
+    ScriptedDevice device(&snes);
+
+    device.pushResult({2, pupsnes::TickStopReason::ReachedLocalBoundary, 0, 4});
+    device.pushResult({2, pupsnes::TickStopReason::BudgetExhausted});
+
+    snes.scheduler->catchUpDevice(device.getDeviceId(), 6);
+
+    REQUIRE(device.tick_calls == 2);
+    REQUIRE(device.start_times == std::vector<pupsnes::time_master_t>{0, 4});
+    REQUIRE(device.getTime() == 6);
+}
+
+TEST_CASE("catchUpDevice rejects invalid synchronous stop reasons", "[unit]") {
+    pupsnes::SNES snes;
+    ScriptedDevice no_work(&snes);
+    ScriptedDevice blocked(&snes);
+
+    no_work.pushResult({1, pupsnes::TickStopReason::NoWork});
+    blocked.pushResult({1, pupsnes::TickStopReason::BlockedOnToken, 7});
+
+    REQUIRE_THROWS_AS(snes.scheduler->catchUpDevice(no_work.getDeviceId(), 3), std::logic_error);
+    REQUIRE_THROWS_AS(snes.scheduler->catchUpDevice(blocked.getDeviceId(), 3), std::logic_error);
+}
+
+TEST_CASE("catchUpDevice rejects a device that is blocked on a token", "[unit]") {
+    pupsnes::SNES snes;
+    ScriptedDevice device(&snes);
+
+    // First run: device blocks on a token.
+    device.pushResult({2, pupsnes::TickStopReason::BlockedOnToken, 99});
+    snes.scheduler->scheduleDeviceRun(&device, 0);
+    snes.scheduler->step();
+    REQUIRE(pupsnes::SchedulerTestAccess::blockedToken(*snes.scheduler, device.getDeviceId()) == 99);
+
+    // Attempting catch-up while blocked must fail.
+    REQUIRE_THROWS_AS(snes.scheduler->catchUpDevice(device.getDeviceId(), 10), std::logic_error);
+}
+
+TEST_CASE("catchUpDevice accepts NoWork when the device has reached the target", "[unit]") {
+    pupsnes::SNES snes;
+    ScriptedDevice device(&snes);
+
+    // Device consumes exactly the budget and reports NoWork with a future wake.
+    device.pushResult({5, pupsnes::TickStopReason::NoWork, 0, 20});
+
+    snes.scheduler->catchUpDevice(device.getDeviceId(), 5);
+
+    REQUIRE(device.tick_calls == 1);
+    REQUIRE(device.getTime() == 5);
+    // handleRunResult should have scheduled a run at the wake time.
+    REQUIRE(pupsnes::SchedulerTestAccess::hasPendingRun(*snes.scheduler, device.getDeviceId()));
+    REQUIRE(pupsnes::SchedulerTestAccess::pendingRunTime(*snes.scheduler, device.getDeviceId()) == 20);
+}
+
+TEST_CASE("catchUpDevice rejects ReachedLocalBoundary with wake beyond the target", "[unit]") {
+    pupsnes::SNES snes;
+    ScriptedDevice device(&snes);
+
+    // Device stops at a local boundary before the target, but next_wake_time exceeds target.
+    device.pushResult({2, pupsnes::TickStopReason::ReachedLocalBoundary, 0, 10});
+
+    REQUIRE_THROWS_AS(snes.scheduler->catchUpDevice(device.getDeviceId(), 5), std::logic_error);
+}
+
+TEST_CASE("catchUpDevice with NoWork at target and no wake fully deschedules the device", "[unit]") {
+    pupsnes::SNES snes;
+    ScriptedDevice device(&snes);
+
+    // Device consumes exactly the budget and reports NoWork without a wake time.
+    device.pushResult({5, pupsnes::TickStopReason::NoWork});
+
+    snes.scheduler->catchUpDevice(device.getDeviceId(), 5);
+
+    REQUIRE(device.tick_calls == 1);
+    REQUIRE(device.getTime() == 5);
+    REQUIRE_FALSE(pupsnes::SchedulerTestAccess::hasPendingRun(*snes.scheduler, device.getDeviceId()));
+}
+
+TEST_CASE("catchUpDevice with ReachedLocalBoundary exactly at target succeeds and schedules wake", "[unit]") {
+    pupsnes::SNES snes;
+    ScriptedDevice device(&snes);
+
+    // Device reaches target exactly and reports a local boundary with a future wake.
+    device.pushResult({5, pupsnes::TickStopReason::ReachedLocalBoundary, 0, 20});
+
+    snes.scheduler->catchUpDevice(device.getDeviceId(), 5);
+
+    REQUIRE(device.tick_calls == 1);
+    REQUIRE(device.getTime() == 5);
+    REQUIRE(pupsnes::SchedulerTestAccess::hasPendingRun(*snes.scheduler, device.getDeviceId()));
+    REQUIRE(pupsnes::SchedulerTestAccess::pendingRunTime(*snes.scheduler, device.getDeviceId()) == 20);
+}
+
+TEST_CASE("Scheduler createToken returns a valid token and schedules CommitComplete", "[unit]") {
+    pupsnes::SNES snes;
+    ScriptedDevice device(&snes);
+
+    const auto token_id = snes.scheduler->createToken({pupsnes::TokenType::BusRead, device.getDeviceId(), 50, 0x2100, 0});
+
+    const auto *token = snes.scheduler->getToken(token_id);
     REQUIRE(token != nullptr);
     REQUIRE(token->type == pupsnes::TokenType::BusRead);
     REQUIRE(token->completion_time == 50);
 
-    auto event = pupsnes::SchedulerTestAccess::peekNextEvent(*snes.scheduler);
+    const auto event = pupsnes::SchedulerTestAccess::peekNextEvent(*snes.scheduler);
     REQUIRE(event.time == 50);
     REQUIRE(event.subphase == pupsnes::SchedulerPhase::CommitComplete);
 }
 
-TEST_CASE("Scheduler does not tick device for past events", "[unit]") {
+TEST_CASE("Scheduler rejects past events", "[unit]") {
     pupsnes::SNES snes;
-    FakeDevice device(&snes);
+    ScriptedDevice device(&snes);
 
-    // Advance time past where the event is scheduled.
     snes.setMasterTime(100);
-    snes.scheduler->scheduleEvent(50, &device, pupsnes::SchedulerPhase::Run, pupsnes::EventType::DeviceRun);
+    snes.scheduler->scheduleEvent(50, &device, pupsnes::SchedulerPhase::WakeSample, pupsnes::EventType::DeviceBoundary);
 
-    // In debug builds the assert fires before we get here.
-    // In release builds (NDEBUG), the event is skipped via early return.
-    snes.scheduler->step();
-
-    REQUIRE(device.tick_calls == 0);
-    REQUIRE(device.event_calls == 0);
+    REQUIRE_THROWS_AS(snes.scheduler->step(), std::logic_error);
 }

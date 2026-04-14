@@ -3,6 +3,7 @@
 #include "pupsnes/types.h"
 
 #include <cstdint>
+#include <optional>
 
 namespace pupsnes {
 
@@ -11,13 +12,23 @@ struct SchedulerEvent;
 
 enum class TickStopReason : uint8_t {
     BudgetExhausted = 0,
-    BlockedOnIO = 1,
+    ReachedLocalBoundary = 1,
     BlockedOnToken = 2,
+    NoWork = 3,
 };
 struct TickResult {
     time_master_delta_t completed_cycles;
     TickStopReason reason;
+
+    // Only meaningful when reason == TickStopReason::BlockedOnToken.
     token_id_t blocked_token = 0;
+
+    // Absolute master-cycle wake time. Only meaningful when:
+    // - reason == TickStopReason::ReachedLocalBoundary
+    // - reason == TickStopReason::NoWork (optional)
+    //
+    // Wake times earlier than the device's committed local_time are scheduler bugs.
+    std::optional<time_master_t> next_wake_time = std::nullopt;
 };
 
 class Device {

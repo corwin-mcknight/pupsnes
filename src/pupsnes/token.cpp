@@ -26,8 +26,8 @@ void TokenTable::complete(token_id_t id, uint8_t data) {
     it->second.data = data;
 }
 
-std::vector<device_id_t> TokenTable::resolveAt(time_master_t now) {
-    std::vector<device_id_t> woken;
+std::vector<TokenWake> TokenTable::resolveAt(time_master_t now) {
+    std::vector<TokenWake> woken;
 
     for (auto &[id, token] : tokens_) {
         if (token.state == TokenState::Pending && token.completion_time == now) {
@@ -35,7 +35,7 @@ std::vector<device_id_t> TokenTable::resolveAt(time_master_t now) {
 
             auto blocked_it = blocked_.find(id);
             if (blocked_it != blocked_.end()) {
-                woken.push_back(blocked_it->second);
+                woken.push_back({id, blocked_it->second});
                 blocked_.erase(blocked_it);
             }
         }
