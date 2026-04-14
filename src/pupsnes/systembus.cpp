@@ -1,9 +1,12 @@
 #include "pupsnes/hw/systembus.h"
 
+#include "pupsnes/config.h"
 #include "pupsnes/hw/device.h"
 #include "pupsnes/hw/scheduler.h"
 #include "pupsnes/hw/snes.h"
 #include "pupsnes/mem.h"
+
+#include <cstdio>
 
 namespace pupsnes {
 
@@ -59,9 +62,20 @@ BusFollowResult SystemBus::follow(const BusPlan &plan, time_master_t current_tim
     case BusPlanOutcome::ScheduledComplete:
         return followScheduled(plan, current_time, source_device);
     case BusPlanOutcome::Rejected:
-        return {BusPlanOutcome::Rejected, 0, 0};
+        if constexpr (config::kLogUnmappedBusAccess) {
+            if (plan.access_type == BusAccessType::Read) {
+                std::fprintf(stderr, "[BUS] unmapped read  $%02X:%04X -> open-bus 0x%02X\n",
+                             static_cast<unsigned>(plan.original_address >> 16),
+                             static_cast<unsigned>(plan.original_address & 0xFFFF), last_data_bus_value_);
+            } else {
+                std::fprintf(stderr, "[BUS] unmapped write $%02X:%04X <- 0x%02X (dropped)\n",
+                             static_cast<unsigned>(plan.original_address >> 16),
+                             static_cast<unsigned>(plan.original_address & 0xFFFF), plan.write_data);
+            }
+        }
+        return {BusPlanOutcome::Rejected, last_data_bus_value_, 0};
     }
-    return {BusPlanOutcome::Rejected, 0, 0};
+    return {BusPlanOutcome::Rejected, last_data_bus_value_, 0};
 }
 
 BusFollowResult SystemBus::followInline(const BusPlan &plan, time_master_t current_time) {
@@ -88,6 +102,7 @@ BusFollowResult SystemBus::followInline(const BusPlan &plan, time_master_t curre
         result.data = plan.write_data;
     }
 
+    last_data_bus_value_ = result.data;
     return result;
 }
 

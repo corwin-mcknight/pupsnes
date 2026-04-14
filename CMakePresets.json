@@ -21,7 +21,8 @@
       "displayName": "Dev",
       "inherits": "base",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug"
+        "CMAKE_BUILD_TYPE": "Debug",
+        "PUPSNES_PROFILE": "DEBUG"
       }
     },
     {
@@ -30,7 +31,8 @@
       "inherits": "base",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "RelWithDebInfo",
-        "PUPSNES_WERROR": "ON"
+        "PUPSNES_WERROR": "ON",
+        "PUPSNES_PROFILE": "CI"
       }
     },
     {
@@ -38,7 +40,8 @@
       "displayName": "Release",
       "inherits": "base",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release"
+        "CMAKE_BUILD_TYPE": "Release",
+        "PUPSNES_PROFILE": "PRODUCTION"
       }
     }
   ],

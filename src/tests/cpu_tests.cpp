@@ -8,7 +8,6 @@
 
 #include <array>
 #include <cstdint>
-#include <cstring>
 
 using namespace pupsnes;
 
@@ -32,17 +31,19 @@ class TestROM : public Device {
 };
 
 // Map a TestROM so that bank 0x00, pages 0x80–0x81 (addresses $008000–$0081FF)
-// back the 512-byte ROM window.  The CPU's PC starts at 0x0000 by default, but
-// tests that want to execute from ROM set PC = 0x8000.
+// back the 512-byte ROM window.  CPU PC starts at $8000.
 struct TestFixture {
     SNES snes;
     TestROM rom{&snes};
     CPU cpu{&snes};
 
     TestFixture() {
-        // Map 512-byte ROM window at bank $00, pages $80–$81.
         snes.system_bus->mapPage({0x00, 0x80, rom.getDeviceId(), 0x000, PageDeviceKind::Memory, 8});
         snes.system_bus->mapPage({0x00, 0x81, rom.getDeviceId(), 0x100, PageDeviceKind::Memory, 8});
+
+        auto r = cpu.regs();
+        r.PC = 0x8000;
+        cpu.setRegs(r);
     }
 
     // Write a byte sequence into the ROM starting at offset from $8000.
@@ -70,20 +71,21 @@ TEST_CASE("CPU initial register state", "[cpu]") {
     SNES snes;
     CPU cpu(&snes);
 
-    REQUIRE(cpu.getPC() == 0x0000);
-    REQUIRE(cpu.getA() == 0);
-    REQUIRE(cpu.getX() == 0);
-    REQUIRE(cpu.getY() == 0);
-    REQUIRE(cpu.getSP() == 0x01FF);
-    REQUIRE(cpu.getPBR() == 0);
-    REQUIRE(cpu.getDBR() == 0);
-    REQUIRE(cpu.getDP() == 0);
+    auto r = cpu.regs();
+    REQUIRE(r.PC == 0x0000);
+    REQUIRE(r.A == 0);
+    REQUIRE(r.X == 0);
+    REQUIRE(r.Y == 0);
+    REQUIRE(r.SP == 0x01FF);
+    REQUIRE(r.PBR == 0);
+    REQUIRE(r.DBR == 0);
+    REQUIRE(r.DP == 0);
 
     // Starts in emulation mode with I flag set.
-    REQUIRE(cpu.getFlags().E == true);
-    REQUIRE(cpu.getFlags().M == true);
-    REQUIRE(cpu.getFlags().X == true);
-    REQUIRE(cpu.getFlags().I == true);
+    REQUIRE(r.P.E == true);
+    REQUIRE(r.P.M == true);
+    REQUIRE(r.P.X == true);
+    REQUIRE(r.P.I == true);
 
     REQUIRE(cpu.getMicroOpIndex() == 0);
 }
@@ -94,72 +96,46 @@ TEST_CASE("CPU initial register state", "[cpu]") {
 
 TEST_CASE("NOP: tick(2) consumes exactly 2 cycles", "[cpu]") {
     TestFixture f;
-    f.loadAt(0, {0xEA});       // NOP at $8000
-    f.cpu.advanceLocalTime(0); // already 0
-    // Set PC to ROM start by constructing the CPU with defaults and mapping.
-    // We need to manually set PC — expose it via a helper or derive from address.
-    // For this test we use unmapped $0000 which returns open-bus 0xFF (SBC variant),
-    // but we want NOP.  Use the ROM by setting PC = 0x8000 via a tiny workaround:
-    // We can't call setPC yet — add it to CPU, or test via behavior.
-    //
-    // Instead, write NOP at $0000 region by mapping another page at bank $00, page $00.
-    SNES snes2;
-    TestROM rom2(&snes2);
-    CPU cpu2(&snes2);
-    snes2.system_bus->mapPage({0x00, 0x00, rom2.getDeviceId(), 0, PageDeviceKind::Memory, 8});
-    rom2.mem[0] = 0xEA; // NOP at $0000
+    f.loadAt(0, {0xEA}); // NOP at $8000
 
-    TickResult r = cpu2.tick(2);
+    TickResult r = f.cpu.tick(2);
     REQUIRE(r.completed_cycles == 2);
     REQUIRE(r.reason == TickStopReason::BudgetExhausted);
-    REQUIRE(cpu2.getPC() == 0x0001); // Opcode fetch incremented PC
-    REQUIRE(cpu2.getTime() == 2);
+    REQUIRE(f.cpu.regs().PC == 0x8001);
+    REQUIRE(f.cpu.getTime() == 2);
 }
 
 TEST_CASE("NOP: tick(1) consumes 1 cycle and stops mid-instruction", "[cpu]") {
-    SNES snes;
-    TestROM rom(&snes);
-    CPU cpu(&snes);
-    snes.system_bus->mapPage({0x00, 0x00, rom.getDeviceId(), 0, PageDeviceKind::Memory, 8});
-    rom.mem[0] = 0xEA; // NOP
+    TestFixture f;
+    f.loadAt(0, {0xEA}); // NOP at $8000
 
-    TickResult r = cpu.tick(1);
+    TickResult r = f.cpu.tick(1);
     REQUIRE(r.completed_cycles == 1);
     REQUIRE(r.reason == TickStopReason::BudgetExhausted);
-    REQUIRE(cpu.getPC() == 0x0001);      // Opcode fetch done
-    REQUIRE(cpu.getMicroOpIndex() == 1); // In the middle of NOP (at the internal cycle)
-    REQUIRE(cpu.getTime() == 1);
+    REQUIRE(f.cpu.regs().PC == 0x8001);
+    REQUIRE(f.cpu.getMicroOpIndex() == 1);
+    REQUIRE(f.cpu.getTime() == 1);
 }
 
 TEST_CASE("NOP: two tick(1) calls equal one tick(2)", "[cpu]") {
-    SNES snes;
-    TestROM rom(&snes);
-    CPU cpu(&snes);
-    snes.system_bus->mapPage({0x00, 0x00, rom.getDeviceId(), 0, PageDeviceKind::Memory, 8});
-    rom.mem[0] = 0xEA; // NOP at $0000
-    rom.mem[1] = 0xEA; // NOP at $0001
+    TestFixture f;
+    f.loadAt(0, {0xEA, 0xEA}); // NOP NOP at $8000
 
-    (void)cpu.tick(1); // cycle 1 of NOP: opcode fetch
-    (void)cpu.tick(1); // cycle 2 of NOP: internal
+    (void)f.cpu.tick(1);
+    (void)f.cpu.tick(1);
 
-    REQUIRE(cpu.getTime() == 2);
-    REQUIRE(cpu.getPC() == 0x0001);
+    REQUIRE(f.cpu.getTime() == 2);
+    REQUIRE(f.cpu.regs().PC == 0x8001);
 }
 
 TEST_CASE("NOP: three consecutive NOPs advance PC by 3", "[cpu]") {
-    SNES snes;
-    TestROM rom(&snes);
-    CPU cpu(&snes);
-    snes.system_bus->mapPage({0x00, 0x00, rom.getDeviceId(), 0, PageDeviceKind::Memory, 8});
-    rom.mem[0] = 0xEA;
-    rom.mem[1] = 0xEA;
-    rom.mem[2] = 0xEA;
+    TestFixture f;
+    f.loadAt(0, {0xEA, 0xEA, 0xEA});
 
-    // 3 NOPs × 2 cycles = 6 cycles
-    TickResult r = cpu.tick(6);
+    TickResult r = f.cpu.tick(6);
     REQUIRE(r.completed_cycles == 6);
-    REQUIRE(cpu.getPC() == 0x0003);
-    REQUIRE(cpu.getTime() == 6);
+    REQUIRE(f.cpu.regs().PC == 0x8003);
+    REQUIRE(f.cpu.getTime() == 6);
 }
 
 // ---------------------------------------------------------------------------
@@ -167,73 +143,53 @@ TEST_CASE("NOP: three consecutive NOPs advance PC by 3", "[cpu]") {
 // ---------------------------------------------------------------------------
 
 TEST_CASE("LDA #imm: loads immediate byte into A", "[cpu]") {
-    SNES snes;
-    TestROM rom(&snes);
-    CPU cpu(&snes);
-    snes.system_bus->mapPage({0x00, 0x00, rom.getDeviceId(), 0, PageDeviceKind::Memory, 8});
-    rom.mem[0] = 0xA9; // LDA #imm
-    rom.mem[1] = 0x42; // immediate value
+    TestFixture f;
+    f.loadAt(0, {0xA9, 0x42});
 
-    TickResult r = cpu.tick(2);
+    TickResult r = f.cpu.tick(2);
     REQUIRE(r.completed_cycles == 2);
-    REQUIRE(cpu.getA() == 0x42);
-    REQUIRE(cpu.getPC() == 0x0002); // consumed opcode + immediate
-    REQUIRE(cpu.getTime() == 2);
+    REQUIRE(static_cast<uint8_t>(f.cpu.regs().A) == 0x42);
+    REQUIRE(f.cpu.regs().PC == 0x8002);
+    REQUIRE(f.cpu.getTime() == 2);
 }
 
 TEST_CASE("LDA #imm: updates N flag for high-bit values", "[cpu]") {
-    SNES snes;
-    TestROM rom(&snes);
-    CPU cpu(&snes);
-    snes.system_bus->mapPage({0x00, 0x00, rom.getDeviceId(), 0, PageDeviceKind::Memory, 8});
-    rom.mem[0] = 0xA9;
-    rom.mem[1] = 0x80; // bit 7 set
+    TestFixture f;
+    f.loadAt(0, {0xA9, 0x80});
 
-    (void)cpu.tick(2);
-    REQUIRE(cpu.getA() == 0x80);
-    REQUIRE(cpu.getFlags().N == true);
-    REQUIRE(cpu.getFlags().Z == false);
+    (void)f.cpu.tick(2);
+    REQUIRE(static_cast<uint8_t>(f.cpu.regs().A) == 0x80);
+    REQUIRE(f.cpu.regs().P.N == true);
+    REQUIRE(f.cpu.regs().P.Z == false);
 }
 
 TEST_CASE("LDA #imm: updates Z flag for zero", "[cpu]") {
-    SNES snes;
-    TestROM rom(&snes);
-    CPU cpu(&snes);
-    snes.system_bus->mapPage({0x00, 0x00, rom.getDeviceId(), 0, PageDeviceKind::Memory, 8});
-    rom.mem[0] = 0xA9;
-    rom.mem[1] = 0x00;
+    TestFixture f;
+    f.loadAt(0, {0xA9, 0x00});
 
-    (void)cpu.tick(2);
-    REQUIRE(cpu.getA() == 0x00);
-    REQUIRE(cpu.getFlags().Z == true);
-    REQUIRE(cpu.getFlags().N == false);
+    (void)f.cpu.tick(2);
+    REQUIRE(static_cast<uint8_t>(f.cpu.regs().A) == 0x00);
+    REQUIRE(f.cpu.regs().P.Z == true);
+    REQUIRE(f.cpu.regs().P.N == false);
 }
 
 TEST_CASE("LDA #imm: clears N and Z for nonzero, non-high-bit values", "[cpu]") {
-    SNES snes;
-    TestROM rom(&snes);
-    CPU cpu(&snes);
-    snes.system_bus->mapPage({0x00, 0x00, rom.getDeviceId(), 0, PageDeviceKind::Memory, 8});
-    rom.mem[0] = 0xA9;
-    rom.mem[1] = 0x01;
+    TestFixture f;
+    f.loadAt(0, {0xA9, 0x01});
 
-    (void)cpu.tick(2);
-    REQUIRE(cpu.getA() == 0x01);
-    REQUIRE(cpu.getFlags().N == false);
-    REQUIRE(cpu.getFlags().Z == false);
+    (void)f.cpu.tick(2);
+    REQUIRE(static_cast<uint8_t>(f.cpu.regs().A) == 0x01);
+    REQUIRE(f.cpu.regs().P.N == false);
+    REQUIRE(f.cpu.regs().P.Z == false);
 }
 
 TEST_CASE("LDA #imm: preserves A high byte (B register)", "[cpu]") {
-    SNES snes;
-    TestROM rom(&snes);
-    CPU cpu(&snes);
-    snes.system_bus->mapPage({0x00, 0x00, rom.getDeviceId(), 0, PageDeviceKind::Memory, 8});
-    rom.mem[0] = 0xA9;
-    rom.mem[1] = 0x55;
+    TestFixture f;
+    f.loadAt(0, {0xA9, 0x55});
 
-    (void)cpu.tick(2);
+    (void)f.cpu.tick(2);
     // In 8-bit mode A high byte (the hidden B register) starts as 0 and must stay 0.
-    REQUIRE(cpu.getAFull() == 0x0055);
+    REQUIRE(f.cpu.regs().A == 0x0055);
 }
 
 // ---------------------------------------------------------------------------
@@ -241,35 +197,28 @@ TEST_CASE("LDA #imm: preserves A high byte (B register)", "[cpu]") {
 // ---------------------------------------------------------------------------
 
 TEST_CASE("NOP followed by LDA #imm executes correctly in sequence", "[cpu]") {
-    SNES snes;
-    TestROM rom(&snes);
-    CPU cpu(&snes);
-    snes.system_bus->mapPage({0x00, 0x00, rom.getDeviceId(), 0, PageDeviceKind::Memory, 8});
-    rom.mem[0] = 0xEA; // NOP  (2 cycles)
-    rom.mem[1] = 0xA9; // LDA #imm (2 cycles)
-    rom.mem[2] = 0x7F; // immediate
+    TestFixture f;
+    f.loadAt(0, {0xEA, 0xA9, 0x7F});
 
-    // Execute both instructions in one tick call.
-    TickResult r = cpu.tick(4);
+    TickResult r = f.cpu.tick(4);
     REQUIRE(r.completed_cycles == 4);
-    REQUIRE(cpu.getPC() == 0x0003);
-    REQUIRE(cpu.getA() == 0x7F);
-    REQUIRE(cpu.getTime() == 4);
+    REQUIRE(f.cpu.regs().PC == 0x8003);
+    REQUIRE(static_cast<uint8_t>(f.cpu.regs().A) == 0x7F);
+    REQUIRE(f.cpu.getTime() == 4);
 }
 
 // ---------------------------------------------------------------------------
 // Unmapped (open-bus) reads
 // ---------------------------------------------------------------------------
 
-TEST_CASE("Fetch from unmapped address returns 0xFF and advances PC", "[cpu]") {
-    // No pages mapped — every read returns open-bus 0xFF (SBC (dp,S),Y on 65C816).
-    // This test just verifies the CPU doesn't crash and advances time.
+TEST_CASE("Fetch from unmapped address returns open-bus value and advances PC", "[cpu]") {
+    // No pages mapped — every read returns the open-bus value.
     SNES snes;
     CPU cpu(&snes);
 
     TickResult r = cpu.tick(2);
     REQUIRE(r.completed_cycles == 2);
-    REQUIRE(cpu.getPC() == 0x0001);
+    REQUIRE(cpu.regs().PC == 0x0001);
     REQUIRE(cpu.getTime() == 2);
 }
 

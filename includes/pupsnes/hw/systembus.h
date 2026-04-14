@@ -72,6 +72,7 @@ class SystemBus {
 
   private:
     SNES *snes_; // Non-owning. SNES owns this SystemBus; pointer back to parent.
+    uint8_t last_data_bus_value_ = 0xFF;
     using PageRow = std::array<PageTableEntry, 256>;
     std::array<PageRow, 256> page_table_{};
 

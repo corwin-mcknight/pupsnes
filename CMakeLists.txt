@@ -23,9 +23,13 @@ set(PUPSNES_TEST_SOURCES
   src/tests/systembus_tests.cpp
 )
 
+set(PUPSNES_PROFILE "PRODUCTION" CACHE STRING "Build profile: DEBUG, CI, or PRODUCTION")
+set_property(CACHE PUPSNES_PROFILE PROPERTY STRINGS DEBUG CI PRODUCTION)
+
 add_library(pupsnes STATIC ${PUPSNES_LIB_SOURCES})
 target_compile_features(pupsnes PUBLIC cxx_std_20)
 target_include_directories(pupsnes PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/includes)
+target_compile_definitions(pupsnes PUBLIC "PUPSNES_PROFILE_${PUPSNES_PROFILE}")
 
 if(PUPSNES_CLI_SOURCES)
   add_executable(pupsnes_cli ${PUPSNES_CLI_SOURCES})
@@ -112,6 +116,7 @@ find_program(CLANG_FORMAT_EXE NAMES clang-format)
 find_program(CLANG_TIDY_EXE NAMES clang-tidy)
 
 set(PUPSNES_HEADERS
+  ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/config.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/types.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/mem.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/5a22/cpu.h

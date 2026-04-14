@@ -52,8 +52,25 @@ void CpuFlags::fromByte(uint8_t p, bool emulation_mode) {
 // ---------------------------------------------------------------------------
 // Opcode table
 // All 256 opcodes default to NOP timing: 1 remaining internal cycle.
-// Specific opcodes override that default below.
+// Group-init helpers populate specific opcodes by instruction family.
 // ---------------------------------------------------------------------------
+
+namespace {
+
+void initMiscOpcodes(std::array<InstructionEntry, 256> &table) {
+    // 0xEA  NOP  — 2 cycles; explicit for clarity (same as default).
+    table[0xEA].remaining_op_count = 1;
+    table[0xEA].ops[0] = {MicroBusAction::None, MicroInternalOp::None};
+}
+
+void initLoadOpcodes(std::array<InstructionEntry, 256> &table) {
+    // 0xA9  LDA #imm  — 2 cycles (8-bit accumulator mode).
+    // Remaining op: fetch immediate byte and load into A, update N/Z.
+    table[0xA9].remaining_op_count = 1;
+    table[0xA9].ops[0] = {MicroBusAction::FetchPC, MicroInternalOp::LoadALow_UpdateNZ};
+}
+
+} // namespace
 
 const std::array<InstructionEntry, 256> CPU::kOpcodeTable = []() {
     std::array<InstructionEntry, 256> table{};
@@ -64,14 +81,8 @@ const std::array<InstructionEntry, 256> CPU::kOpcodeTable = []() {
         entry.ops[0] = {MicroBusAction::None, MicroInternalOp::None};
     }
 
-    // 0xEA  NOP  — 2 cycles; explicit for clarity (same as default).
-    table[0xEA].remaining_op_count = 1;
-    table[0xEA].ops[0] = {MicroBusAction::None, MicroInternalOp::None};
-
-    // 0xA9  LDA #imm  — 2 cycles (8-bit accumulator mode).
-    // Remaining op: fetch immediate byte and load into A, update N/Z.
-    table[0xA9].remaining_op_count = 1;
-    table[0xA9].ops[0] = {MicroBusAction::FetchPC, MicroInternalOp::LoadALow_UpdateNZ};
+    initMiscOpcodes(table);
+    initLoadOpcodes(table);
 
     return table;
 }();
@@ -82,14 +93,18 @@ const std::array<InstructionEntry, 256> CPU::kOpcodeTable = []() {
 
 CPU::CPU(SNES *snes) : Device(snes) {}
 
+void CPU::opLoadALow_UpdateNZ() {
+    regs_.A = static_cast<uint16_t>((regs_.A & 0xFF00U) | fetch_data_);
+    regs_.P.Z = (static_cast<uint8_t>(regs_.A) == 0U);
+    regs_.P.N = (regs_.A & 0x0080U) != 0U;
+}
+
 void CPU::executeInternalOp(MicroInternalOp op) {
     switch (op) {
     case MicroInternalOp::None:
         break;
     case MicroInternalOp::LoadALow_UpdateNZ:
-        regs_.A = static_cast<uint16_t>((regs_.A & 0xFF00U) | fetch_data_);
-        regs_.P.Z = (static_cast<uint8_t>(regs_.A) == 0U);
-        regs_.P.N = (regs_.A & 0x0080U) != 0U;
+        opLoadALow_UpdateNZ();
         break;
     }
 }
@@ -102,7 +117,7 @@ std::optional<TickResult> CPU::busRead(snes_addr_t addr, time_master_delta_t con
         return TickResult{consumed, TickStopReason::BlockedOnToken, result.token};
     }
 
-    fetch_data_ = (result.outcome == BusPlanOutcome::InlineComplete) ? result.data : 0xFFU;
+    fetch_data_ = result.data;
     return std::nullopt;
 }
 

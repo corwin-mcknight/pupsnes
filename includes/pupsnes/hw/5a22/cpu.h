@@ -63,26 +63,6 @@ struct InstructionEntry {
 // the per-opcode remaining ops execute one per cycle. All bus accesses use SystemBus plan/follow.
 class CPU : public Device {
   public:
-    explicit CPU(SNES *snes);
-    ~CPU() override = default;
-
-    [[nodiscard]] TickResult tick(time_master_delta_t budget) override;
-    void onEvent(const SchedulerEvent &event) override;
-
-    // Register accessors (for tests and debugging).
-    [[nodiscard]] uint16_t getPC() const { return regs_.PC; }
-    [[nodiscard]] uint8_t getA() const { return static_cast<uint8_t>(regs_.A); }
-    [[nodiscard]] uint16_t getAFull() const { return regs_.A; }
-    [[nodiscard]] uint16_t getX() const { return regs_.X; }
-    [[nodiscard]] uint16_t getY() const { return regs_.Y; }
-    [[nodiscard]] uint16_t getSP() const { return regs_.SP; }
-    [[nodiscard]] uint8_t getPBR() const { return regs_.PBR; }
-    [[nodiscard]] uint8_t getDBR() const { return regs_.DBR; }
-    [[nodiscard]] uint16_t getDP() const { return regs_.DP; }
-    [[nodiscard]] const CpuFlags &getFlags() const { return regs_.P; }
-    [[nodiscard]] uint8_t getMicroOpIndex() const { return micro_op_index_; }
-
-  private:
     struct Regs {
         uint16_t A = 0;
         uint16_t X = 0;
@@ -93,7 +73,20 @@ class CPU : public Device {
         uint8_t DBR = 0;
         uint16_t PC = 0;
         CpuFlags P{};
-    } regs_;
+    };
+
+    explicit CPU(SNES *snes);
+    ~CPU() override = default;
+
+    [[nodiscard]] TickResult tick(time_master_delta_t budget) override;
+    void onEvent(const SchedulerEvent &event) override;
+
+    [[nodiscard]] Regs regs() const { return regs_; }
+    void setRegs(const Regs &r) { regs_ = r; }
+    [[nodiscard]] uint8_t getMicroOpIndex() const { return micro_op_index_; }
+
+  private:
+    Regs regs_;
 
     // Micro-op execution state.
     uint8_t micro_op_index_ = 0; // 0 = opcode fetch; 1..N = remaining ops
@@ -106,6 +99,7 @@ class CPU : public Device {
     static const std::array<InstructionEntry, 256> kOpcodeTable;
 
     void executeInternalOp(MicroInternalOp op);
+    void opLoadALow_UpdateNZ();
 
     [[nodiscard]] snes_addr_t pcAddr() const;
 
