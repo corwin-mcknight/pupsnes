@@ -1,10 +1,13 @@
 #pragma once
 
 #include "pupsnes/types.h"
+
 #include <memory>
+#include <vector>
 
 namespace pupsnes {
 class Scheduler;
+class Device;
 
 class SNES {
   public:
@@ -18,8 +21,11 @@ class SNES {
     [[nodiscard]] time_master_t getMasterTime() const { return time_now; }
     void setMasterTime(time_master_t t) { time_now = t; }
 
+    device_id_t registerDevice(Device *device);
+    [[nodiscard]] Device *getDevice(device_id_t id) const;
+
   private:
     time_master_t time_now = 0;
-    // time_apu_t time_apu_now = 0;
+    std::vector<Device *> devices_;
 };
 } // namespace pupsnes

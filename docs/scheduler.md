@@ -484,18 +484,22 @@ The result is a robust foundation for high-accuracy behavior (bus contention, de
 The following parts of this specification are implemented:
 
 - Event queue with `(time, subphase, type, seq)` ordering (simplified from the full 5-tuple; `class_priority` and `device_priority` are deferred until needed)
-- `Scheduler::step()`: pops next event, advances global time, dispatches to `Device::tick()` or `Device::on_event()` based on subphase
+- `Scheduler::step()`: pops next event, advances global time, dispatches to `Device::tick()` or `Device::onEvent()` based on subphase
 - `Scheduler::computeBudget()`: `min(MAX_CYCLES_STEP, next_event_time - now)`
-- `Device` base class with `tick(budget)` returning `TickResult` and `on_event(event)`
-- `TickStopReason`: `BudgetExhausted`, `BlockedOnIO`
+- `Device` base class with `tick(budget)` returning `TickResult` and `onEvent(event)`
+- `TickStopReason`: `BudgetExhausted`, `BlockedOnIO`, `BlockedOnToken`
+- `TickResult` includes `blocked_token` field for token-based blocking
 - Three scheduler phases: CommitComplete, WakeSample, Run
+- Stable device IDs (`device_id_t`) with SNES device registry (`registerDevice`/`getDevice`)
+- `TokenTable` with create, complete, resolve, remove, and blocked-device tracking
+- Scheduler integration: `createToken()`, `getToken()`, `removeToken()`
+- Token resolution during CommitComplete with auto-wake for blocked devices
+- Clock-driven (polling) wake model: devices can poll token state via `getToken()`
 
 Not yet implemented:
 
-- Tokens and two-phase external I/O
 - Connectors and device isolation
 - Quiescence loop (commit/wake repeat until stable)
 - Zero-time livelock detection
 - Save-state serialization
 - Device-local boundary time in budget calculation
-- Stable device IDs (currently uses pointers)

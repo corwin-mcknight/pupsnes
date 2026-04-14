@@ -57,13 +57,27 @@ void Scheduler::step() {
     }
 
     switch (event.subphase) {
-    case SchedulerPhase::CommitComplete:
+    case SchedulerPhase::CommitComplete: {
+        auto woken = token_table_.resolveAt(event.time);
+        for (device_id_t dev_id : woken) {
+            Device *dev = snes->getDevice(dev_id);
+            if (dev != nullptr) {
+                scheduleEvent(event.time, dev, SchedulerPhase::Run, EventType::DeviceRun);
+            }
+        }
+        event.source->onEvent(event);
+        break;
+    }
     case SchedulerPhase::WakeSample:
         event.source->onEvent(event);
         break;
     case SchedulerPhase::Run: {
         if (event.type == EventType::DeviceRun) {
-            [[maybe_unused]] auto result = event.source->tick(computeBudget(event.time));
+            auto result = event.source->tick(computeBudget(event.time));
+            event.source->advanceLocalTime(result.completedCycles);
+            if (result.reason == TickStopReason::BlockedOnToken) {
+                token_table_.setBlocked(result.blocked_token, event.source->getDeviceId());
+            }
         } else {
             event.source->onEvent(event);
         }
@@ -82,6 +96,18 @@ time_master_delta_t Scheduler::computeBudget(time_master_t now) const {
     }
     return budget;
 }
+
+token_id_t Scheduler::createToken(TokenType type, device_id_t source,
+                                  time_master_t completion_time, snes_addr_t address, uint8_t data) {
+    token_id_t id = token_table_.create(type, source, completion_time, address, data);
+    Device *device = snes->getDevice(source);
+    scheduleEvent(completion_time, device, SchedulerPhase::CommitComplete, EventType::DeviceRun);
+    return id;
+}
+
+const Token *Scheduler::getToken(token_id_t id) const { return token_table_.get(id); }
+
+void Scheduler::removeToken(token_id_t id) { token_table_.remove(id); }
 
 void Scheduler::debugPrintNextEvent() {
     if (eventQueue.empty()) {

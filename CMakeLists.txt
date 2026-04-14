@@ -5,6 +5,7 @@ project(pupsnes LANGUAGES CXX)
 set(PUPSNES_LIB_SOURCES
   src/pupsnes/scheduler.cpp
   src/pupsnes/snes.cpp
+  src/pupsnes/token.cpp
 )
 
 set(PUPSNES_CLI_SOURCES
@@ -13,6 +14,7 @@ set(PUPSNES_CLI_SOURCES
 set(PUPSNES_TEST_SOURCES
   src/tests/unit/catch2_smoke_tests.cpp
   src/tests/scheduler_tests.cpp
+  src/tests/token_tests.cpp
   src/tests/mem_tests.cpp
 )
 
@@ -111,6 +113,7 @@ set(PUPSNES_HEADERS
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/scheduler.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/snes.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/systembus.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/token.h
 )
 
 set(PUPSNES_ALL_SOURCES

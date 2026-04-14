@@ -1,5 +1,6 @@
 #pragma once
 
+#include "pupsnes/hw/token.h"
 #include "pupsnes/types.h"
 
 #include <cstdint>
@@ -51,6 +52,7 @@ class Scheduler {
     EventMinHeap eventQueue;
 
     uint64_t nextEventSeq = 0;
+    TokenTable token_table_;
 
     friend struct SchedulerTestAccess;
 
@@ -65,6 +67,11 @@ class Scheduler {
 
     void step();
     [[nodiscard]] time_master_delta_t computeBudget(time_master_t now) const;
+
+    token_id_t createToken(TokenType type, device_id_t source, time_master_t completion_time,
+                           snes_addr_t address, uint8_t data);
+    [[nodiscard]] const Token *getToken(token_id_t id) const;
+    void removeToken(token_id_t id);
 
     void debugPrintNextEvent();
     void debugPrintEventQueue();

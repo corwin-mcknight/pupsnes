@@ -15,4 +15,10 @@ using time_apu_t = uint64_t;
 // 24-bit SNES address. 0xWWXXYYZZ where WW is invalid, XX is bank, YYZZ is address within bank.
 using snes_addr_t = uint32_t;
 
+// Stable device identifier assigned at registration.
+using device_id_t = uint32_t;
+
+// Stable token identifier for pending external I/O.
+using token_id_t = uint64_t;
+
 } // namespace pupsnes
