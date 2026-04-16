@@ -102,7 +102,6 @@ CPU::CPU(SNES* snes) : Device(snes) {}
 
 void CPU::Reset() {
     regs_ = Regs();
-    {};
     regs_.SP = 0x01FFU;
     regs_.P = CpuFlags{};
     regs_.P.E = true;

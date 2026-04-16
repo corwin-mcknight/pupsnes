@@ -53,6 +53,6 @@ cmake --build --preset dev --target cpplint        # run cpplint
 cmake --build --preset dev --target lint           # all three
 ```
 
-Third-party headers (Conan-provided: spdlog, fmt, Catch2) are promoted to SYSTEM include dirs so lint warnings only fire on project code under `includes/` and `src/`.
+Third-party headers (Conan-provided: Catch2) are promoted to SYSTEM include dirs so lint warnings only fire on project code under `includes/` and `src/`.
 
 `ci-verify.sh` runs `lint` non-blocking while the backlog is triaged; make it blocking once findings are resolved.

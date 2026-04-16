@@ -1,8 +1,9 @@
 #include "pupsnes/hw/scheduler.h"
 
-#include <spdlog/spdlog.h>
-
 #include <algorithm>
+#include <cstdint>
+#include <format>
+#include <iostream>
 #include <stdexcept>
 
 #include "pupsnes/hw/device.h"
@@ -14,19 +15,20 @@ namespace {
 [[noreturn]] void FailScheduler(const char* message) { throw std::logic_error(message); }
 
 void DebugPrintSchedulerEvent(const SchedulerEvent& event, bool multiline) {
+    auto src = reinterpret_cast<std::uintptr_t>(event.source);
     if (multiline) {
-        spdlog::debug("  Time: {}", event.time);
-        spdlog::debug("  Source: {}", static_cast<const void*>(event.source));
-        spdlog::debug("  Seq: {}", event.seq);
-        spdlog::debug("  Subphase: {}", static_cast<int>(event.subphase));
-        spdlog::debug("  Type: {}", static_cast<int>(event.type));
-        spdlog::debug("  Run generation: {}", event.run_generation);
+        std::cerr << std::format("  Time: {}\n", event.time);
+        std::cerr << std::format("  Source: 0x{:x}\n", src);
+        std::cerr << std::format("  Seq: {}\n", event.seq);
+        std::cerr << std::format("  Subphase: {}\n", static_cast<int>(event.subphase));
+        std::cerr << std::format("  Type: {}\n", static_cast<int>(event.type));
+        std::cerr << std::format("  Run generation: {}\n", event.run_generation);
         return;
     }
 
-    spdlog::debug("  Time: {}, Source: {}, Seq: {}, Subphase: {}, Type: {}, Run generation: {}", event.time,
-                  static_cast<const void*>(event.source), event.seq, static_cast<int>(event.subphase),
-                  static_cast<int>(event.type), event.run_generation);
+    std::cerr << std::format("  Time: {}, Source: 0x{:x}, Seq: {}, Subphase: {}, Type: {}, Run generation: {}\n",
+                             event.time, src, event.seq, static_cast<int>(event.subphase), static_cast<int>(event.type),
+                             event.run_generation);
 }
 }  // namespace
 
@@ -171,7 +173,8 @@ void Scheduler::HandleRunResult(Device* device, const TickResult& result) {
     }
 
     TimeMasterT next_run_time = device->GetTime();
-    if (result.reason == TickStopReason::kReachedLocalBoundary || result.reason == TickStopReason::kNoWork) {
+    if ((result.reason == TickStopReason::kReachedLocalBoundary || result.reason == TickStopReason::kNoWork) &&
+        result.next_wake_time.has_value()) {
         next_run_time = *result.next_wake_time;
     }
 
@@ -363,22 +366,22 @@ void Scheduler::CatchUpDevice(DeviceIdT device_id, TimeMasterT target_time) {
 
 void Scheduler::DebugPrintNextEvent() {
     if (eventQueue_.empty()) {
-        spdlog::debug("No scheduled events.");
+        std::cerr << "No scheduled events.\n";
         return;
     }
     const SchedulerEvent& event = eventQueue_.top();
-    spdlog::debug("Next Event:");
+    std::cerr << "Next Event:\n";
     DebugPrintSchedulerEvent(event, true);
 }
 
 void Scheduler::DebugPrintEventQueue() {
     if (eventQueue_.empty()) {
-        spdlog::debug("Event queue is empty.");
+        std::cerr << "Event queue is empty.\n";
         return;
     }
 
     EventMinHeap temp_queue = eventQueue_;
-    spdlog::debug("Scheduled Events:");
+    std::cerr << "Scheduled Events:\n";
     while (!temp_queue.empty()) {
         const SchedulerEvent& event = temp_queue.top();
         DebugPrintSchedulerEvent(event, false);

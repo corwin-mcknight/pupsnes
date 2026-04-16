@@ -43,9 +43,6 @@ if(PUPSNES_CLI_SOURCES)
   set_target_properties(pupsnes_cli PROPERTIES OUTPUT_NAME pupsnes)
 endif()
 
-find_package(spdlog CONFIG REQUIRED)
-target_link_libraries(pupsnes PUBLIC spdlog::spdlog)
-
 # Treat third-party (Conan) include dirs as SYSTEM so clang-tidy / warnings
 # don't report issues inside vendor headers or macro expansions from them.
 function(pupsnes_mark_system target)
@@ -57,8 +54,6 @@ function(pupsnes_mark_system target)
     endif()
   endif()
 endfunction()
-pupsnes_mark_system(spdlog::spdlog)
-pupsnes_mark_system(fmt::fmt)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 

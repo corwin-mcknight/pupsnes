@@ -1,5 +1,7 @@
 #include "pupsnes/hw/token.h"
 
+#include <vector>
+
 namespace pupsnes {
 
 TokenIdT TokenTable::Create(const TokenCreateParams& params) {

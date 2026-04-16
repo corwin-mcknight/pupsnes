@@ -1,6 +1,7 @@
 #include "pupsnes/hw/snes.h"
 
-#include <spdlog/spdlog.h>
+#include <format>
+#include <iostream>
 
 #include "pupsnes/hw/device.h"
 #include "pupsnes/hw/scheduler.h"
@@ -33,8 +34,8 @@ pupsnes::Device* pupsnes::SNES::GetDevice(DeviceIdT id) const {
 }
 
 void pupsnes::SNES::DebugPrintInfo() {
-    spdlog::debug("SNES Info:");
-    spdlog::debug("  Time (master): {}", time_now_);
+    std::cerr << "SNES Info:\n";
+    std::cerr << std::format("  Time (master): {}\n", time_now_);
 
     scheduler->DebugPrintNextEvent();
     scheduler->DebugPrintEventQueue();
