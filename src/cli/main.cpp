@@ -11,10 +11,10 @@ int main(int /*argc*/, char** /*argv*/) {
     std::printf("PupSNES");
 
     SNES snes;
-    snes.debugPrintInfo();
+    snes.DebugPrintInfo();
 
-    snes.scheduler->scheduleEvent(1000, nullptr, SchedulerPhase::Run, EventType::DeviceRun);
-    snes.scheduler->step();
+    snes.scheduler->ScheduleEvent(1000, nullptr, SchedulerPhase::kRun, EventType::kDeviceRun);
+    snes.scheduler->Step();
 
     return 0;
 }

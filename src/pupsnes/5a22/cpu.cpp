@@ -15,7 +15,7 @@ namespace pupsnes {
 // CpuFlags
 // ---------------------------------------------------------------------------
 
-uint8_t CpuFlags::toByte() const {
+uint8_t CpuFlags::ToByte() const {
     uint8_t p = 0;
     if (N) p |= 0x80U;
     if (V) p |= 0x40U;
@@ -28,7 +28,7 @@ uint8_t CpuFlags::toByte() const {
     return p;
 }
 
-void CpuFlags::fromByte(uint8_t p, bool emulation_mode) {
+void CpuFlags::FromByte(uint8_t p, bool emulation_mode) {
     N = (p & 0x80U) != 0U;
     V = (p & 0x40U) != 0U;
     // In emulation mode M and X are forced to 1 and cannot be changed via P.
@@ -50,31 +50,31 @@ void CpuFlags::fromByte(uint8_t p, bool emulation_mode) {
 
 namespace {
 
-void initMiscOpcodes(std::array<InstructionEntry, 256>& table) noexcept {
+void InitMiscOpcodes(std::array<InstructionEntry, 256>& table) noexcept {
     // 0xEA  NOP  — 2 cycles; explicit for clarity (same as default).
     table[0xEA].remaining_op_count = 1;
-    table[0xEA].ops[0] = {MicroBusAction::None, MicroInternalOp::None};
+    table[0xEA].ops[0] = {MicroBusAction::kNone, MicroInternalOp::kNone};
 
     // 0x80  BRA rel8  — 3 cycles.
     // Remaining ops: fetch signed displacement, then apply it to the already incremented PC.
     table[0x80].remaining_op_count = 2;
-    table[0x80].ops[0] = {MicroBusAction::FetchPC, MicroInternalOp::None};
-    table[0x80].ops[1] = {MicroBusAction::None, MicroInternalOp::BranchRelative8};
+    table[0x80].ops[0] = {MicroBusAction::kFetchPc, MicroInternalOp::kNone};
+    table[0x80].ops[1] = {MicroBusAction::kNone, MicroInternalOp::kBranchRelative8};
 
     // 0x8F  STA long  — 5 cycles in the subset we currently model.
     // Remaining ops: fetch address lo/hi/bank, then write A low to the resolved address.
     table[0x8F].remaining_op_count = 4;
-    table[0x8F].ops[0] = {MicroBusAction::FetchPC, MicroInternalOp::SetAddrLowFromFetch};
-    table[0x8F].ops[1] = {MicroBusAction::FetchPC, MicroInternalOp::SetAddrHighFromFetch};
-    table[0x8F].ops[2] = {MicroBusAction::FetchPC, MicroInternalOp::SetAddrBankFromFetch};
-    table[0x8F].ops[3] = {MicroBusAction::WriteA8Addr, MicroInternalOp::None};
+    table[0x8F].ops[0] = {MicroBusAction::kFetchPc, MicroInternalOp::kSetAddrLowFromFetch};
+    table[0x8F].ops[1] = {MicroBusAction::kFetchPc, MicroInternalOp::kSetAddrHighFromFetch};
+    table[0x8F].ops[2] = {MicroBusAction::kFetchPc, MicroInternalOp::kSetAddrBankFromFetch};
+    table[0x8F].ops[3] = {MicroBusAction::kWriteA8Addr, MicroInternalOp::kNone};
 }
 
-void initLoadOpcodes(std::array<InstructionEntry, 256>& table) noexcept {
+void InitLoadOpcodes(std::array<InstructionEntry, 256>& table) noexcept {
     // 0xA9  LDA #imm  — 2 cycles (8-bit accumulator mode).
     // Remaining op: fetch immediate byte and load into A, update N/Z.
     table[0xA9].remaining_op_count = 1;
-    table[0xA9].ops[0] = {MicroBusAction::FetchPC, MicroInternalOp::LoadALow_UpdateNZ};
+    table[0xA9].ops[0] = {MicroBusAction::kFetchPc, MicroInternalOp::kLoadALowUpdateNz};
 }
 
 }  // namespace
@@ -85,11 +85,11 @@ const std::array<InstructionEntry, 256> CPU::kOpcodeTable = []() noexcept {
     // Default: 2-cycle instruction (opcode fetch + 1 internal cycle, no bus action).
     for (auto& entry : table) {
         entry.remaining_op_count = 1;
-        entry.ops[0] = {MicroBusAction::None, MicroInternalOp::None};
+        entry.ops[0] = {MicroBusAction::kNone, MicroInternalOp::kNone};
     }
 
-    initMiscOpcodes(table);
-    initLoadOpcodes(table);
+    InitMiscOpcodes(table);
+    InitLoadOpcodes(table);
 
     return table;
 }();
@@ -100,8 +100,9 @@ const std::array<InstructionEntry, 256> CPU::kOpcodeTable = []() noexcept {
 
 CPU::CPU(SNES* snes) : Device(snes) {}
 
-void CPU::reset() {
-    regs_ = Regs{};
+void CPU::Reset() {
+    regs_ = Regs();
+    {};
     regs_.SP = 0x01FFU;
     regs_.P = CpuFlags{};
     regs_.P.E = true;
@@ -113,100 +114,100 @@ void CPU::reset() {
     fetch_data_ = 0;
     addr_ = 0;
     current_instr_ = nullptr;
-    local_time = (snes != nullptr) ? snes->getMasterTime() : 0;
+    local_time_ = (snes_ != nullptr) ? snes_->GetMasterTime() : 0;
 
-    const uint8_t vector_lo = readResetVectorByte(0x00FFFCU);
-    const uint8_t vector_hi = readResetVectorByte(0x00FFFDU);
+    const uint8_t vector_lo = ReadResetVectorByte(0x00FFFCU);
+    const uint8_t vector_hi = ReadResetVectorByte(0x00FFFDU);
 
     regs_.PBR = 0;
     regs_.PC = static_cast<uint16_t>(static_cast<uint16_t>(vector_hi) << 8U) | vector_lo;
 }
 
-void CPU::opLoadALow_UpdateNZ() {
+void CPU::OpLoadALowUpdateNz() {
     regs_.A = static_cast<uint16_t>((regs_.A & 0xFF00U) | fetch_data_);
     regs_.P.Z = (static_cast<uint8_t>(regs_.A) == 0U);
     regs_.P.N = (regs_.A & 0x0080U) != 0U;
 }
 
-void CPU::opBranchRelative8() {
+void CPU::OpBranchRelative8() {
     const int8_t displacement = static_cast<int8_t>(fetch_data_);
     regs_.PC = static_cast<uint16_t>(regs_.PC + displacement);
 }
 
-void CPU::opSetAddrLowFromFetch() { addr_ = (addr_ & 0xFFFF00U) | static_cast<uint32_t>(fetch_data_); }
+void CPU::OpSetAddrLowFromFetch() { addr_ = (addr_ & 0xFFFF00U) | static_cast<uint32_t>(fetch_data_); }
 
-void CPU::opSetAddrHighFromFetch() { addr_ = (addr_ & 0xFF00FFU) | (static_cast<uint32_t>(fetch_data_) << 8U); }
+void CPU::OpSetAddrHighFromFetch() { addr_ = (addr_ & 0xFF00FFU) | (static_cast<uint32_t>(fetch_data_) << 8U); }
 
-void CPU::opSetAddrBankFromFetch() { addr_ = (addr_ & 0x00FFFFU) | (static_cast<uint32_t>(fetch_data_) << 16U); }
+void CPU::OpSetAddrBankFromFetch() { addr_ = (addr_ & 0x00FFFFU) | (static_cast<uint32_t>(fetch_data_) << 16U); }
 
-void CPU::executeInternalOp(MicroInternalOp op) {
+void CPU::ExecuteInternalOp(MicroInternalOp op) {
     switch (op) {
-        case MicroInternalOp::None:
+        case MicroInternalOp::kNone:
             break;
-        case MicroInternalOp::LoadALow_UpdateNZ:
-            opLoadALow_UpdateNZ();
+        case MicroInternalOp::kLoadALowUpdateNz:
+            OpLoadALowUpdateNz();
             break;
-        case MicroInternalOp::BranchRelative8:
-            opBranchRelative8();
+        case MicroInternalOp::kBranchRelative8:
+            OpBranchRelative8();
             break;
-        case MicroInternalOp::SetAddrLowFromFetch:
-            opSetAddrLowFromFetch();
+        case MicroInternalOp::kSetAddrLowFromFetch:
+            OpSetAddrLowFromFetch();
             break;
-        case MicroInternalOp::SetAddrHighFromFetch:
-            opSetAddrHighFromFetch();
+        case MicroInternalOp::kSetAddrHighFromFetch:
+            OpSetAddrHighFromFetch();
             break;
-        case MicroInternalOp::SetAddrBankFromFetch:
-            opSetAddrBankFromFetch();
+        case MicroInternalOp::kSetAddrBankFromFetch:
+            OpSetAddrBankFromFetch();
             break;
     }
 }
 
-uint8_t CPU::readResetVectorByte(snes_addr_t addr) {
-    if (snes == nullptr || snes->system_bus == nullptr) {
+uint8_t CPU::ReadResetVectorByte(SnesAddrT addr) {
+    if (snes_ == nullptr || snes_->system_bus == nullptr) {
         return 0xFFU;
     }
 
-    auto plan = snes->system_bus->plan(addr, BusAccessType::Read);
-    auto result = snes->system_bus->follow(plan, local_time, device_id_);
-    if (result.outcome == BusPlanOutcome::ScheduledComplete) {
+    auto plan = snes_->system_bus->Plan(addr, BusAccessType::kRead);
+    auto result = snes_->system_bus->Follow(plan, local_time_, device_id_);
+    if (result.outcome == BusPlanOutcome::kScheduledComplete) {
         throw std::logic_error("CPU reset vector fetch cannot block on asynchronous bus access");
     }
 
     return result.data;
 }
 
-std::optional<TickResult> CPU::busRead(snes_addr_t addr, time_master_delta_t cycle_time) {
-    auto plan = snes->system_bus->plan(addr, BusAccessType::Read);
-    auto result = snes->system_bus->follow(plan, local_time + cycle_time, device_id_);
+std::optional<TickResult> CPU::BusRead(SnesAddrT addr, TimeMasterDeltaT cycle_time) {
+    auto plan = snes_->system_bus->Plan(addr, BusAccessType::kRead);
+    auto result = snes_->system_bus->Follow(plan, local_time_ + cycle_time, device_id_);
 
-    if (result.outcome == BusPlanOutcome::ScheduledComplete) {
-        return TickResult{cycle_time, TickStopReason::BlockedOnToken, result.token};
+    if (result.outcome == BusPlanOutcome::kScheduledComplete) {
+        return TickResult{cycle_time, TickStopReason::kBlockedOnToken, result.token};
     }
 
     fetch_data_ = result.data;
     return std::nullopt;
 }
 
-std::optional<TickResult> CPU::busWrite(snes_addr_t addr, uint8_t data, time_master_delta_t cycle_time) {
-    auto plan = snes->system_bus->plan(addr, BusAccessType::Write, data);
-    auto result = snes->system_bus->follow(plan, local_time + cycle_time, device_id_);
+std::optional<TickResult> CPU::BusWrite(SnesAddrT addr, uint8_t data, TimeMasterDeltaT cycle_time) {
+    auto plan = snes_->system_bus->Plan(addr, BusAccessType::kWrite, data);
+    auto result = snes_->system_bus->Follow(plan, local_time_ + cycle_time, device_id_);
 
-    if (result.outcome == BusPlanOutcome::ScheduledComplete) {
-        return TickResult{cycle_time, TickStopReason::BlockedOnToken, result.token};
+    if (result.outcome == BusPlanOutcome::kScheduledComplete) {
+        return TickResult{cycle_time, TickStopReason::kBlockedOnToken, result.token};
     }
 
     return std::nullopt;
 }
 
-snes_addr_t CPU::pcAddr() const { return (static_cast<uint32_t>(regs_.PBR) << 16U) | static_cast<uint32_t>(regs_.PC); }
+SnesAddrT CPU::PcAddr() const { return (static_cast<uint32_t>(regs_.PBR) << 16U) | static_cast<uint32_t>(regs_.PC); }
 
-TickResult CPU::tick(time_master_delta_t budget) {
-    time_master_delta_t cycle_time = 0;
+TickResult CPU::Tick(TimeMasterDeltaT budget) {
+    TimeMasterDeltaT cycle_time = 0;
 
     while (cycle_time < budget) {
         if (micro_op_index_ == 0) {
             // Cycle 0 of every instruction: fetch opcode from PBR:PC.
-            if (auto blocked = busRead(pcAddr(), cycle_time)) {
+            if (auto blocked = BusRead(PcAddr(), cycle_time)) {
                 return *blocked;
             }
             regs_.PC = static_cast<uint16_t>(regs_.PC + 1U);
@@ -226,46 +227,46 @@ TickResult CPU::tick(time_master_delta_t budget) {
             const MicroOp& mop = current_instr_->ops[op_idx];
 
             switch (mop.bus_action) {
-                case MicroBusAction::FetchPC: {
-                    if (auto blocked = busRead(pcAddr(), cycle_time)) {
+                case MicroBusAction::kFetchPc: {
+                    if (auto blocked = BusRead(PcAddr(), cycle_time)) {
                         return *blocked;
                     }
                     regs_.PC = static_cast<uint16_t>(regs_.PC + 1U);
                     break;
                 }
-                case MicroBusAction::ReadAddr: {
-                    if (auto blocked = busRead(addr_, cycle_time)) {
+                case MicroBusAction::kReadAddr: {
+                    if (auto blocked = BusRead(addr_, cycle_time)) {
                         return *blocked;
                     }
                     break;
                 }
-                case MicroBusAction::WriteAddr: {
-                    if (auto blocked = busWrite(addr_, fetch_data_, cycle_time)) {
+                case MicroBusAction::kWriteAddr: {
+                    if (auto blocked = BusWrite(addr_, fetch_data_, cycle_time)) {
                         return *blocked;
                     }
                     break;
                 }
-                case MicroBusAction::WriteA8Addr: {
-                    if (auto blocked = busWrite(addr_, static_cast<uint8_t>(regs_.A), cycle_time)) {
+                case MicroBusAction::kWriteA8Addr: {
+                    if (auto blocked = BusWrite(addr_, static_cast<uint8_t>(regs_.A), cycle_time)) {
                         return *blocked;
                     }
                     break;
                 }
-                case MicroBusAction::None:
+                case MicroBusAction::kNone:
                     break;
             }
 
-            executeInternalOp(mop.internal_op);
+            ExecuteInternalOp(mop.internal_op);
             micro_op_index_++;
         }
 
         cycle_time++;
     }
 
-    return {cycle_time, TickStopReason::BudgetExhausted};
+    return {cycle_time, TickStopReason::kBudgetExhausted};
 }
 
-void CPU::onEvent(const SchedulerEvent& /*event*/) {
+void CPU::OnEvent(const SchedulerEvent& /*event*/) {
     // CommitComplete/WakeSample do not currently require CPU-side mutation.
     // The scheduler wakes blocked CPU runs by replacing the authoritative Run wake.
 }

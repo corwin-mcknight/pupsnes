@@ -17,14 +17,14 @@ class WRAM : public Device {
     explicit WRAM(SNES* snes);
     ~WRAM() override = default;
 
-    void mapSystemBus(SystemBus& bus) const;
+    void MapSystemBus(SystemBus& bus) const;
 
-    [[nodiscard]] TickResult tick(time_master_delta_t budget) override;
-    void onEvent(const SchedulerEvent& event) override;
-    [[nodiscard]] uint8_t readRegister(uint32_t offset) override;
-    void writeRegister(uint32_t offset, uint8_t data) override;
+    [[nodiscard]] TickResult Tick(TimeMasterDeltaT budget) override;
+    void OnEvent(const SchedulerEvent& event) override;
+    [[nodiscard]] uint8_t ReadRegister(uint32_t offset) override;
+    void WriteRegister(uint32_t offset, uint8_t data) override;
 
-    [[nodiscard]] uint8_t peek(uint32_t offset) const { return bytes_[offset % kSize]; }
+    [[nodiscard]] uint8_t Peek(uint32_t offset) const { return bytes_[offset % kSize]; }
 
    private:
     std::array<uint8_t, kSize> bytes_{};

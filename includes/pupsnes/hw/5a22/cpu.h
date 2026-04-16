@@ -24,42 +24,42 @@ struct CpuFlags {
     bool C = false;  // Carry
     bool E = true;   // Emulation mode (toggled via XCE; not a P register bit)
 
-    [[nodiscard]] uint8_t toByte() const;
-    void fromByte(uint8_t p, bool emulation_mode);
+    [[nodiscard]] uint8_t ToByte() const;
+    void FromByte(uint8_t p, bool emulation_mode);
 };
 
 // Bus actions a micro-op can perform in a single master clock cycle.
 enum class MicroBusAction : uint8_t {
-    None,         // Internal cycle — no bus transaction
-    FetchPC,      // Read byte from PBR:PC, increment PC
-    ReadAddr,     // Read byte from effective address (addr_)
-    WriteAddr,    // Write fetch_data_ to effective address (addr_)
-    WriteA8Addr,  // Write A low byte to effective address (addr_)
+    kNone,         // Internal cycle — no bus transaction
+    kFetchPc,      // Read byte from PBR:PC, increment PC
+    kReadAddr,     // Read byte from effective address (addr_)
+    kWriteAddr,    // Write fetch_data_ to effective address (addr_)
+    kWriteA8Addr,  // Write A low byte to effective address (addr_)
 };
 
 // Internal register operations performed after the bus action completes.
 enum class MicroInternalOp : uint8_t {
-    None,
-    LoadALow_UpdateNZ,     // A_lo = fetch_data_; update N/Z from A (respects M flag)
-    BranchRelative8,       // Apply signed 8-bit branch offset stored in fetch_data_ to PC
-    SetAddrLowFromFetch,   // addr_[7:0] = fetch_data_
-    SetAddrHighFromFetch,  // addr_[15:8] = fetch_data_
-    SetAddrBankFromFetch,  // addr_[23:16] = fetch_data_
+    kNone,
+    kLoadALowUpdateNz,      // A_lo = fetch_data_; update N/Z from A (respects M flag)
+    kBranchRelative8,       // Apply signed 8-bit branch offset stored in fetch_data_ to PC
+    kSetAddrLowFromFetch,   // addr_[7:0] = fetch_data_
+    kSetAddrHighFromFetch,  // addr_[15:8] = fetch_data_
+    kSetAddrBankFromFetch,  // addr_[23:16] = fetch_data_
 };
 
 struct MicroOp {
-    MicroBusAction bus_action = MicroBusAction::None;
-    MicroInternalOp internal_op = MicroInternalOp::None;
+    MicroBusAction bus_action = MicroBusAction::kNone;
+    MicroInternalOp internal_op = MicroInternalOp::kNone;
 };
 
 // Maximum micro-ops remaining after the opcode fetch (longest 65C816 instruction = 7 cycles).
-inline constexpr uint8_t MAX_REMAINING_OPS = 7;
+inline constexpr uint8_t kMaxRemainingOps = 7;
 
 // Per-opcode micro-op sequence (the cycles that follow the initial opcode fetch).
 // Total instruction cycles = 1 (opcode fetch) + remaining_op_count.
 struct InstructionEntry {
     uint8_t remaining_op_count = 0;
-    std::array<MicroOp, MAX_REMAINING_OPS> ops{};
+    std::array<MicroOp, kMaxRemainingOps> ops{};
 };
 
 // 65C816 CPU device.
@@ -83,14 +83,14 @@ class CPU : public Device {
     explicit CPU(SNES* snes);
     ~CPU() override = default;
 
-    void reset();
+    void Reset();
 
-    [[nodiscard]] TickResult tick(time_master_delta_t budget) override;
-    void onEvent(const SchedulerEvent& event) override;
+    [[nodiscard]] TickResult Tick(TimeMasterDeltaT budget) override;
+    void OnEvent(const SchedulerEvent& event) override;
 
-    [[nodiscard]] Regs regs() const { return regs_; }
-    void setRegs(const Regs& r) { regs_ = r; }
-    [[nodiscard]] uint8_t getMicroOpIndex() const { return micro_op_index_; }
+    [[nodiscard]] struct Regs GetRegs() const { return regs_; }
+    void SetRegs(const Regs& r) { regs_ = r; }
+    [[nodiscard]] uint8_t GetMicroOpIndex() const { return micro_op_index_; }
 
    private:
     Regs regs_;
@@ -105,23 +105,23 @@ class CPU : public Device {
     // Opcode → micro-op sequence table.  Initialized in cpu.cpp.
     static const std::array<InstructionEntry, 256> kOpcodeTable;
 
-    void executeInternalOp(MicroInternalOp op);
-    void opLoadALow_UpdateNZ();
-    void opBranchRelative8();
-    void opSetAddrLowFromFetch();
-    void opSetAddrHighFromFetch();
-    void opSetAddrBankFromFetch();
-    [[nodiscard]] uint8_t readResetVectorByte(snes_addr_t addr);
+    void ExecuteInternalOp(MicroInternalOp op);
+    void OpLoadALowUpdateNz();
+    void OpBranchRelative8();
+    void OpSetAddrLowFromFetch();
+    void OpSetAddrHighFromFetch();
+    void OpSetAddrBankFromFetch();
+    [[nodiscard]] uint8_t ReadResetVectorByte(SnesAddrT addr);
 
-    [[nodiscard]] snes_addr_t pcAddr() const;
+    [[nodiscard]] SnesAddrT PcAddr() const;
 
     // Execute a bus read. Returns a TickResult if the access blocks (caller must return it).
     // On inline completion, writes the read byte to fetch_data_ and returns nullopt.
     // On rejected (unmapped), writes 0xFF to fetch_data_ and returns nullopt.
-    [[nodiscard]] std::optional<TickResult> busRead(snes_addr_t addr, time_master_delta_t cycle_time);
+    [[nodiscard]] std::optional<TickResult> BusRead(SnesAddrT addr, TimeMasterDeltaT cycle_time);
 
     // Execute a bus write. Returns a TickResult if the access blocks, nullopt otherwise.
-    [[nodiscard]] std::optional<TickResult> busWrite(snes_addr_t addr, uint8_t data, time_master_delta_t cycle_time);
+    [[nodiscard]] std::optional<TickResult> BusWrite(SnesAddrT addr, uint8_t data, TimeMasterDeltaT cycle_time);
 };
 
 }  // namespace pupsnes

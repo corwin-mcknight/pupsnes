@@ -11,42 +11,42 @@ class SNES;
 struct SchedulerEvent;
 
 enum class TickStopReason : uint8_t {
-    BudgetExhausted = 0,
-    ReachedLocalBoundary = 1,
-    BlockedOnToken = 2,
-    NoWork = 3,
+    kBudgetExhausted = 0,
+    kReachedLocalBoundary = 1,
+    kBlockedOnToken = 2,
+    kNoWork = 3,
 };
 struct TickResult {
-    time_master_delta_t completed_cycles;
+    TimeMasterDeltaT completed_cycles;
     TickStopReason reason;
 
-    // Only meaningful when reason == TickStopReason::BlockedOnToken.
-    token_id_t blocked_token = 0;
+    // Only meaningful when reason == TickStopReason::kBlockedOnToken.
+    TokenIdT blocked_token = 0;
 
     // Absolute master-cycle wake time. Only meaningful when:
-    // - reason == TickStopReason::ReachedLocalBoundary
-    // - reason == TickStopReason::NoWork (optional)
+    // - reason == TickStopReason::kReachedLocalBoundary
+    // - reason == TickStopReason::kNoWork (optional)
     //
     // Wake times earlier than the device's committed local_time are scheduler bugs.
-    std::optional<time_master_t> next_wake_time = std::nullopt;
+    std::optional<TimeMasterT> next_wake_time = std::nullopt;
 };
 
 class Device {
    protected:
-    time_master_t local_time = 0;
-    SNES* snes = nullptr;  // Non-owning. Owned by caller; must outlive this Device.
-    device_id_t device_id_ = 0;
+    TimeMasterT local_time_ = 0;
+    SNES* snes_ = nullptr;  // Non-owning. Owned by caller; must outlive this Device.
+    DeviceIdT device_id_ = 0;
 
    public:
     explicit Device(SNES* snes);
     virtual ~Device() = default;
-    [[nodiscard]] virtual TickResult tick(time_master_delta_t budget) = 0;
-    virtual void onEvent(const SchedulerEvent& event) = 0;
-    virtual uint8_t readRegister(uint32_t /*offset*/) { return 0; }
-    virtual void writeRegister(uint32_t /*offset*/, uint8_t /*data*/) {}
+    [[nodiscard]] virtual TickResult Tick(TimeMasterDeltaT budget) = 0;
+    virtual void OnEvent(const SchedulerEvent& event) = 0;
+    virtual uint8_t ReadRegister(uint32_t /*offset*/) { return 0; }
+    virtual void WriteRegister(uint32_t /*offset*/, uint8_t /*data*/) {}
 
-    [[nodiscard]] time_master_t getTime() const { return local_time; }
-    void advanceLocalTime(time_master_delta_t delta) { local_time += delta; }
-    [[nodiscard]] device_id_t getDeviceId() const { return device_id_; }
+    [[nodiscard]] TimeMasterT GetTime() const { return local_time_; }
+    void AdvanceLocalTime(TimeMasterDeltaT delta) { local_time_ += delta; }
+    [[nodiscard]] DeviceIdT GetDeviceId() const { return device_id_; }
 };
 }  // namespace pupsnes

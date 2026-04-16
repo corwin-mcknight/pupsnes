@@ -2,19 +2,19 @@
 
 #include "pupsnes/mem.h"
 
-TEST_CASE("wrapAddr masks to 24 bits", "[unit]") {
-    using pupsnes::snes_addr_t;
-    using pupsnes::util::wrapAddr;
+TEST_CASE("WrapAddr masks to 24 bits", "[unit]") {
+    using pupsnes::SnesAddrT;
+    using pupsnes::util::WrapAddr;
 
     SECTION("leaves 24-bit addresses unchanged") {
-        REQUIRE(wrapAddr(static_cast<snes_addr_t>(0x000000)) == 0x000000);
-        REQUIRE(wrapAddr(static_cast<snes_addr_t>(0x00ABCD)) == 0x00ABCD);
-        REQUIRE(wrapAddr(static_cast<snes_addr_t>(0xFFFFFF)) == 0xFFFFFF);
+        REQUIRE(WrapAddr(static_cast<SnesAddrT>(0x000000)) == 0x000000);
+        REQUIRE(WrapAddr(static_cast<SnesAddrT>(0x00ABCD)) == 0x00ABCD);
+        REQUIRE(WrapAddr(static_cast<SnesAddrT>(0xFFFFFF)) == 0xFFFFFF);
     }
 
     SECTION("clears bits above 24") {
-        REQUIRE(wrapAddr(static_cast<snes_addr_t>(0x01000000)) == 0x000000);
-        REQUIRE(wrapAddr(static_cast<snes_addr_t>(0x01FFFFFF)) == 0xFFFFFF);
-        REQUIRE(wrapAddr(static_cast<snes_addr_t>(0x12345678)) == 0x345678);
+        REQUIRE(WrapAddr(static_cast<SnesAddrT>(0x01000000)) == 0x000000);
+        REQUIRE(WrapAddr(static_cast<SnesAddrT>(0x01FFFFFF)) == 0xFFFFFF);
+        REQUIRE(WrapAddr(static_cast<SnesAddrT>(0x12345678)) == 0x345678);
     }
 }

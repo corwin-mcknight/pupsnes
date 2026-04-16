@@ -18,16 +18,16 @@ class SNES {
     SNES();
     ~SNES();
 
-    void debugPrintInfo();
+    void DebugPrintInfo();
 
-    [[nodiscard]] time_master_t getMasterTime() const { return time_now; }
-    void setMasterTime(time_master_t t) { time_now = t; }
+    [[nodiscard]] TimeMasterT GetMasterTime() const { return time_now_; }
+    void SetMasterTime(TimeMasterT t) { time_now_ = t; }
 
-    device_id_t registerDevice(Device* device);
-    [[nodiscard]] Device* getDevice(device_id_t id) const;
+    DeviceIdT RegisterDevice(Device* device);
+    [[nodiscard]] Device* GetDevice(DeviceIdT id) const;
 
    private:
-    time_master_t time_now = 0;
+    TimeMasterT time_now_ = 0;
     std::vector<Device*> devices_;  // Non-owning. Devices register themselves; caller owns them.
 };
 }  // namespace pupsnes

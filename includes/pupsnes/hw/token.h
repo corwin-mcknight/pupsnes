@@ -9,60 +9,60 @@
 namespace pupsnes {
 
 enum class TokenType : uint8_t {
-    BusRead = 0,
-    BusWrite = 1,
+    kBusRead = 0,
+    kBusWrite = 1,
 };
 
 enum class TokenState : uint8_t {
-    Pending = 0,
-    Completed = 1,
+    kPending = 0,
+    kCompleted = 1,
 };
 
 struct Token {
-    token_id_t id;
+    TokenIdT id;
     TokenType type;
     TokenState state;
-    device_id_t source_device;
-    time_master_t completion_time;
-    snes_addr_t address;
+    DeviceIdT source_device;
+    TimeMasterT completion_time;
+    SnesAddrT address;
     uint8_t data;
 };
 
 struct TokenCreateParams {
     TokenType type;
-    device_id_t source_device;
-    time_master_t completion_time;
-    snes_addr_t address;
+    DeviceIdT source_device;
+    TimeMasterT completion_time;
+    SnesAddrT address;
     uint8_t data = 0;
 };
 
 struct TokenWake {
-    token_id_t token_id;
-    device_id_t device_id;
+    TokenIdT token_id;
+    DeviceIdT device_id;
 };
 
 class TokenTable {
    public:
     TokenTable() = default;
 
-    token_id_t create(const TokenCreateParams& params);
+    TokenIdT Create(const TokenCreateParams& params);
 
-    [[nodiscard]] const Token* get(token_id_t id) const;
+    [[nodiscard]] const Token* Get(TokenIdT id) const;
 
-    void complete(token_id_t id, uint8_t data);
+    void Complete(TokenIdT id, uint8_t data);
 
     /// Resolve all pending tokens whose completion_time == now.
     /// Returns token/device pairs that were blocked and should be considered for wake.
-    std::vector<TokenWake> resolveAt(time_master_t now);
+    std::vector<TokenWake> ResolveAt(TimeMasterT now);
 
-    void remove(token_id_t id);
+    void Remove(TokenIdT id);
 
     /// Record that a device is blocked waiting on a token.
-    void setBlocked(token_id_t token_id, device_id_t device_id);
+    void SetBlocked(TokenIdT token_id, DeviceIdT device_id);
 
    private:
-    std::unordered_map<token_id_t, Token> tokens_;
-    std::unordered_map<token_id_t, device_id_t> blocked_;
+    std::unordered_map<TokenIdT, Token> tokens_;
+    std::unordered_map<TokenIdT, DeviceIdT> blocked_;
     uint64_t next_token_id_ = 1;
 };
 

@@ -18,14 +18,14 @@ class Cartridge : public Device {
     explicit Cartridge(SNES* snes);
     ~Cartridge() override = default;
 
-    void loadLoROM(std::span<const uint8_t> rom_data);
-    void mapLoROM(SystemBus& bus) const;
+    void LoadLoRom(std::span<const uint8_t> rom_data);
+    void MapLoRom(SystemBus& bus) const;
 
-    [[nodiscard]] TickResult tick(time_master_delta_t budget) override;
-    void onEvent(const SchedulerEvent& event) override;
-    [[nodiscard]] uint8_t readRegister(uint32_t offset) override;
+    [[nodiscard]] TickResult Tick(TimeMasterDeltaT budget) override;
+    void OnEvent(const SchedulerEvent& event) override;
+    [[nodiscard]] uint8_t ReadRegister(uint32_t offset) override;
 
-    [[nodiscard]] std::size_t size() const { return rom_.size(); }
+    [[nodiscard]] std::size_t Size() const { return rom_.size(); }
 
    private:
     std::vector<uint8_t> rom_;
