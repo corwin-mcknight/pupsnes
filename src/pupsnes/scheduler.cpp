@@ -12,23 +12,28 @@
 namespace pupsnes {
 
 namespace {
-[[noreturn]] void FailScheduler(const char* message) { throw std::logic_error(message); }
+[[noreturn]] void FailScheduler(const char* message) {
+  throw std::logic_error(message);
+}
 
 void DebugPrintSchedulerEvent(const SchedulerEvent& event, bool multiline) {
-    auto src = reinterpret_cast<std::uintptr_t>(event.source);
-    if (multiline) {
-        std::cerr << std::format("  Time: {}\n", event.time);
-        std::cerr << std::format("  Source: 0x{:x}\n", src);
-        std::cerr << std::format("  Seq: {}\n", event.seq);
-        std::cerr << std::format("  Subphase: {}\n", static_cast<int>(event.subphase));
-        std::cerr << std::format("  Type: {}\n", static_cast<int>(event.type));
-        std::cerr << std::format("  Run generation: {}\n", event.run_generation);
-        return;
-    }
+  auto src = reinterpret_cast<std::uintptr_t>(event.source);
+  if (multiline) {
+    std::cerr << std::format("  Time: {}\n", event.time);
+    std::cerr << std::format("  Source: 0x{:x}\n", src);
+    std::cerr << std::format("  Seq: {}\n", event.seq);
+    std::cerr << std::format("  Subphase: {}\n",
+                             static_cast<int>(event.subphase));
+    std::cerr << std::format("  Type: {}\n", static_cast<int>(event.type));
+    std::cerr << std::format("  Run generation: {}\n", event.run_generation);
+    return;
+  }
 
-    std::cerr << std::format("  Time: {}, Source: 0x{:x}, Seq: {}, Subphase: {}, Type: {}, Run generation: {}\n",
-                             event.time, src, event.seq, static_cast<int>(event.subphase), static_cast<int>(event.type),
-                             event.run_generation);
+  std::cerr << std::format(
+      "  Time: {}, Source: 0x{:x}, Seq: {}, Subphase: {}, Type: {}, Run "
+      "generation: {}\n",
+      event.time, src, event.seq, static_cast<int>(event.subphase),
+      static_cast<int>(event.type), event.run_generation);
 }
 }  // namespace
 
@@ -36,357 +41,381 @@ Scheduler::Scheduler(SNES* snes) : snes_(snes) {}
 Scheduler::~Scheduler() = default;
 
 Scheduler::DeviceRunState& Scheduler::EnsureRunState(DeviceIdT device_id) {
-    if (device_id >= device_run_states_.size()) {
-        device_run_states_.resize(static_cast<std::size_t>(device_id) + 1U);
-    }
-    return device_run_states_[device_id];
+  if (device_id >= device_run_states_.size()) {
+    device_run_states_.resize(static_cast<std::size_t>(device_id) + 1U);
+  }
+  return device_run_states_[device_id];
 }
 
-const Scheduler::DeviceRunState* Scheduler::FindRunState(DeviceIdT device_id) const {
-    if (device_id >= device_run_states_.size()) {
-        return nullptr;
-    }
-    return &device_run_states_[device_id];
+const Scheduler::DeviceRunState* Scheduler::FindRunState(
+    DeviceIdT device_id) const {
+  if (device_id >= device_run_states_.size()) {
+    return nullptr;
+  }
+  return &device_run_states_[device_id];
 }
 
 void Scheduler::AlignDeviceTime(Device* device, TimeMasterT time) {
-    if (device == nullptr) {
-        return;
-    }
-    if (device->GetTime() > time) {
-        FailScheduler("Scheduler attempted to run a device in the past");
-    }
-    if (device->GetTime() < time) {
-        device->AdvanceLocalTime(time - device->GetTime());
-    }
+  if (device == nullptr) {
+    return;
+  }
+  if (device->GetTime() > time) {
+    FailScheduler("Scheduler attempted to run a device in the past");
+  }
+  if (device->GetTime() < time) {
+    device->AdvanceLocalTime(time - device->GetTime());
+  }
 }
 
 void Scheduler::ClearPendingRun(DeviceRunState& state) {
-    state.has_pending_run = false;
-    state.pending_run_time = 0;
-    state.blocked_token = 0;
+  state.has_pending_run = false;
+  state.pending_run_time = 0;
+  state.blocked_token = 0;
 }
 
 void Scheduler::ResetZeroProgressGuard(DeviceRunState& state) {
-    state.zero_progress_time = 0;
-    state.zero_progress_count = 0;
+  state.zero_progress_time = 0;
+  state.zero_progress_count = 0;
 }
 
-void Scheduler::RecordZeroProgressRun(DeviceRunState& state, const Device& device) {
-    if (state.zero_progress_count == 0 || state.zero_progress_time != device.GetTime()) {
-        state.zero_progress_time = device.GetTime();
-        state.zero_progress_count = 1;
-        return;
-    }
+void Scheduler::RecordZeroProgressRun(DeviceRunState& state,
+                                      const Device& device) {
+  if (state.zero_progress_count == 0 ||
+      state.zero_progress_time != device.GetTime()) {
+    state.zero_progress_time = device.GetTime();
+    state.zero_progress_count = 1;
+    return;
+  }
 
-    FailScheduler("Scheduler detected repeated same-time zero-progress Run dispatch");
+  FailScheduler(
+      "Scheduler detected repeated same-time zero-progress Run dispatch");
 }
 
-void Scheduler::ValidateTickResult(const Device& device, const TickResult& result, TimeMasterDeltaT budget) const {
-    if (result.completed_cycles > budget) {
-        FailScheduler("Device tick exceeded scheduler budget");
-    }
+void Scheduler::ValidateTickResult(const Device& device,
+                                   const TickResult& result,
+                                   TimeMasterDeltaT budget) const {
+  if (result.completed_cycles > budget) {
+    FailScheduler("Device tick exceeded scheduler budget");
+  }
 
-    const TimeMasterT committed_time = device.GetTime() + result.completed_cycles;
+  const TimeMasterT committed_time = device.GetTime() + result.completed_cycles;
 
-    switch (result.reason) {
-        case TickStopReason::kBudgetExhausted:
-            if (result.blocked_token != 0) {
-                FailScheduler("BudgetExhausted cannot carry a blocked token");
-            }
-            if (result.next_wake_time.has_value()) {
-                FailScheduler("BudgetExhausted cannot carry a wake time");
-            }
-            break;
-        case TickStopReason::kReachedLocalBoundary:
-            if (result.blocked_token != 0) {
-                FailScheduler("ReachedLocalBoundary cannot carry a blocked token");
-            }
-            if (!result.next_wake_time.has_value()) {
-                FailScheduler("ReachedLocalBoundary requires next_wake_time");
-            }
-            break;
-        case TickStopReason::kBlockedOnToken:
-            if (result.blocked_token == 0) {
-                FailScheduler("BlockedOnToken requires a token");
-            }
-            if (result.next_wake_time.has_value()) {
-                FailScheduler("BlockedOnToken cannot carry a wake time");
-            }
-            break;
-        case TickStopReason::kNoWork:
-            if (result.blocked_token != 0) {
-                FailScheduler("NoWork cannot carry a blocked token");
-            }
-            break;
-    }
+  switch (result.reason) {
+    case TickStopReason::kBudgetExhausted:
+      if (result.blocked_token != 0) {
+        FailScheduler("BudgetExhausted cannot carry a blocked token");
+      }
+      if (result.next_wake_time.has_value()) {
+        FailScheduler("BudgetExhausted cannot carry a wake time");
+      }
+      break;
+    case TickStopReason::kReachedLocalBoundary:
+      if (result.blocked_token != 0) {
+        FailScheduler("ReachedLocalBoundary cannot carry a blocked token");
+      }
+      if (!result.next_wake_time.has_value()) {
+        FailScheduler("ReachedLocalBoundary requires next_wake_time");
+      }
+      break;
+    case TickStopReason::kBlockedOnToken:
+      if (result.blocked_token == 0) {
+        FailScheduler("BlockedOnToken requires a token");
+      }
+      if (result.next_wake_time.has_value()) {
+        FailScheduler("BlockedOnToken cannot carry a wake time");
+      }
+      break;
+    case TickStopReason::kNoWork:
+      if (result.blocked_token != 0) {
+        FailScheduler("NoWork cannot carry a blocked token");
+      }
+      break;
+  }
 
-    if (result.next_wake_time.has_value() && *result.next_wake_time < committed_time) {
-        FailScheduler("Scheduler received a wake time earlier than committed device time");
-    }
+  if (result.next_wake_time.has_value() &&
+      *result.next_wake_time < committed_time) {
+    FailScheduler(
+        "Scheduler received a wake time earlier than committed device time");
+  }
 }
 
 bool Scheduler::IsStaleRunEvent(const SchedulerEvent& event) const {
-    if (event.subphase != SchedulerPhase::kRun || event.type != EventType::kDeviceRun || event.source == nullptr) {
-        return false;
-    }
+  if (event.subphase != SchedulerPhase::kRun ||
+      event.type != EventType::kDeviceRun || event.source == nullptr) {
+    return false;
+  }
 
-    const DeviceRunState* state = FindRunState(event.source->GetDeviceId());
-    if (state == nullptr) {
-        return true;
-    }
+  const DeviceRunState* state = FindRunState(event.source->GetDeviceId());
+  if (state == nullptr) {
+    return true;
+  }
 
-    return !state->has_pending_run || event.run_generation != state->run_generation ||
-           event.time != state->pending_run_time;
+  return !state->has_pending_run ||
+         event.run_generation != state->run_generation ||
+         event.time != state->pending_run_time;
 }
 
 void Scheduler::DiscardStaleRunEventsAtHead() {
-    while (!eventQueue_.empty() && IsStaleRunEvent(eventQueue_.top())) {
-        eventQueue_.pop();
-    }
+  while (!eventQueue_.empty() && IsStaleRunEvent(eventQueue_.top())) {
+    eventQueue_.pop();
+  }
 }
 
 void Scheduler::HandleRunResult(Device* device, const TickResult& result) {
-    if (device == nullptr) {
-        return;
-    }
+  if (device == nullptr) {
+    return;
+  }
 
-    DeviceRunState& state = EnsureRunState(device->GetDeviceId());
+  DeviceRunState& state = EnsureRunState(device->GetDeviceId());
 
-    switch (result.reason) {
-        case TickStopReason::kBlockedOnToken:
-            ClearPendingRun(state);
-            ResetZeroProgressGuard(state);
-            state.blocked_token = result.blocked_token;
-            token_table_.SetBlocked(result.blocked_token, device->GetDeviceId());
-            return;
-        case TickStopReason::kNoWork:
-            if (!result.next_wake_time.has_value()) {
-                ClearPendingRun(state);
-                ResetZeroProgressGuard(state);
-                return;
-            }
-            break;
-        case TickStopReason::kBudgetExhausted:
-        case TickStopReason::kReachedLocalBoundary:
-            break;
-    }
-
-    TimeMasterT next_run_time = device->GetTime();
-    if ((result.reason == TickStopReason::kReachedLocalBoundary || result.reason == TickStopReason::kNoWork) &&
-        result.next_wake_time.has_value()) {
-        next_run_time = *result.next_wake_time;
-    }
-
-    const bool zero_progress_same_time = result.completed_cycles == 0 && next_run_time == device->GetTime();
-    if (zero_progress_same_time) {
-        RecordZeroProgressRun(state, *device);
-    } else {
+  switch (result.reason) {
+    case TickStopReason::kBlockedOnToken:
+      ClearPendingRun(state);
+      ResetZeroProgressGuard(state);
+      state.blocked_token = result.blocked_token;
+      token_table_.SetBlocked(result.blocked_token, device->GetDeviceId());
+      return;
+    case TickStopReason::kNoWork:
+      if (!result.next_wake_time.has_value()) {
+        ClearPendingRun(state);
         ResetZeroProgressGuard(state);
-    }
+        return;
+      }
+      break;
+    case TickStopReason::kBudgetExhausted:
+    case TickStopReason::kReachedLocalBoundary:
+      break;
+  }
 
-    ScheduleDeviceRun(device, next_run_time);
+  TimeMasterT next_run_time = device->GetTime();
+  if ((result.reason == TickStopReason::kReachedLocalBoundary ||
+       result.reason == TickStopReason::kNoWork) &&
+      result.next_wake_time.has_value()) {
+    next_run_time = *result.next_wake_time;
+  }
+
+  const bool zero_progress_same_time =
+      result.completed_cycles == 0 && next_run_time == device->GetTime();
+  if (zero_progress_same_time) {
+    RecordZeroProgressRun(state, *device);
+  } else {
+    ResetZeroProgressGuard(state);
+  }
+
+  ScheduleDeviceRun(device, next_run_time);
 }
 
-void Scheduler::ScheduleEvent(TimeMasterT time, Device* source, SchedulerPhase subphase, EventType type,
+void Scheduler::ScheduleEvent(TimeMasterT time, Device* source,
+                              SchedulerPhase subphase, EventType type,
                               uint64_t run_generation) {
-    eventQueue_.push({time, source, nextEventSeq_++, subphase, type, run_generation});
+  eventQueue_.push(
+      {time, source, nextEventSeq_++, subphase, type, run_generation});
 }
 
 void Scheduler::ScheduleDeviceRun(Device* device, TimeMasterT time) {
-    if (device == nullptr) {
-        FailScheduler("Cannot schedule a null device run");
-    }
-    if (time < device->GetTime()) {
-        FailScheduler("Cannot schedule a device run before committed device time");
-    }
+  if (device == nullptr) {
+    FailScheduler("Cannot schedule a null device run");
+  }
+  if (time < device->GetTime()) {
+    FailScheduler("Cannot schedule a device run before committed device time");
+  }
 
-    DeviceRunState& state = EnsureRunState(device->GetDeviceId());
-    state.run_generation++;
-    state.has_pending_run = true;
-    state.pending_run_time = time;
-    state.blocked_token = 0;
+  DeviceRunState& state = EnsureRunState(device->GetDeviceId());
+  state.run_generation++;
+  state.has_pending_run = true;
+  state.pending_run_time = time;
+  state.blocked_token = 0;
 
-    ScheduleEvent(time, device, SchedulerPhase::kRun, EventType::kDeviceRun, state.run_generation);
+  ScheduleEvent(time, device, SchedulerPhase::kRun, EventType::kDeviceRun,
+                state.run_generation);
 }
 
 void Scheduler::Step() {
-    if (snes_ == nullptr) {
-        return;
-    }
+  if (snes_ == nullptr) {
+    return;
+  }
 
-    DiscardStaleRunEventsAtHead();
-    if (eventQueue_.empty()) {
-        return;
-    }
+  DiscardStaleRunEventsAtHead();
+  if (eventQueue_.empty()) {
+    return;
+  }
 
-    SchedulerEvent event = eventQueue_.top();
-    eventQueue_.pop();
+  SchedulerEvent event = eventQueue_.top();
+  eventQueue_.pop();
 
-    if (event.time < snes_->GetMasterTime()) {
-        FailScheduler("Scheduler event in the past");
-    }
+  if (event.time < snes_->GetMasterTime()) {
+    FailScheduler("Scheduler event in the past");
+  }
 
-    phase_ = event.subphase;
-    snes_->SetMasterTime(event.time);
+  phase_ = event.subphase;
+  snes_->SetMasterTime(event.time);
 
-    switch (event.subphase) {
-        case SchedulerPhase::kCommitComplete: {
-            auto woken = token_table_.ResolveAt(event.time);
-            for (const auto& wake : woken) {
-                Device* device = snes_->GetDevice(wake.device_id);
-                if (device == nullptr) {
-                    continue;
-                }
-
-                DeviceRunState& state = EnsureRunState(wake.device_id);
-                if (state.blocked_token == wake.token_id) {
-                    ScheduleDeviceRun(device, event.time);
-                }
-            }
-
-            if (event.source != nullptr) {
-                event.source->OnEvent(event);
-            }
-            break;
+  switch (event.subphase) {
+    case SchedulerPhase::kCommitComplete: {
+      auto woken = token_table_.ResolveAt(event.time);
+      for (const auto& wake : woken) {
+        Device* device = snes_->GetDevice(wake.device_id);
+        if (device == nullptr) {
+          continue;
         }
-        case SchedulerPhase::kWakeSample:
-            if (event.source != nullptr) {
-                event.source->OnEvent(event);
-            }
-            break;
-        case SchedulerPhase::kRun: {
-            if (event.type != EventType::kDeviceRun) {
-                if (event.source != nullptr) {
-                    event.source->OnEvent(event);
-                }
-                break;
-            }
 
-            if (event.source == nullptr || IsStaleRunEvent(event)) {
-                return;
-            }
-
-            DeviceRunState& state = EnsureRunState(event.source->GetDeviceId());
-            state.has_pending_run = false;
-            state.pending_run_time = 0;
-            state.blocked_token = 0;
-
-            AlignDeviceTime(event.source, event.time);
-            DiscardStaleRunEventsAtHead();
-
-            const TimeMasterDeltaT budget = ComputeBudget(event.time);
-            auto result = event.source->Tick(budget);
-            ValidateTickResult(*event.source, result, budget);
-            event.source->AdvanceLocalTime(result.completed_cycles);
-            HandleRunResult(event.source, result);
-            break;
+        DeviceRunState& state = EnsureRunState(wake.device_id);
+        if (state.blocked_token == wake.token_id) {
+          ScheduleDeviceRun(device, event.time);
         }
+      }
+
+      if (event.source != nullptr) {
+        event.source->OnEvent(event);
+      }
+      break;
     }
+    case SchedulerPhase::kWakeSample:
+      if (event.source != nullptr) {
+        event.source->OnEvent(event);
+      }
+      break;
+    case SchedulerPhase::kRun: {
+      if (event.type != EventType::kDeviceRun) {
+        if (event.source != nullptr) {
+          event.source->OnEvent(event);
+        }
+        break;
+      }
+
+      if (event.source == nullptr || IsStaleRunEvent(event)) {
+        return;
+      }
+
+      DeviceRunState& state = EnsureRunState(event.source->GetDeviceId());
+      state.has_pending_run = false;
+      state.pending_run_time = 0;
+      state.blocked_token = 0;
+
+      AlignDeviceTime(event.source, event.time);
+      DiscardStaleRunEventsAtHead();
+
+      const TimeMasterDeltaT budget = ComputeBudget(event.time);
+      auto result = event.source->Tick(budget);
+      ValidateTickResult(*event.source, result, budget);
+      event.source->AdvanceLocalTime(result.completed_cycles);
+      HandleRunResult(event.source, result);
+      break;
+    }
+  }
 }
 
 TimeMasterDeltaT Scheduler::ComputeBudget(TimeMasterT now) const {
-    if (!eventQueue_.empty() && !IsStaleRunEvent(eventQueue_.top()) && eventQueue_.top().time >= now) {
-        return std::min(kMaxCyclesStep, eventQueue_.top().time - now);
-    }
-    return kMaxCyclesStep;
+  if (!eventQueue_.empty() && !IsStaleRunEvent(eventQueue_.top()) &&
+      eventQueue_.top().time >= now) {
+    return std::min(kMaxCyclesStep, eventQueue_.top().time - now);
+  }
+  return kMaxCyclesStep;
 }
 
 TokenIdT Scheduler::CreateToken(const TokenCreateParams& params) {
-    TokenIdT id = token_table_.Create(params);
-    Device* device = snes_->GetDevice(params.source_device);
-    ScheduleEvent(params.completion_time, device, SchedulerPhase::kCommitComplete, EventType::kDeviceRun);
-    return id;
+  TokenIdT id = token_table_.Create(params);
+  Device* device = snes_->GetDevice(params.source_device);
+  ScheduleEvent(params.completion_time, device, SchedulerPhase::kCommitComplete,
+                EventType::kDeviceRun);
+  return id;
 }
 
-const Token* Scheduler::GetToken(TokenIdT id) const { return token_table_.Get(id); }
+const Token* Scheduler::GetToken(TokenIdT id) const {
+  return token_table_.Get(id);
+}
 
 void Scheduler::RemoveToken(TokenIdT id) { token_table_.Remove(id); }
 
 void Scheduler::CatchUpDevice(DeviceIdT device_id, TimeMasterT target_time) {
-    Device* device = snes_->GetDevice(device_id);
-    if (device == nullptr) {
-        return;
+  Device* device = snes_->GetDevice(device_id);
+  if (device == nullptr) {
+    return;
+  }
+  if (device->GetTime() >= target_time) {
+    return;
+  }
+
+  DeviceRunState& state = EnsureRunState(device_id);
+  if (state.blocked_token != 0) {
+    FailScheduler("Same-clock catch-up cannot run a device blocked on a token");
+  }
+
+  ClearPendingRun(state);
+  ResetZeroProgressGuard(state);
+
+  while (device->GetTime() < target_time) {
+    const TimeMasterDeltaT budget = target_time - device->GetTime();
+    auto result = device->Tick(budget);
+    ValidateTickResult(*device, result, budget);
+
+    if (result.completed_cycles == 0) {
+      FailScheduler("Same-clock catch-up made no progress");
     }
-    if (device->GetTime() >= target_time) {
-        return;
-    }
 
-    DeviceRunState& state = EnsureRunState(device_id);
-    if (state.blocked_token != 0) {
-        FailScheduler("Same-clock catch-up cannot run a device blocked on a token");
-    }
+    device->AdvanceLocalTime(result.completed_cycles);
+    const bool reached_target = device->GetTime() >= target_time;
 
-    ClearPendingRun(state);
-    ResetZeroProgressGuard(state);
-
-    while (device->GetTime() < target_time) {
-        const TimeMasterDeltaT budget = target_time - device->GetTime();
-        auto result = device->Tick(budget);
-        ValidateTickResult(*device, result, budget);
-
-        if (result.completed_cycles == 0) {
-            FailScheduler("Same-clock catch-up made no progress");
+    switch (result.reason) {
+      case TickStopReason::kBudgetExhausted:
+        if (reached_target) {
+          HandleRunResult(device, result);
         }
-
-        device->AdvanceLocalTime(result.completed_cycles);
-        const bool reached_target = device->GetTime() >= target_time;
-
-        switch (result.reason) {
-            case TickStopReason::kBudgetExhausted:
-                if (reached_target) {
-                    HandleRunResult(device, result);
-                }
-                break;
-            case TickStopReason::kReachedLocalBoundary:
-                if (!result.next_wake_time.has_value()) {
-                    FailScheduler("ReachedLocalBoundary requires next_wake_time during catch-up");
-                }
-                if (reached_target) {
-                    HandleRunResult(device, result);
-                    break;
-                }
-                if (*result.next_wake_time > target_time) {
-                    FailScheduler("Same-clock catch-up hit a local boundary beyond the requested target");
-                }
-                AlignDeviceTime(device, *result.next_wake_time);
-                break;
-            case TickStopReason::kBlockedOnToken:
-                FailScheduler("Same-clock catch-up cannot block on a token");
-                break;
-            case TickStopReason::kNoWork:
-                if (!reached_target) {
-                    FailScheduler("Same-clock catch-up cannot stop with NoWork before the target time");
-                }
-                HandleRunResult(device, result);
-                break;
+        break;
+      case TickStopReason::kReachedLocalBoundary:
+        if (!result.next_wake_time.has_value()) {
+          FailScheduler(
+              "ReachedLocalBoundary requires next_wake_time during catch-up");
         }
+        if (reached_target) {
+          HandleRunResult(device, result);
+          break;
+        }
+        if (*result.next_wake_time > target_time) {
+          FailScheduler(
+              "Same-clock catch-up hit a local boundary beyond the requested "
+              "target");
+        }
+        AlignDeviceTime(device, *result.next_wake_time);
+        break;
+      case TickStopReason::kBlockedOnToken:
+        FailScheduler("Same-clock catch-up cannot block on a token");
+        break;
+      case TickStopReason::kNoWork:
+        if (!reached_target) {
+          FailScheduler(
+              "Same-clock catch-up cannot stop with NoWork before the target "
+              "time");
+        }
+        HandleRunResult(device, result);
+        break;
     }
+  }
 }
 
 void Scheduler::DebugPrintNextEvent() {
-    if (eventQueue_.empty()) {
-        std::cerr << "No scheduled events.\n";
-        return;
-    }
-    const SchedulerEvent& event = eventQueue_.top();
-    std::cerr << "Next Event:\n";
-    DebugPrintSchedulerEvent(event, true);
+  if (eventQueue_.empty()) {
+    std::cerr << "No scheduled events.\n";
+    return;
+  }
+  const SchedulerEvent& event = eventQueue_.top();
+  std::cerr << "Next Event:\n";
+  DebugPrintSchedulerEvent(event, true);
 }
 
 void Scheduler::DebugPrintEventQueue() {
-    if (eventQueue_.empty()) {
-        std::cerr << "Event queue is empty.\n";
-        return;
-    }
+  if (eventQueue_.empty()) {
+    std::cerr << "Event queue is empty.\n";
+    return;
+  }
 
-    EventMinHeap temp_queue = eventQueue_;
-    std::cerr << "Scheduled Events:\n";
-    while (!temp_queue.empty()) {
-        const SchedulerEvent& event = temp_queue.top();
-        DebugPrintSchedulerEvent(event, false);
-        temp_queue.pop();
-    }
+  EventMinHeap temp_queue = eventQueue_;
+  std::cerr << "Scheduled Events:\n";
+  while (!temp_queue.empty()) {
+    const SchedulerEvent& event = temp_queue.top();
+    DebugPrintSchedulerEvent(event, false);
+    temp_queue.pop();
+  }
 }
 
 }  // namespace pupsnes
