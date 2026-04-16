@@ -1,13 +1,13 @@
 #include "pupsnes/hw/5a22/cpu.h"
 
-#include "pupsnes/hw/scheduler.h"
-#include "pupsnes/hw/snes.h"
-#include "pupsnes/hw/systembus.h"
-
 #include <array>
 #include <cstdint>
 #include <optional>
 #include <stdexcept>
+
+#include "pupsnes/hw/scheduler.h"
+#include "pupsnes/hw/snes.h"
+#include "pupsnes/hw/systembus.h"
 
 namespace pupsnes {
 
@@ -17,22 +17,14 @@ namespace pupsnes {
 
 uint8_t CpuFlags::toByte() const {
     uint8_t p = 0;
-    if (N)
-        p |= 0x80U;
-    if (V)
-        p |= 0x40U;
-    if (M)
-        p |= 0x20U;
-    if (X)
-        p |= 0x10U;
-    if (D)
-        p |= 0x08U;
-    if (I)
-        p |= 0x04U;
-    if (Z)
-        p |= 0x02U;
-    if (C)
-        p |= 0x01U;
+    if (N) p |= 0x80U;
+    if (V) p |= 0x40U;
+    if (M) p |= 0x20U;
+    if (X) p |= 0x10U;
+    if (D) p |= 0x08U;
+    if (I) p |= 0x04U;
+    if (Z) p |= 0x02U;
+    if (C) p |= 0x01U;
     return p;
 }
 
@@ -58,7 +50,7 @@ void CpuFlags::fromByte(uint8_t p, bool emulation_mode) {
 
 namespace {
 
-void initMiscOpcodes(std::array<InstructionEntry, 256> &table) {
+void initMiscOpcodes(std::array<InstructionEntry, 256>& table) {
     // 0xEA  NOP  — 2 cycles; explicit for clarity (same as default).
     table[0xEA].remaining_op_count = 1;
     table[0xEA].ops[0] = {MicroBusAction::None, MicroInternalOp::None};
@@ -78,20 +70,20 @@ void initMiscOpcodes(std::array<InstructionEntry, 256> &table) {
     table[0x8F].ops[3] = {MicroBusAction::WriteA8Addr, MicroInternalOp::None};
 }
 
-void initLoadOpcodes(std::array<InstructionEntry, 256> &table) {
+void initLoadOpcodes(std::array<InstructionEntry, 256>& table) {
     // 0xA9  LDA #imm  — 2 cycles (8-bit accumulator mode).
     // Remaining op: fetch immediate byte and load into A, update N/Z.
     table[0xA9].remaining_op_count = 1;
     table[0xA9].ops[0] = {MicroBusAction::FetchPC, MicroInternalOp::LoadALow_UpdateNZ};
 }
 
-} // namespace
+}  // namespace
 
 const std::array<InstructionEntry, 256> CPU::kOpcodeTable = []() {
     std::array<InstructionEntry, 256> table{};
 
     // Default: 2-cycle instruction (opcode fetch + 1 internal cycle, no bus action).
-    for (auto &entry : table) {
+    for (auto& entry : table) {
         entry.remaining_op_count = 1;
         entry.ops[0] = {MicroBusAction::None, MicroInternalOp::None};
     }
@@ -106,7 +98,7 @@ const std::array<InstructionEntry, 256> CPU::kOpcodeTable = []() {
 // CPU
 // ---------------------------------------------------------------------------
 
-CPU::CPU(SNES *snes) : Device(snes) {}
+CPU::CPU(SNES* snes) : Device(snes) {}
 
 void CPU::reset() {
     regs_ = Regs{};
@@ -149,23 +141,23 @@ void CPU::opSetAddrBankFromFetch() { addr_ = (addr_ & 0x00FFFFU) | (static_cast<
 
 void CPU::executeInternalOp(MicroInternalOp op) {
     switch (op) {
-    case MicroInternalOp::None:
-        break;
-    case MicroInternalOp::LoadALow_UpdateNZ:
-        opLoadALow_UpdateNZ();
-        break;
-    case MicroInternalOp::BranchRelative8:
-        opBranchRelative8();
-        break;
-    case MicroInternalOp::SetAddrLowFromFetch:
-        opSetAddrLowFromFetch();
-        break;
-    case MicroInternalOp::SetAddrHighFromFetch:
-        opSetAddrHighFromFetch();
-        break;
-    case MicroInternalOp::SetAddrBankFromFetch:
-        opSetAddrBankFromFetch();
-        break;
+        case MicroInternalOp::None:
+            break;
+        case MicroInternalOp::LoadALow_UpdateNZ:
+            opLoadALow_UpdateNZ();
+            break;
+        case MicroInternalOp::BranchRelative8:
+            opBranchRelative8();
+            break;
+        case MicroInternalOp::SetAddrLowFromFetch:
+            opSetAddrLowFromFetch();
+            break;
+        case MicroInternalOp::SetAddrHighFromFetch:
+            opSetAddrHighFromFetch();
+            break;
+        case MicroInternalOp::SetAddrBankFromFetch:
+            opSetAddrBankFromFetch();
+            break;
     }
 }
 
@@ -231,36 +223,36 @@ TickResult CPU::tick(time_master_delta_t budget) {
                 continue;
             }
 
-            const MicroOp &mop = current_instr_->ops[op_idx];
+            const MicroOp& mop = current_instr_->ops[op_idx];
 
             switch (mop.bus_action) {
-            case MicroBusAction::FetchPC: {
-                if (auto blocked = busRead(pcAddr(), cycle_time)) {
-                    return *blocked;
+                case MicroBusAction::FetchPC: {
+                    if (auto blocked = busRead(pcAddr(), cycle_time)) {
+                        return *blocked;
+                    }
+                    regs_.PC = static_cast<uint16_t>(regs_.PC + 1U);
+                    break;
                 }
-                regs_.PC = static_cast<uint16_t>(regs_.PC + 1U);
-                break;
-            }
-            case MicroBusAction::ReadAddr: {
-                if (auto blocked = busRead(addr_, cycle_time)) {
-                    return *blocked;
+                case MicroBusAction::ReadAddr: {
+                    if (auto blocked = busRead(addr_, cycle_time)) {
+                        return *blocked;
+                    }
+                    break;
                 }
-                break;
-            }
-            case MicroBusAction::WriteAddr: {
-                if (auto blocked = busWrite(addr_, fetch_data_, cycle_time)) {
-                    return *blocked;
+                case MicroBusAction::WriteAddr: {
+                    if (auto blocked = busWrite(addr_, fetch_data_, cycle_time)) {
+                        return *blocked;
+                    }
+                    break;
                 }
-                break;
-            }
-            case MicroBusAction::WriteA8Addr: {
-                if (auto blocked = busWrite(addr_, static_cast<uint8_t>(regs_.A), cycle_time)) {
-                    return *blocked;
+                case MicroBusAction::WriteA8Addr: {
+                    if (auto blocked = busWrite(addr_, static_cast<uint8_t>(regs_.A), cycle_time)) {
+                        return *blocked;
+                    }
+                    break;
                 }
-                break;
-            }
-            case MicroBusAction::None:
-                break;
+                case MicroBusAction::None:
+                    break;
             }
 
             executeInternalOp(mop.internal_op);
@@ -273,9 +265,9 @@ TickResult CPU::tick(time_master_delta_t budget) {
     return {cycle_time, TickStopReason::BudgetExhausted};
 }
 
-void CPU::onEvent(const SchedulerEvent & /*event*/) {
+void CPU::onEvent(const SchedulerEvent& /*event*/) {
     // CommitComplete/WakeSample do not currently require CPU-side mutation.
     // The scheduler wakes blocked CPU runs by replacing the authoritative Run wake.
 }
 
-} // namespace pupsnes
+}  // namespace pupsnes

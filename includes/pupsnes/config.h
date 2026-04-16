@@ -30,7 +30,7 @@ inline constexpr bool kLogBusAccess = false;
 inline constexpr bool kLogCpuExecution = false;
 inline constexpr bool kEnableDeviceAsserts = true;
 
-#else // PUPSNES_PROFILE_PRODUCTION (default)
+#else  // PUPSNES_PROFILE_PRODUCTION (default)
 
 inline constexpr bool kLogUnmappedBusAccess = false;
 inline constexpr bool kLogSchedulerEvents = false;
@@ -40,4 +40,4 @@ inline constexpr bool kEnableDeviceAsserts = false;
 
 #endif
 
-} // namespace pupsnes::config
+}  // namespace pupsnes::config

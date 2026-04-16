@@ -46,6 +46,20 @@ endif()
 find_package(spdlog CONFIG REQUIRED)
 target_link_libraries(pupsnes PUBLIC spdlog::spdlog)
 
+# Treat third-party (Conan) include dirs as SYSTEM so clang-tidy / warnings
+# don't report issues inside vendor headers or macro expansions from them.
+function(pupsnes_mark_system target)
+  if(TARGET ${target})
+    get_target_property(_inc ${target} INTERFACE_INCLUDE_DIRECTORIES)
+    if(_inc)
+      set_target_properties(${target} PROPERTIES
+        INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${_inc}")
+    endif()
+  endif()
+endfunction()
+pupsnes_mark_system(spdlog::spdlog)
+pupsnes_mark_system(fmt::fmt)
+
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(PUPSNES_WERROR "Treat warnings as errors" OFF)
@@ -105,6 +119,8 @@ endif()
 include(CTest)
 if(BUILD_TESTING)
   find_package(Catch2 CONFIG REQUIRED)
+  pupsnes_mark_system(Catch2::Catch2)
+  pupsnes_mark_system(Catch2::Catch2WithMain)
   find_program(CA65_EXECUTABLE NAMES ca65 REQUIRED)
   find_program(LD65_EXECUTABLE NAMES ld65 REQUIRED)
 
@@ -163,6 +179,7 @@ endif()
 
 find_program(CLANG_FORMAT_EXE NAMES clang-format)
 find_program(CLANG_TIDY_EXE NAMES clang-tidy)
+find_program(CPPLINT_EXE NAMES cpplint)
 
 set(PUPSNES_HEADERS
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/config.h
@@ -221,7 +238,7 @@ endif()
 
 if(CLANG_TIDY_EXE)
   add_custom_target(tidy
-    COMMAND ${CLANG_TIDY_EXE} -p=${CMAKE_BINARY_DIR} ${PUPSNES_TIDY_FILES}
+    COMMAND ${CLANG_TIDY_EXE} --quiet -p=${CMAKE_BINARY_DIR} ${PUPSNES_TIDY_FILES}
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     COMMENT "Running clang-tidy"
   )
@@ -231,6 +248,18 @@ else()
   )
 endif()
 
+if(CPPLINT_EXE)
+  add_custom_target(cpplint
+    COMMAND ${CPPLINT_EXE} --quiet ${PUPSNES_LINT_FILES}
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    COMMENT "Running cpplint"
+  )
+else()
+  add_custom_target(cpplint
+    COMMAND ${CMAKE_COMMAND} -E echo "cpplint not found"
+  )
+endif()
+
 add_custom_target(lint
-  DEPENDS format-check tidy
+  DEPENDS format-check tidy cpplint
 )

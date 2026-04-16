@@ -46,3 +46,5 @@ AI should run the CI verification script after every code change:
 ```sh
 ./ci-verify.sh
 ```
+
+This script configures, builds, runs unit tests, and runs the lint suite (`clang-format`, `clang-tidy`, `cpplint`) against the [Google C++ Style Guide](https://google.github.io/styleguide/cppguide.html). Lint is currently non-blocking — see [BUILDING.md](BUILDING.md#linting) for details and individual lint targets.

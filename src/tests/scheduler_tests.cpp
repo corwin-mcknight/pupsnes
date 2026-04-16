@@ -1,11 +1,4 @@
 #include <catch2/catch_test_macros.hpp>
-
-#include "pupsnes/hw/device.h"
-#include "pupsnes/hw/scheduler.h"
-#include "pupsnes/hw/snes.h"
-#include "pupsnes/hw/token.h"
-#include "scheduler_test_access.h"
-
 #include <cstddef>
 #include <deque>
 #include <functional>
@@ -13,13 +6,19 @@
 #include <stdexcept>
 #include <vector>
 
+#include "pupsnes/hw/device.h"
+#include "pupsnes/hw/scheduler.h"
+#include "pupsnes/hw/snes.h"
+#include "pupsnes/hw/token.h"
+#include "scheduler_test_access.h"
+
 namespace {
 
 class ScriptedDevice : public pupsnes::Device {
-  public:
-    using TickScript = std::function<pupsnes::TickResult(ScriptedDevice &, pupsnes::time_master_delta_t)>;
+   public:
+    using TickScript = std::function<pupsnes::TickResult(ScriptedDevice&, pupsnes::time_master_delta_t)>;
 
-    explicit ScriptedDevice(pupsnes::SNES *snes) : pupsnes::Device(snes) {}
+    explicit ScriptedDevice(pupsnes::SNES* snes) : pupsnes::Device(snes) {}
 
     pupsnes::TickResult tick(pupsnes::time_master_delta_t budget) override {
         ++tick_calls;
@@ -35,15 +34,15 @@ class ScriptedDevice : public pupsnes::Device {
         return script(*this, budget);
     }
 
-    void onEvent(const pupsnes::SchedulerEvent &event) override {
+    void onEvent(const pupsnes::SchedulerEvent& event) override {
         ++event_calls;
         seen_events.push_back(event);
     }
 
     void pushScript(TickScript script) { scripts.push_back(std::move(script)); }
 
-    void pushResult(const pupsnes::TickResult &result) {
-        scripts.push_back([result](ScriptedDevice &, pupsnes::time_master_delta_t) { return result; });
+    void pushResult(const pupsnes::TickResult& result) {
+        scripts.push_back([result](ScriptedDevice&, pupsnes::time_master_delta_t) { return result; });
     }
 
     int tick_calls = 0;
@@ -52,25 +51,25 @@ class ScriptedDevice : public pupsnes::Device {
     std::vector<pupsnes::time_master_delta_t> budgets;
     std::vector<pupsnes::SchedulerEvent> seen_events;
 
-  private:
+   private:
     std::deque<TickScript> scripts;
 };
 
 class DynamicTokenObserverDevice : public pupsnes::Device {
-  public:
-    explicit DynamicTokenObserverDevice(pupsnes::SNES *snes) : pupsnes::Device(snes) {}
+   public:
+    explicit DynamicTokenObserverDevice(pupsnes::SNES* snes) : pupsnes::Device(snes) {}
 
     pupsnes::TickResult tick(pupsnes::time_master_delta_t budget) override {
         ++tick_calls;
         last_budget = budget;
         if (watched_token != 0) {
-            const auto *token = snes->scheduler->getToken(watched_token);
+            const auto* token = snes->scheduler->getToken(watched_token);
             saw_completed_token = token != nullptr && token->state == pupsnes::TokenState::Completed;
         }
         return {budget, pupsnes::TickStopReason::NoWork};
     }
 
-    void onEvent(const pupsnes::SchedulerEvent &) override {}
+    void onEvent(const pupsnes::SchedulerEvent&) override {}
 
     pupsnes::token_id_t watched_token = 0;
     bool saw_completed_token = false;
@@ -78,7 +77,7 @@ class DynamicTokenObserverDevice : public pupsnes::Device {
     pupsnes::time_master_delta_t last_budget = 0;
 };
 
-} // namespace
+}  // namespace
 
 TEST_CASE("SNES assigns stable device IDs", "[unit]") {
     pupsnes::SNES snes;
@@ -256,7 +255,8 @@ TEST_CASE("Token completion can be observed on a later natural run without an au
     pupsnes::SNES snes;
     DynamicTokenObserverDevice device(&snes);
 
-    const auto token_id = snes.scheduler->createToken({pupsnes::TokenType::BusRead, device.getDeviceId(), 50, 0x2100, 0});
+    const auto token_id =
+        snes.scheduler->createToken({pupsnes::TokenType::BusRead, device.getDeviceId(), 50, 0x2100, 0});
     device.watched_token = token_id;
 
     snes.scheduler->scheduleDeviceRun(&device, 10);
@@ -337,16 +337,12 @@ TEST_CASE("Stale run event at heap head does not cap budget for the next real ev
     ScriptedDevice device(&snes);
     ScriptedDevice other(&snes);
 
-    // Schedule device at time 3, then replace with time 8. The stale event at 3 stays in the heap.
     snes.scheduler->scheduleDeviceRun(&device, 3);
     snes.scheduler->scheduleDeviceRun(&device, 8);
 
-    // Schedule other at time 0 so it runs first.
     other.pushResult({1, pupsnes::TickStopReason::BudgetExhausted});
     snes.scheduler->scheduleDeviceRun(&other, 0);
 
-    // other runs at time 0. If the stale event at 3 were used, budget would be 3.
-    // The real next event is device at 8, so budget should be min(MAX_CYCLES_STEP, 8) = 8.
     snes.scheduler->step();
     REQUIRE(other.tick_calls == 1);
     REQUIRE(other.budgets.at(0) == 8);
@@ -465,9 +461,10 @@ TEST_CASE("Scheduler createToken returns a valid token and schedules CommitCompl
     pupsnes::SNES snes;
     ScriptedDevice device(&snes);
 
-    const auto token_id = snes.scheduler->createToken({pupsnes::TokenType::BusRead, device.getDeviceId(), 50, 0x2100, 0});
+    const auto token_id =
+        snes.scheduler->createToken({pupsnes::TokenType::BusRead, device.getDeviceId(), 50, 0x2100, 0});
 
-    const auto *token = snes.scheduler->getToken(token_id);
+    const auto* token = snes.scheduler->getToken(token_id);
     REQUIRE(token != nullptr);
     REQUIRE(token->type == pupsnes::TokenType::BusRead);
     REQUIRE(token->completion_time == 50);

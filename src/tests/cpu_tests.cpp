@@ -1,4 +1,7 @@
+#include <array>
 #include <catch2/catch_test_macros.hpp>
+#include <cstdint>
+#include <vector>
 
 #include "pupsnes/hw/5a22/cpu.h"
 #include "pupsnes/hw/cartridge.h"
@@ -9,36 +12,32 @@
 #include "pupsnes/hw/wram.h"
 #include "scheduler_test_access.h"
 
-#include <array>
-#include <cstdint>
-#include <vector>
-
 using namespace pupsnes;
 
 class TestROM : public Device {
-  public:
+   public:
     static constexpr std::size_t SIZE = 512;
     std::array<uint8_t, SIZE> mem{};
 
-    explicit TestROM(SNES *snes) : Device(snes) {}
+    explicit TestROM(SNES* snes) : Device(snes) {}
 
     TickResult tick(time_master_delta_t budget) override { return {budget, TickStopReason::BudgetExhausted}; }
-    void onEvent(const SchedulerEvent &) override {}
+    void onEvent(const SchedulerEvent&) override {}
 
     uint8_t readRegister(uint32_t offset) override { return mem[offset % SIZE]; }
     void writeRegister(uint32_t offset, uint8_t data) override { mem[offset % SIZE] = data; }
 };
 
 class ObservedMMIO : public Device {
-  public:
+   public:
     static constexpr std::size_t SIZE = 512;
     std::array<uint8_t, SIZE> mem{};
     std::vector<time_master_t> read_times;
 
-    explicit ObservedMMIO(SNES *snes) : Device(snes) {}
+    explicit ObservedMMIO(SNES* snes) : Device(snes) {}
 
     TickResult tick(time_master_delta_t budget) override { return {budget, TickStopReason::BudgetExhausted}; }
-    void onEvent(const SchedulerEvent &) override {}
+    void onEvent(const SchedulerEvent&) override {}
 
     uint8_t readRegister(uint32_t offset) override {
         read_times.push_back(getTime());

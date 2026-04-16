@@ -1,10 +1,10 @@
 #pragma once
 
-#include "pupsnes/types.h"
-
 #include <cstdint>
 #include <unordered_map>
 #include <vector>
+
+#include "pupsnes/types.h"
 
 namespace pupsnes {
 
@@ -42,12 +42,12 @@ struct TokenWake {
 };
 
 class TokenTable {
-  public:
+   public:
     TokenTable() = default;
 
-    token_id_t create(const TokenCreateParams &params);
+    token_id_t create(const TokenCreateParams& params);
 
-    [[nodiscard]] const Token *get(token_id_t id) const;
+    [[nodiscard]] const Token* get(token_id_t id) const;
 
     void complete(token_id_t id, uint8_t data);
 
@@ -60,10 +60,10 @@ class TokenTable {
     /// Record that a device is blocked waiting on a token.
     void setBlocked(token_id_t token_id, device_id_t device_id);
 
-  private:
+   private:
     std::unordered_map<token_id_t, Token> tokens_;
     std::unordered_map<token_id_t, device_id_t> blocked_;
     uint64_t next_token_id_ = 1;
 };
 
-} // namespace pupsnes
+}  // namespace pupsnes

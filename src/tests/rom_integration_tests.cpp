@@ -1,11 +1,4 @@
 #include <catch2/catch_test_macros.hpp>
-
-#include "pupsnes/hw/5a22/cpu.h"
-#include "pupsnes/hw/cartridge.h"
-#include "pupsnes/hw/scheduler.h"
-#include "pupsnes/hw/snes.h"
-#include "pupsnes/hw/wram.h"
-
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -16,6 +9,12 @@
 #include <string>
 #include <string_view>
 #include <vector>
+
+#include "pupsnes/hw/5a22/cpu.h"
+#include "pupsnes/hw/cartridge.h"
+#include "pupsnes/hw/scheduler.h"
+#include "pupsnes/hw/snes.h"
+#include "pupsnes/hw/wram.h"
 
 using namespace pupsnes;
 
@@ -73,7 +72,7 @@ struct RomExecutionResult {
     RomExecutionSnapshot snapshot{};
 };
 
-std::vector<uint8_t> readBinaryFile(const std::filesystem::path &path) {
+std::vector<uint8_t> readBinaryFile(const std::filesystem::path& path) {
     std::ifstream stream(path, std::ios::binary);
     REQUIRE(stream.good());
 
@@ -94,14 +93,14 @@ std::string trim(std::string_view text) {
     return std::string(text.substr(start, end - start));
 }
 
-std::string stripCommentAndTrim(const std::string &line) {
+std::string stripCommentAndTrim(const std::string& line) {
     const std::size_t comment_pos = line.find('#');
     const std::string_view without_comment =
         (comment_pos == std::string::npos) ? std::string_view(line) : std::string_view(line).substr(0, comment_pos);
     return trim(without_comment);
 }
 
-std::string parseQuotedString(const std::string &value, const std::filesystem::path &path, int line_number) {
+std::string parseQuotedString(const std::string& value, const std::filesystem::path& path, int line_number) {
     if (value.size() < 2 || value.front() != '"' || value.back() != '"') {
         std::ostringstream out;
         out << path << ":" << line_number << ": expected quoted string value";
@@ -110,7 +109,7 @@ std::string parseQuotedString(const std::string &value, const std::filesystem::p
     return value.substr(1, value.size() - 2);
 }
 
-uint32_t parseUnsignedValue(const std::string &value, const std::filesystem::path &path, int line_number) {
+uint32_t parseUnsignedValue(const std::string& value, const std::filesystem::path& path, int line_number) {
     try {
         std::size_t parsed_chars = 0;
         const int base = (value.size() > 2 && value[0] == '0' && (value[1] == 'x' || value[1] == 'X')) ? 16 : 10;
@@ -119,14 +118,14 @@ uint32_t parseUnsignedValue(const std::string &value, const std::filesystem::pat
             throw std::invalid_argument("trailing characters");
         }
         return static_cast<uint32_t>(parsed);
-    } catch (const std::exception &) {
+    } catch (const std::exception&) {
         std::ostringstream out;
         out << path << ":" << line_number << ": invalid numeric value '" << value << "'";
         throw std::runtime_error(out.str());
     }
 }
 
-RomStatus parseRomStatus(const std::string &value, const std::filesystem::path &path, int line_number) {
+RomStatus parseRomStatus(const std::string& value, const std::filesystem::path& path, int line_number) {
     if (value == "pass") {
         return RomStatus::Pass;
     }
@@ -142,7 +141,7 @@ RomStatus parseRomStatus(const std::string &value, const std::filesystem::path &
     throw std::runtime_error(out.str());
 }
 
-GoalObservationKind parseGoalKind(const std::string &value, const std::filesystem::path &path, int line_number) {
+GoalObservationKind parseGoalKind(const std::string& value, const std::filesystem::path& path, int line_number) {
     if (value == "cpu_a8") {
         return GoalObservationKind::CpuA8;
     }
@@ -158,8 +157,8 @@ GoalObservationKind parseGoalKind(const std::string &value, const std::filesyste
     throw std::runtime_error(out.str());
 }
 
-void applyScenarioField(RomScenario &scenario, const std::string &key, const std::string &value,
-                        const std::filesystem::path &path, int line_number) {
+void applyScenarioField(RomScenario& scenario, const std::string& key, const std::string& value,
+                        const std::filesystem::path& path, int line_number) {
     if (key == "rom_name") {
         scenario.rom_name = parseQuotedString(value, path, line_number);
         return;
@@ -181,7 +180,8 @@ void applyScenarioField(RomScenario &scenario, const std::string &key, const std
         return;
     }
     if (key == "expected_current_status") {
-        scenario.expected_current_status = parseRomStatus(parseQuotedString(value, path, line_number), path, line_number);
+        scenario.expected_current_status =
+            parseRomStatus(parseQuotedString(value, path, line_number), path, line_number);
         return;
     }
 
@@ -190,7 +190,7 @@ void applyScenarioField(RomScenario &scenario, const std::string &key, const std
     throw std::runtime_error(out.str());
 }
 
-void applyGoalField(GoalSpec &goal, const std::string &key, const std::string &value, const std::filesystem::path &path,
+void applyGoalField(GoalSpec& goal, const std::string& key, const std::string& value, const std::filesystem::path& path,
                     int line_number) {
     if (key == "name") {
         goal.name = parseQuotedString(value, path, line_number);
@@ -218,7 +218,7 @@ void applyGoalField(GoalSpec &goal, const std::string &key, const std::string &v
     throw std::runtime_error(out.str());
 }
 
-void validateScenario(const RomScenario &scenario, const std::filesystem::path &path) {
+void validateScenario(const RomScenario& scenario, const std::filesystem::path& path) {
     if (scenario.rom_name.empty()) {
         throw std::runtime_error(path.string() + ": rom_name is required");
     }
@@ -235,7 +235,7 @@ void validateScenario(const RomScenario &scenario, const std::filesystem::path &
         throw std::runtime_error(path.string() + ": at least one [goal] section is required");
     }
 
-    for (const GoalSpec &goal : scenario.goals) {
+    for (const GoalSpec& goal : scenario.goals) {
         if (goal.name.empty()) {
             throw std::runtime_error(path.string() + ": goal name is required");
         }
@@ -245,7 +245,7 @@ void validateScenario(const RomScenario &scenario, const std::filesystem::path &
     }
 }
 
-RomScenario loadScenarioSpec(const std::filesystem::path &path) {
+RomScenario loadScenarioSpec(const std::filesystem::path& path) {
     std::ifstream stream(path);
     if (!stream.good()) {
         throw std::runtime_error("unable to open ROM spec: " + path.string());
@@ -305,7 +305,7 @@ std::vector<RomScenario> loadScenarioSpecs() {
     const std::filesystem::path spec_dir = std::filesystem::path(PUPSNES_TEST_ROM_METADATA_DIR);
     std::vector<std::filesystem::path> spec_paths;
 
-    for (const auto &entry : std::filesystem::recursive_directory_iterator(spec_dir)) {
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(spec_dir)) {
         if (entry.is_regular_file() && entry.path().extension() == ".romspec") {
             spec_paths.push_back(entry.path());
         }
@@ -314,37 +314,37 @@ std::vector<RomScenario> loadScenarioSpecs() {
     std::sort(spec_paths.begin(), spec_paths.end());
 
     std::vector<RomScenario> scenarios;
-    for (const std::filesystem::path &spec_path : spec_paths) {
+    for (const std::filesystem::path& spec_path : spec_paths) {
         scenarios.push_back(loadScenarioSpec(spec_path));
     }
 
     return scenarios;
 }
 
-uint32_t readObservationValue(const GoalSpec &goal, const CPU &cpu, const WRAM &wram) {
+uint32_t readObservationValue(const GoalSpec& goal, const CPU& cpu, const WRAM& wram) {
     switch (goal.kind) {
-    case GoalObservationKind::CpuA8:
-        return static_cast<uint8_t>(cpu.regs().A);
-    case GoalObservationKind::CpuPC:
-        return cpu.regs().PC;
-    case GoalObservationKind::WramByte:
-        return wram.peek(goal.address);
+        case GoalObservationKind::CpuA8:
+            return static_cast<uint8_t>(cpu.regs().A);
+        case GoalObservationKind::CpuPC:
+            return cpu.regs().PC;
+        case GoalObservationKind::WramByte:
+            return wram.peek(goal.address);
     }
 
     return 0;
 }
 
-std::string observationLabel(const GoalSpec &goal) {
+std::string observationLabel(const GoalSpec& goal) {
     switch (goal.kind) {
-    case GoalObservationKind::CpuA8:
-        return "cpu.a.low";
-    case GoalObservationKind::CpuPC:
-        return "cpu.pc";
-    case GoalObservationKind::WramByte: {
-        std::ostringstream out;
-        out << "wram[$" << std::hex << std::uppercase << goal.address << "]";
-        return out.str();
-    }
+        case GoalObservationKind::CpuA8:
+            return "cpu.a.low";
+        case GoalObservationKind::CpuPC:
+            return "cpu.pc";
+        case GoalObservationKind::WramByte: {
+            std::ostringstream out;
+            out << "wram[$" << std::hex << std::uppercase << goal.address << "]";
+            return out.str();
+        }
     }
 
     return "unknown";
@@ -358,18 +358,18 @@ std::string formatHex(uint32_t value) {
 
 std::string statusLabel(RomStatus status) {
     switch (status) {
-    case RomStatus::Pass:
-        return "pass";
-    case RomStatus::Fail:
-        return "fail";
-    case RomStatus::HarnessError:
-        return "harness_error";
+        case RomStatus::Pass:
+            return "pass";
+        case RomStatus::Fail:
+            return "fail";
+        case RomStatus::HarnessError:
+            return "harness_error";
     }
 
     return "unknown";
 }
 
-std::string summarizeResult(const RomExecutionResult &result) {
+std::string summarizeResult(const RomExecutionResult& result) {
     std::ostringstream out;
     out << "ROM " << result.scenario.rom_name << " (" << result.scenario.title << ")\n";
     out << "purpose: " << result.scenario.purpose << "\n";
@@ -384,7 +384,7 @@ std::string summarizeResult(const RomExecutionResult &result) {
     if (!result.failure_summary.empty()) {
         out << "summary: " << result.failure_summary << "\n";
     }
-    for (const GoalResult &goal : result.goal_results) {
+    for (const GoalResult& goal : result.goal_results) {
         out << (goal.matched ? "[pass] " : "[fail] ") << goal.spec.name << ": " << goal.spec.description << " | "
             << observationLabel(goal.spec) << " expected " << formatHex(goal.spec.expected_value) << ", got "
             << formatHex(goal.actual_value) << "\n";
@@ -392,12 +392,13 @@ std::string summarizeResult(const RomExecutionResult &result) {
     return out.str();
 }
 
-RomExecutionResult runScenario(const RomScenario &scenario) {
+RomExecutionResult runScenario(const RomScenario& scenario) {
     RomExecutionResult result{};
     result.scenario = scenario;
 
     try {
-        const std::filesystem::path rom_path = std::filesystem::path(PUPSNES_TEST_ROM_DIR) / (scenario.rom_name + ".sfc");
+        const std::filesystem::path rom_path =
+            std::filesystem::path(PUPSNES_TEST_ROM_DIR) / (scenario.rom_name + ".sfc");
         const std::vector<uint8_t> rom_bytes = readBinaryFile(rom_path);
 
         SNES snes;
@@ -411,7 +412,8 @@ RomExecutionResult runScenario(const RomScenario &scenario) {
 
         cpu.reset();
         snes.scheduler->scheduleDeviceRun(&cpu, 0);
-        snes.scheduler->scheduleEvent(scenario.cycle_budget, nullptr, SchedulerPhase::WakeSample, EventType::DeviceBoundary);
+        snes.scheduler->scheduleEvent(scenario.cycle_budget, nullptr, SchedulerPhase::WakeSample,
+                                      EventType::DeviceBoundary);
 
         constexpr std::size_t kMaxSchedulerSteps = 256;
         std::size_t steps = 0;
@@ -429,7 +431,7 @@ RomExecutionResult runScenario(const RomScenario &scenario) {
             result.snapshot.cpu_regs = cpu.regs();
             result.snapshot.cpu_micro_op_index = cpu.getMicroOpIndex();
 
-            for (const GoalSpec &goal : scenario.goals) {
+            for (const GoalSpec& goal : scenario.goals) {
                 GoalResult goal_result{};
                 goal_result.spec = goal;
                 goal_result.actual_value = readObservationValue(goal, cpu, wram);
@@ -448,7 +450,7 @@ RomExecutionResult runScenario(const RomScenario &scenario) {
                 result.failure_summary = scenario.why_expected_to_fail;
             }
         }
-    } catch (const std::exception &ex) {
+    } catch (const std::exception& ex) {
         result.status = RomStatus::HarnessError;
         result.failure_summary = ex.what();
     }
@@ -456,13 +458,13 @@ RomExecutionResult runScenario(const RomScenario &scenario) {
     return result;
 }
 
-} // namespace
+}  // namespace
 
 TEST_CASE("ROM integration harness records current bring-up progress for each test ROM", "[integration][rom]") {
     const std::vector<RomScenario> scenarios = loadScenarioSpecs();
     REQUIRE_FALSE(scenarios.empty());
 
-    for (const RomScenario &scenario : scenarios) {
+    for (const RomScenario& scenario : scenarios) {
         const RomExecutionResult result = runScenario(scenario);
         INFO(summarizeResult(result));
 

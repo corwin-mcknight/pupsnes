@@ -1,6 +1,5 @@
-#include <catch2/catch_test_macros.hpp>
-
 #include <array>
+#include <catch2/catch_test_macros.hpp>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -8,14 +7,14 @@
 
 namespace {
 
-std::vector<uint8_t> readBinaryFile(const std::filesystem::path &path) {
+std::vector<uint8_t> readBinaryFile(const std::filesystem::path& path) {
     std::ifstream stream(path, std::ios::binary);
     REQUIRE(stream.good());
 
     return std::vector<uint8_t>(std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>());
 }
 
-} // namespace
+}  // namespace
 
 TEST_CASE("Generated reset smoke test ROM has the expected reset vector and program bytes", "[unit]") {
     const std::filesystem::path rom_path = std::filesystem::path(PUPSNES_TEST_ROM_DIR) / "reset_smoke.sfc";

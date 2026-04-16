@@ -24,4 +24,4 @@ using token_id_t = uint64_t;
 // Monotonic sequence number for scheduler event ordering tiebreaks.
 using event_seq_t = uint64_t;
 
-} // namespace pupsnes
+}  // namespace pupsnes

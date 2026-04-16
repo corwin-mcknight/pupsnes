@@ -1,9 +1,9 @@
 #pragma once
 
-#include "pupsnes/types.h"
-
 #include <array>
 #include <cstdint>
+
+#include "pupsnes/types.h"
 
 namespace pupsnes {
 
@@ -60,26 +60,26 @@ struct PageMapParams {
 };
 
 class SystemBus {
-  public:
-    explicit SystemBus(SNES *snes);
+   public:
+    explicit SystemBus(SNES* snes);
     ~SystemBus();
 
-    void mapPage(const PageMapParams &params);
+    void mapPage(const PageMapParams& params);
     void unmapPage(uint8_t bank, uint8_t page);
 
     [[nodiscard]] BusPlan plan(snes_addr_t address, BusAccessType type, uint8_t write_data = 0) const;
-    BusFollowResult follow(const BusPlan &plan, time_master_t current_time, device_id_t source_device);
+    BusFollowResult follow(const BusPlan& plan, time_master_t current_time, device_id_t source_device);
 
-  private:
-    SNES *snes_; // Non-owning. SNES owns this SystemBus; pointer back to parent.
+   private:
+    SNES* snes_;  // Non-owning. SNES owns this SystemBus; pointer back to parent.
     uint8_t last_data_bus_value_ = 0xFF;
     using PageRow = std::array<PageTableEntry, 256>;
     std::array<PageRow, 256> page_table_{};
 
-    BusFollowResult followInline(const BusPlan &plan, time_master_t current_time);
-    BusFollowResult followScheduled(const BusPlan &plan, time_master_t current_time, device_id_t source_device);
+    BusFollowResult followInline(const BusPlan& plan, time_master_t current_time);
+    BusFollowResult followScheduled(const BusPlan& plan, time_master_t current_time, device_id_t source_device);
 
     friend struct SystemBusTestAccess;
 };
 
-} // namespace pupsnes
+}  // namespace pupsnes

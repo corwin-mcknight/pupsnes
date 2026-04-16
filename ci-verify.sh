@@ -13,7 +13,7 @@ cmake --build --preset ci
 echo "[ci-verify] Running unit tests"
 "${CI_DIR}/pupsnes_tests" "[unit]"
 
-# echo "[ci-verify] Running lint"
-# cmake --build --preset ci --target lint
+echo "[ci-verify] Running lint (non-blocking — triage backlog)"
+cmake --build --preset ci --target lint || echo "[ci-verify] lint reported issues (non-blocking)"
 
 echo "[ci-verify] Success"

@@ -1,9 +1,9 @@
 #pragma once
 
-#include "pupsnes/types.h"
-
 #include <cstdint>
 #include <optional>
+
+#include "pupsnes/types.h"
 
 namespace pupsnes {
 
@@ -32,16 +32,16 @@ struct TickResult {
 };
 
 class Device {
-  protected:
+   protected:
     time_master_t local_time = 0;
-    SNES *snes = nullptr; // Non-owning. Owned by caller; must outlive this Device.
+    SNES* snes = nullptr;  // Non-owning. Owned by caller; must outlive this Device.
     device_id_t device_id_ = 0;
 
-  public:
-    explicit Device(SNES *snes);
+   public:
+    explicit Device(SNES* snes);
     virtual ~Device() = default;
     [[nodiscard]] virtual TickResult tick(time_master_delta_t budget) = 0;
-    virtual void onEvent(const SchedulerEvent &event) = 0;
+    virtual void onEvent(const SchedulerEvent& event) = 0;
     virtual uint8_t readRegister(uint32_t /*offset*/) { return 0; }
     virtual void writeRegister(uint32_t /*offset*/, uint8_t /*data*/) {}
 
@@ -49,4 +49,4 @@ class Device {
     void advanceLocalTime(time_master_delta_t delta) { local_time += delta; }
     [[nodiscard]] device_id_t getDeviceId() const { return device_id_; }
 };
-} // namespace pupsnes
+}  // namespace pupsnes

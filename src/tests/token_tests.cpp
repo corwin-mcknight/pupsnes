@@ -11,8 +11,8 @@ TEST_CASE("TokenTable creates tokens with sequential IDs", "[unit]") {
     REQUIRE(id1 == 1);
     REQUIRE(id2 == 2);
 
-    auto *tok1 = table.get(id1);
-    auto *tok2 = table.get(id2);
+    auto* tok1 = table.get(id1);
+    auto* tok2 = table.get(id2);
 
     REQUIRE(tok1 != nullptr);
     REQUIRE(tok1->type == pupsnes::TokenType::BusRead);
@@ -37,7 +37,7 @@ TEST_CASE("TokenTable complete sets state and data", "[unit]") {
 
     table.complete(id, 0xAB);
 
-    auto *tok = table.get(id);
+    auto* tok = table.get(id);
     REQUIRE(tok != nullptr);
     REQUIRE(tok->state == pupsnes::TokenState::Completed);
     REQUIRE(tok->data == 0xAB);

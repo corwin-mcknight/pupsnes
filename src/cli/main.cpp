@@ -1,14 +1,13 @@
+#include <cstdint>
+#include <cstdio>
+
 #include "pupsnes/hw/scheduler.h"
 #include "pupsnes/hw/snes.h"
 #include "pupsnes/types.h"
 
-#include <cstdint>
-#include <cstdio>
-
 using namespace pupsnes;
 
-int main(int /*argc*/, char ** /*argv*/) {
-
+int main(int /*argc*/, char** /*argv*/) {
     std::printf("PupSNES");
 
     SNES snes;

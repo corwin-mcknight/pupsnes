@@ -5,10 +5,9 @@
 namespace pupsnes {
 
 struct SystemBusTestAccess {
-    static const PageTableEntry &getPageEntry(const SystemBus &bus, std::size_t bank,
-                                              std::size_t page) {
+    static const PageTableEntry& getPageEntry(const SystemBus& bus, std::size_t bank, std::size_t page) {
         return bus.page_table_[bank][page];
     }
 };
 
-} // namespace pupsnes
+}  // namespace pupsnes

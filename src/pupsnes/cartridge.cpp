@@ -6,22 +6,24 @@ namespace pupsnes {
 
 namespace {
 
-void mapLoROMBankRange(SystemBus &bus, device_id_t device_id, uint8_t bank) {
-    const uint32_t bank_offset = static_cast<uint32_t>(bank & 0x7FU) * static_cast<uint32_t>(Cartridge::kLoROMWindowSize);
+void mapLoROMBankRange(SystemBus& bus, device_id_t device_id, uint8_t bank) {
+    const uint32_t bank_offset =
+        static_cast<uint32_t>(bank & 0x7FU) * static_cast<uint32_t>(Cartridge::kLoROMWindowSize);
 
     for (uint16_t page = 0x80; page <= 0xFF; ++page) {
         const uint32_t page_offset = static_cast<uint32_t>(page - 0x80U) * 0x100U;
-        bus.mapPage({bank, static_cast<uint8_t>(page), device_id, bank_offset + page_offset, PageDeviceKind::Memory, 8});
+        bus.mapPage(
+            {bank, static_cast<uint8_t>(page), device_id, bank_offset + page_offset, PageDeviceKind::Memory, 8});
     }
 }
 
-} // namespace
+}  // namespace
 
-Cartridge::Cartridge(SNES *snes) : Device(snes) {}
+Cartridge::Cartridge(SNES* snes) : Device(snes) {}
 
 void Cartridge::loadLoROM(std::span<const uint8_t> rom_data) { rom_.assign(rom_data.begin(), rom_data.end()); }
 
-void Cartridge::mapLoROM(SystemBus &bus) const {
+void Cartridge::mapLoROM(SystemBus& bus) const {
     for (uint16_t bank = 0x00; bank <= 0x7D; ++bank) {
         mapLoROMBankRange(bus, getDeviceId(), static_cast<uint8_t>(bank));
     }
@@ -33,7 +35,7 @@ void Cartridge::mapLoROM(SystemBus &bus) const {
 
 TickResult Cartridge::tick(time_master_delta_t budget) { return {budget, TickStopReason::BudgetExhausted}; }
 
-void Cartridge::onEvent(const SchedulerEvent & /*event*/) {}
+void Cartridge::onEvent(const SchedulerEvent& /*event*/) {}
 
 uint8_t Cartridge::readRegister(uint32_t offset) {
     if (rom_.empty()) {
@@ -43,4 +45,4 @@ uint8_t Cartridge::readRegister(uint32_t offset) {
     return rom_[static_cast<std::size_t>(offset) % rom_.size()];
 }
 
-} // namespace pupsnes
+}  // namespace pupsnes

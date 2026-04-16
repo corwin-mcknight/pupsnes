@@ -1,11 +1,11 @@
 #pragma once
 
-#include "pupsnes/hw/device.h"
-#include "pupsnes/types.h"
-
 #include <array>
 #include <cstdint>
 #include <optional>
+
+#include "pupsnes/hw/device.h"
+#include "pupsnes/types.h"
 
 namespace pupsnes {
 
@@ -14,15 +14,15 @@ class SNES;
 // 65C816 processor status register.
 // E (emulation mode) is not stored in P but is tracked here alongside it.
 struct CpuFlags {
-    bool N = false; // Negative
-    bool V = false; // Overflow
-    bool M = true;  // Memory/accumulator select: 1=8-bit (always true in emulation mode)
-    bool X = true;  // Index register select: 1=8-bit (always true in emulation mode)
-    bool D = false; // Decimal mode
-    bool I = true;  // IRQ disable
-    bool Z = false; // Zero
-    bool C = false; // Carry
-    bool E = true;  // Emulation mode (toggled via XCE; not a P register bit)
+    bool N = false;  // Negative
+    bool V = false;  // Overflow
+    bool M = true;   // Memory/accumulator select: 1=8-bit (always true in emulation mode)
+    bool X = true;   // Index register select: 1=8-bit (always true in emulation mode)
+    bool D = false;  // Decimal mode
+    bool I = true;   // IRQ disable
+    bool Z = false;  // Zero
+    bool C = false;  // Carry
+    bool E = true;   // Emulation mode (toggled via XCE; not a P register bit)
 
     [[nodiscard]] uint8_t toByte() const;
     void fromByte(uint8_t p, bool emulation_mode);
@@ -30,21 +30,21 @@ struct CpuFlags {
 
 // Bus actions a micro-op can perform in a single master clock cycle.
 enum class MicroBusAction : uint8_t {
-    None,      // Internal cycle — no bus transaction
-    FetchPC,   // Read byte from PBR:PC, increment PC
-    ReadAddr,  // Read byte from effective address (addr_)
-    WriteAddr, // Write fetch_data_ to effective address (addr_)
-    WriteA8Addr, // Write A low byte to effective address (addr_)
+    None,         // Internal cycle — no bus transaction
+    FetchPC,      // Read byte from PBR:PC, increment PC
+    ReadAddr,     // Read byte from effective address (addr_)
+    WriteAddr,    // Write fetch_data_ to effective address (addr_)
+    WriteA8Addr,  // Write A low byte to effective address (addr_)
 };
 
 // Internal register operations performed after the bus action completes.
 enum class MicroInternalOp : uint8_t {
     None,
-    LoadALow_UpdateNZ, // A_lo = fetch_data_; update N/Z from A (respects M flag)
-    BranchRelative8,   // Apply signed 8-bit branch offset stored in fetch_data_ to PC
-    SetAddrLowFromFetch,  // addr_[7:0] = fetch_data_
-    SetAddrHighFromFetch, // addr_[15:8] = fetch_data_
-    SetAddrBankFromFetch, // addr_[23:16] = fetch_data_
+    LoadALow_UpdateNZ,     // A_lo = fetch_data_; update N/Z from A (respects M flag)
+    BranchRelative8,       // Apply signed 8-bit branch offset stored in fetch_data_ to PC
+    SetAddrLowFromFetch,   // addr_[7:0] = fetch_data_
+    SetAddrHighFromFetch,  // addr_[15:8] = fetch_data_
+    SetAddrBankFromFetch,  // addr_[23:16] = fetch_data_
 };
 
 struct MicroOp {
@@ -67,12 +67,12 @@ struct InstructionEntry {
 // tick() walks a micro-op table: cycle 0 always fetches the opcode via the SystemBus, then
 // the per-opcode remaining ops execute one per cycle. All bus accesses use SystemBus plan/follow.
 class CPU : public Device {
-  public:
+   public:
     struct Regs {
         uint16_t A = 0;
         uint16_t X = 0;
         uint16_t Y = 0;
-        uint16_t SP = 0x01FF; // Top of page 1 in emulation mode
+        uint16_t SP = 0x01FF;  // Top of page 1 in emulation mode
         uint16_t DP = 0;
         uint8_t PBR = 0;
         uint8_t DBR = 0;
@@ -80,27 +80,27 @@ class CPU : public Device {
         CpuFlags P{};
     };
 
-    explicit CPU(SNES *snes);
+    explicit CPU(SNES* snes);
     ~CPU() override = default;
 
     void reset();
 
     [[nodiscard]] TickResult tick(time_master_delta_t budget) override;
-    void onEvent(const SchedulerEvent &event) override;
+    void onEvent(const SchedulerEvent& event) override;
 
     [[nodiscard]] Regs regs() const { return regs_; }
-    void setRegs(const Regs &r) { regs_ = r; }
+    void setRegs(const Regs& r) { regs_ = r; }
     [[nodiscard]] uint8_t getMicroOpIndex() const { return micro_op_index_; }
 
-  private:
+   private:
     Regs regs_;
 
     // Micro-op execution state.
-    uint8_t micro_op_index_ = 0; // 0 = opcode fetch; 1..N = remaining ops
-    uint8_t fetch_data_ = 0;     // Last byte read from bus
-    uint32_t addr_ = 0;          // Effective address accumulator
+    uint8_t micro_op_index_ = 0;  // 0 = opcode fetch; 1..N = remaining ops
+    uint8_t fetch_data_ = 0;      // Last byte read from bus
+    uint32_t addr_ = 0;           // Effective address accumulator
 
-    const InstructionEntry *current_instr_ = nullptr;
+    const InstructionEntry* current_instr_ = nullptr;
 
     // Opcode → micro-op sequence table.  Initialized in cpu.cpp.
     static const std::array<InstructionEntry, 256> kOpcodeTable;
@@ -124,4 +124,4 @@ class CPU : public Device {
     [[nodiscard]] std::optional<TickResult> busWrite(snes_addr_t addr, uint8_t data, time_master_delta_t cycle_time);
 };
 
-} // namespace pupsnes
+}  // namespace pupsnes
