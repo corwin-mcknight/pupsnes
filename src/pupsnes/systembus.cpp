@@ -12,8 +12,6 @@ namespace pupsnes {
 
 SystemBus::SystemBus(SNES* snes) : snes_(snes) {}
 
-SystemBus::~SystemBus() = default;
-
 void SystemBus::mapPage(const PageMapParams& params) {
     PageTableEntry& entry = page_table_[params.bank][params.page];
     entry.device_id = params.device;

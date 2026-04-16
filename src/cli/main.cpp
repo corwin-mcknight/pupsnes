@@ -5,7 +5,7 @@
 #include "pupsnes/hw/snes.h"
 #include "pupsnes/types.h"
 
-using namespace pupsnes;
+using namespace pupsnes;  // NOLINT(google-build-using-namespace)
 
 int main(int /*argc*/, char** /*argv*/) {
     std::printf("PupSNES");

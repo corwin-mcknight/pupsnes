@@ -62,7 +62,7 @@ struct PageMapParams {
 class SystemBus {
    public:
     explicit SystemBus(SNES* snes);
-    ~SystemBus();
+    ~SystemBus() = default;
 
     void mapPage(const PageMapParams& params);
     void unmapPage(uint8_t bank, uint8_t page);

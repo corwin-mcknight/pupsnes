@@ -50,7 +50,7 @@ void CpuFlags::fromByte(uint8_t p, bool emulation_mode) {
 
 namespace {
 
-void initMiscOpcodes(std::array<InstructionEntry, 256>& table) {
+void initMiscOpcodes(std::array<InstructionEntry, 256>& table) noexcept {
     // 0xEA  NOP  — 2 cycles; explicit for clarity (same as default).
     table[0xEA].remaining_op_count = 1;
     table[0xEA].ops[0] = {MicroBusAction::None, MicroInternalOp::None};
@@ -70,7 +70,7 @@ void initMiscOpcodes(std::array<InstructionEntry, 256>& table) {
     table[0x8F].ops[3] = {MicroBusAction::WriteA8Addr, MicroInternalOp::None};
 }
 
-void initLoadOpcodes(std::array<InstructionEntry, 256>& table) {
+void initLoadOpcodes(std::array<InstructionEntry, 256>& table) noexcept {
     // 0xA9  LDA #imm  — 2 cycles (8-bit accumulator mode).
     // Remaining op: fetch immediate byte and load into A, update N/Z.
     table[0xA9].remaining_op_count = 1;
@@ -79,7 +79,7 @@ void initLoadOpcodes(std::array<InstructionEntry, 256>& table) {
 
 }  // namespace
 
-const std::array<InstructionEntry, 256> CPU::kOpcodeTable = []() {
+const std::array<InstructionEntry, 256> CPU::kOpcodeTable = []() noexcept {
     std::array<InstructionEntry, 256> table{};
 
     // Default: 2-cycle instruction (opcode fetch + 1 internal cycle, no bus action).

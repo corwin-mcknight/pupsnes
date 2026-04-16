@@ -76,7 +76,7 @@ class Scheduler {
     constexpr static time_master_t MAX_CYCLES_STEP = 10;
     constexpr static time_master_t MAX_SAME_STEP_ITERATIONS = 10;
 
-    Scheduler(SNES* snes);
+    explicit Scheduler(SNES* snes);
     ~Scheduler();
 
     void scheduleEvent(time_master_t time, Device* source, SchedulerPhase subphase, EventType type,

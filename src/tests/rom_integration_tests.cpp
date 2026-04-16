@@ -16,7 +16,7 @@
 #include "pupsnes/hw/snes.h"
 #include "pupsnes/hw/wram.h"
 
-using namespace pupsnes;
+using namespace pupsnes;  // NOLINT(google-build-using-namespace)
 
 namespace {
 
@@ -113,7 +113,7 @@ uint32_t parseUnsignedValue(const std::string& value, const std::filesystem::pat
     try {
         std::size_t parsed_chars = 0;
         const int base = (value.size() > 2 && value[0] == '0' && (value[1] == 'x' || value[1] == 'X')) ? 16 : 10;
-        const unsigned long parsed = std::stoul(value, &parsed_chars, base);
+        const uint64_t parsed = std::stoul(value, &parsed_chars, base);
         if (parsed_chars != value.size()) {
             throw std::invalid_argument("trailing characters");
         }
@@ -314,6 +314,7 @@ std::vector<RomScenario> loadScenarioSpecs() {
     std::sort(spec_paths.begin(), spec_paths.end());
 
     std::vector<RomScenario> scenarios;
+    scenarios.reserve(spec_paths.size());
     for (const std::filesystem::path& spec_path : spec_paths) {
         scenarios.push_back(loadScenarioSpec(spec_path));
     }

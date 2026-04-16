@@ -12,7 +12,7 @@
 #include "pupsnes/hw/wram.h"
 #include "scheduler_test_access.h"
 
-using namespace pupsnes;
+using namespace pupsnes;  // NOLINT(google-build-using-namespace)
 
 class TestROM : public Device {
    public:

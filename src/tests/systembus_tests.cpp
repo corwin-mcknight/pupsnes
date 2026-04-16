@@ -9,7 +9,7 @@
 #include "pupsnes/hw/wram.h"
 #include "systembus_test_access.h"
 
-using namespace pupsnes;
+using namespace pupsnes;  // NOLINT(google-build-using-namespace)
 
 class MockMemoryDevice : public Device {
    public:
