@@ -1,0 +1,18 @@
+rom_name = "instruction_smoke"
+title = "Instruction Smoke"
+purpose = "Verify two immediate loads execute in sequence and execution eventually stabilizes in the loop."
+why_expected_to_fail = "This ROM previously failed before BRA support existed."
+cycle_budget = 14
+expected_current_status = "pass"
+
+[goal]
+name = "finishes-second-immediate-load"
+description = "Accumulator low byte should reflect the second immediate load."
+kind = "cpu_a8"
+expected_value = 0x34
+
+[goal]
+name = "holds-at-loop-address"
+description = "Program counter should remain at the loop label after the branch executes repeatedly."
+kind = "cpu_pc"
+expected_value = 0x8006

@@ -1,6 +1,7 @@
 # Testing
 
 This project uses Catch2 and CTest. Tests live under `src/tests` and are built when `BUILD_TESTING` is enabled (default).
+Purpose-built test ROM sources live under `testroms/` and are assembled with `ca65`/`ld65` into `build/<preset>/test-roms/` during test builds.
 
 ## Local (Presets)
 

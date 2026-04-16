@@ -1,9 +1,11 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include "pupsnes/hw/cartridge.h"
 #include "pupsnes/hw/device.h"
 #include "pupsnes/hw/scheduler.h"
 #include "pupsnes/hw/snes.h"
 #include "pupsnes/hw/systembus.h"
+#include "pupsnes/hw/wram.h"
 #include "systembus_test_access.h"
 
 #include <array>
@@ -256,4 +258,53 @@ TEST_CASE("multiple sequential plan/follow operations", "[unit]") {
 
     REQUIRE(res1.data == 0x11);
     REQUIRE(res2.data == 0x22);
+}
+
+TEST_CASE("WRAM maps banks 7E and 7F as contiguous memory", "[unit]") {
+    SNES snes;
+    WRAM wram(&snes);
+    wram.mapSystemBus(*snes.system_bus);
+
+    BusPlan write_first_bank = snes.system_bus->plan(0x7E0001, BusAccessType::Write, 0x12);
+    BusPlan write_second_bank = snes.system_bus->plan(0x7F0002, BusAccessType::Write, 0x34);
+    (void)snes.system_bus->follow(write_first_bank, 0, wram.getDeviceId());
+    (void)snes.system_bus->follow(write_second_bank, 0, wram.getDeviceId());
+
+    BusFollowResult read_first_bank = snes.system_bus->follow(snes.system_bus->plan(0x7E0001, BusAccessType::Read), 0,
+                                                              wram.getDeviceId());
+    BusFollowResult read_second_bank = snes.system_bus->follow(snes.system_bus->plan(0x7F0002, BusAccessType::Read), 0,
+                                                               wram.getDeviceId());
+
+    REQUIRE(read_first_bank.outcome == BusPlanOutcome::InlineComplete);
+    REQUIRE(read_second_bank.outcome == BusPlanOutcome::InlineComplete);
+    REQUIRE(read_first_bank.data == 0x12);
+    REQUIRE(read_second_bank.data == 0x34);
+    REQUIRE(wram.peek(0x0001) == 0x12);
+    REQUIRE(wram.peek(0x10002) == 0x34);
+}
+
+TEST_CASE("Cartridge LoROM mapping exposes reset vector and program window", "[unit]") {
+    SNES snes;
+    Cartridge cartridge(&snes);
+    std::array<uint8_t, Cartridge::kLoROMWindowSize> rom{};
+
+    rom.fill(0xFF);
+    rom[0x0000] = 0xA9;
+    rom[0x0001] = 0x66;
+    rom[0x7FFC] = 0x00;
+    rom[0x7FFD] = 0x80;
+
+    cartridge.loadLoROM(rom);
+    cartridge.mapLoROM(*snes.system_bus);
+
+    BusFollowResult reset_lo =
+        snes.system_bus->follow(snes.system_bus->plan(0x00FFFC, BusAccessType::Read), 0, cartridge.getDeviceId());
+    BusFollowResult reset_hi =
+        snes.system_bus->follow(snes.system_bus->plan(0x00FFFD, BusAccessType::Read), 0, cartridge.getDeviceId());
+    BusFollowResult opcode =
+        snes.system_bus->follow(snes.system_bus->plan(0x008000, BusAccessType::Read), 0, cartridge.getDeviceId());
+
+    REQUIRE(reset_lo.data == 0x00);
+    REQUIRE(reset_hi.data == 0x80);
+    REQUIRE(opcode.data == 0xA9);
 }

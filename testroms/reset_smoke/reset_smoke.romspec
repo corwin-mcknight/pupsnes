@@ -1,0 +1,18 @@
+rom_name = "reset_smoke"
+title = "Reset Smoke"
+purpose = "Verify reset-vector boot, immediate load, and a self-loop at the loop label."
+why_expected_to_fail = "This ROM previously failed before BRA support existed."
+cycle_budget = 10
+expected_current_status = "pass"
+
+[goal]
+name = "loads-expected-accumulator"
+description = "Accumulator low byte should retain the immediate value loaded after reset."
+kind = "cpu_a8"
+expected_value = 0x42
+
+[goal]
+name = "holds-at-loop-address"
+description = "Program counter should stay parked at the BRA loop target once execution settles."
+kind = "cpu_pc"
+expected_value = 0x8003

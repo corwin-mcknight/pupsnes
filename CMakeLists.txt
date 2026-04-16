@@ -4,10 +4,12 @@ project(pupsnes LANGUAGES CXX)
 
 set(PUPSNES_LIB_SOURCES
   src/pupsnes/5a22/cpu.cpp
+  src/pupsnes/cartridge.cpp
   src/pupsnes/scheduler.cpp
   src/pupsnes/snes.cpp
   src/pupsnes/token.cpp
   src/pupsnes/systembus.cpp
+  src/pupsnes/wram.cpp
 )
 
 set(PUPSNES_CLI_SOURCES
@@ -17,7 +19,9 @@ set(PUPSNES_CLI_SOURCES
 set(PUPSNES_TEST_SOURCES
   src/tests/unit/catch2_smoke_tests.cpp
   src/tests/cpu_tests.cpp
+  src/tests/rom_integration_tests.cpp
   src/tests/scheduler_tests.cpp
+  src/tests/test_rom_builder_tests.cpp
   src/tests/token_tests.cpp
   src/tests/mem_tests.cpp
   src/tests/systembus_tests.cpp
@@ -101,12 +105,57 @@ endif()
 include(CTest)
 if(BUILD_TESTING)
   find_package(Catch2 CONFIG REQUIRED)
+  find_program(CA65_EXECUTABLE NAMES ca65 REQUIRED)
+  find_program(LD65_EXECUTABLE NAMES ld65 REQUIRED)
+
+  set(PUPSNES_TEST_ROM_DIR ${CMAKE_CURRENT_BINARY_DIR}/test-roms)
+  set(PUPSNES_TEST_ROM_CFG ${CMAKE_CURRENT_SOURCE_DIR}/testroms/lorom-32k.cfg)
+  set(PUPSNES_TEST_ROM_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/testroms/reset_smoke/reset_smoke.s
+    ${CMAKE_CURRENT_SOURCE_DIR}/testroms/instruction_smoke/instruction_smoke.s
+    ${CMAKE_CURRENT_SOURCE_DIR}/testroms/wram_signature/wram_signature.s
+  )
+  set(PUPSNES_TEST_ROM_COMMON_INCLUDES
+    ${CMAKE_CURRENT_SOURCE_DIR}/testroms/pupsnes.inc
+  )
+  set(PUPSNES_TEST_ROM_METADATA_DIR ${CMAKE_CURRENT_SOURCE_DIR}/testroms)
+  set(PUPSNES_TEST_ROM_OUTPUTS "")
+
+  foreach(PUPSNES_TEST_ROM_SOURCE IN LISTS PUPSNES_TEST_ROM_SOURCES)
+    get_filename_component(PUPSNES_TEST_ROM_NAME ${PUPSNES_TEST_ROM_SOURCE} NAME_WE)
+    set(PUPSNES_TEST_ROM_OBJECT ${PUPSNES_TEST_ROM_DIR}/${PUPSNES_TEST_ROM_NAME}.o)
+    set(PUPSNES_TEST_ROM_OUTPUT ${PUPSNES_TEST_ROM_DIR}/${PUPSNES_TEST_ROM_NAME}.sfc)
+    add_custom_command(
+      OUTPUT ${PUPSNES_TEST_ROM_OBJECT}
+      COMMAND ${CMAKE_COMMAND} -E make_directory ${PUPSNES_TEST_ROM_DIR}
+      COMMAND ${CA65_EXECUTABLE} --cpu 65816 -I ${CMAKE_CURRENT_SOURCE_DIR}/testroms
+              -o ${PUPSNES_TEST_ROM_OBJECT} ${PUPSNES_TEST_ROM_SOURCE}
+      DEPENDS ${PUPSNES_TEST_ROM_SOURCE} ${PUPSNES_TEST_ROM_COMMON_INCLUDES}
+      COMMENT "Assembling test ROM object ${PUPSNES_TEST_ROM_NAME}.o"
+      VERBATIM
+    )
+    add_custom_command(
+      OUTPUT ${PUPSNES_TEST_ROM_OUTPUT}
+      COMMAND ${LD65_EXECUTABLE} -C ${PUPSNES_TEST_ROM_CFG} -o ${PUPSNES_TEST_ROM_OUTPUT} ${PUPSNES_TEST_ROM_OBJECT}
+      DEPENDS ${PUPSNES_TEST_ROM_OBJECT} ${PUPSNES_TEST_ROM_CFG}
+      COMMENT "Linking test ROM ${PUPSNES_TEST_ROM_NAME}.sfc"
+      VERBATIM
+    )
+    list(APPEND PUPSNES_TEST_ROM_OUTPUTS ${PUPSNES_TEST_ROM_OUTPUT})
+  endforeach()
+
+  add_custom_target(pupsnes_test_roms DEPENDS ${PUPSNES_TEST_ROM_OUTPUTS})
 
   add_executable(pupsnes_tests ${PUPSNES_TEST_SOURCES})
   target_compile_features(pupsnes_tests PRIVATE cxx_std_20)
   target_include_directories(pupsnes_tests PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/includes)
   target_link_libraries(pupsnes_tests PRIVATE pupsnes Catch2::Catch2WithMain)
+  target_compile_definitions(pupsnes_tests PRIVATE
+    "PUPSNES_TEST_ROM_DIR=\"${PUPSNES_TEST_ROM_DIR}\""
+    "PUPSNES_TEST_ROM_METADATA_DIR=\"${PUPSNES_TEST_ROM_METADATA_DIR}\""
+  )
   pupsnes_apply_warnings(pupsnes_tests)
+  add_dependencies(pupsnes_tests pupsnes_test_roms)
 
   enable_testing()
   add_test(NAME pupsnes_tests COMMAND pupsnes_tests)
@@ -120,11 +169,13 @@ set(PUPSNES_HEADERS
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/types.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/mem.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/5a22/cpu.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/cartridge.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/device.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/scheduler.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/snes.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/systembus.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/token.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/wram.h
 )
 
 set(PUPSNES_ALL_SOURCES

@@ -1,10 +1,12 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "pupsnes/hw/5a22/cpu.h"
+#include "pupsnes/hw/cartridge.h"
 #include "pupsnes/hw/device.h"
 #include "pupsnes/hw/scheduler.h"
 #include "pupsnes/hw/snes.h"
 #include "pupsnes/hw/systembus.h"
+#include "pupsnes/hw/wram.h"
 #include "scheduler_test_access.h"
 
 #include <array>
@@ -102,6 +104,33 @@ struct AsyncProgramFixture {
     }
 };
 
+struct ResetFixture {
+    SNES snes;
+    Cartridge cartridge{&snes};
+    WRAM wram{&snes};
+    CPU cpu{&snes};
+    std::array<uint8_t, Cartridge::kLoROMWindowSize> rom{};
+
+    ResetFixture() {
+        rom.fill(0xEA);
+        setResetVector(0x8000);
+        wram.mapSystemBus(*snes.system_bus);
+        syncCartridge();
+    }
+
+    void setResetVector(uint16_t address) {
+        rom[0x7FFCU] = static_cast<uint8_t>(address & 0x00FFU);
+        rom[0x7FFDU] = static_cast<uint8_t>(address >> 8U);
+    }
+
+    void setRomByte(std::size_t offset, uint8_t value) { rom[offset] = value; }
+
+    void syncCartridge() {
+        cartridge.loadLoROM(rom);
+        cartridge.mapLoROM(*snes.system_bus);
+    }
+};
+
 TEST_CASE("CPU registers with SNES on construction", "[cpu]") {
     SNES snes;
     CPU cpu(&snes);
@@ -128,6 +157,114 @@ TEST_CASE("CPU initial register state", "[cpu]") {
     REQUIRE(r.P.X == true);
     REQUIRE(r.P.I == true);
     REQUIRE(cpu.getMicroOpIndex() == 0);
+}
+
+TEST_CASE("CPU reset fetches the reset vector through cartridge mapping", "[cpu]") {
+    ResetFixture f;
+
+    f.cpu.reset();
+
+    REQUIRE(f.cpu.regs().PBR == 0);
+    REQUIRE(f.cpu.regs().PC == 0x8000);
+    REQUIRE(f.cpu.regs().SP == 0x01FF);
+    REQUIRE(f.cpu.regs().P.E == true);
+    REQUIRE(f.cpu.regs().P.M == true);
+    REQUIRE(f.cpu.regs().P.X == true);
+    REQUIRE(f.cpu.regs().P.I == true);
+    REQUIRE(f.cpu.getMicroOpIndex() == 0);
+    REQUIRE(f.cpu.getTime() == 0);
+}
+
+TEST_CASE("CPU reset clears in-flight execution state and resumes from the reset vector", "[cpu]") {
+    ResetFixture f;
+    f.setRomByte(0x0000U, 0xA9);
+    f.setRomByte(0x0001U, 0x11);
+    f.syncCartridge();
+
+    auto regs = f.cpu.regs();
+    regs.A = 0x00FF;
+    regs.PC = 0x8123;
+    regs.PBR = 0x7E;
+    regs.P.D = true;
+    regs.P.C = true;
+    f.cpu.setRegs(regs);
+    (void)f.cpu.tick(1);
+    REQUIRE(f.cpu.getMicroOpIndex() == 1);
+
+    f.cpu.reset();
+
+    REQUIRE(f.cpu.regs().PC == 0x8000);
+    REQUIRE(f.cpu.regs().PBR == 0);
+    REQUIRE(f.cpu.regs().A == 0);
+    REQUIRE(f.cpu.regs().P.D == false);
+    REQUIRE(f.cpu.regs().P.C == false);
+    REQUIRE(f.cpu.getMicroOpIndex() == 0);
+}
+
+TEST_CASE("CPU executes from the cartridge after reset", "[cpu]") {
+    ResetFixture f;
+    f.setRomByte(0x0000U, 0xA9);
+    f.setRomByte(0x0001U, 0x42);
+    f.syncCartridge();
+
+    f.cpu.reset();
+    TickResult r = f.cpu.tick(2);
+
+    REQUIRE(r.completed_cycles == 2);
+    REQUIRE(r.reason == TickStopReason::BudgetExhausted);
+    REQUIRE(f.cpu.regs().PC == 0x8002);
+    REQUIRE(static_cast<uint8_t>(f.cpu.regs().A) == 0x42);
+}
+
+TEST_CASE("BRA branches relative to the post-operand PC", "[cpu]") {
+    ResetFixture f;
+    f.setRomByte(0x0000U, 0x80);
+    f.setRomByte(0x0001U, 0x02);
+    f.setRomByte(0x0004U, 0xA9);
+    f.setRomByte(0x0005U, 0x7F);
+    f.syncCartridge();
+
+    f.cpu.reset();
+    TickResult r = f.cpu.tick(5);
+
+    REQUIRE(r.completed_cycles == 5);
+    REQUIRE(r.reason == TickStopReason::BudgetExhausted);
+    REQUIRE(f.cpu.regs().PC == 0x8006);
+    REQUIRE(static_cast<uint8_t>(f.cpu.regs().A) == 0x7F);
+}
+
+TEST_CASE("BRA supports negative displacements for tight loops", "[cpu]") {
+    ResetFixture f;
+    f.setRomByte(0x0000U, 0x80);
+    f.setRomByte(0x0001U, 0xFE);
+    f.syncCartridge();
+
+    f.cpu.reset();
+    TickResult r = f.cpu.tick(6);
+
+    REQUIRE(r.completed_cycles == 6);
+    REQUIRE(r.reason == TickStopReason::BudgetExhausted);
+    REQUIRE(f.cpu.regs().PC == 0x8000);
+}
+
+TEST_CASE("STA long writes accumulator low byte to mapped WRAM", "[cpu]") {
+    ResetFixture f;
+    f.setRomByte(0x0000U, 0xA9);
+    f.setRomByte(0x0001U, 0x5A);
+    f.setRomByte(0x0002U, 0x8F);
+    f.setRomByte(0x0003U, 0x00);
+    f.setRomByte(0x0004U, 0x00);
+    f.setRomByte(0x0005U, 0x7E);
+    f.syncCartridge();
+
+    f.cpu.reset();
+    TickResult r = f.cpu.tick(7);
+
+    REQUIRE(r.completed_cycles == 7);
+    REQUIRE(r.reason == TickStopReason::BudgetExhausted);
+    REQUIRE(static_cast<uint8_t>(f.cpu.regs().A) == 0x5A);
+    REQUIRE(f.cpu.regs().PC == 0x8006);
+    REQUIRE(f.wram.peek(0x0000) == 0x5A);
 }
 
 TEST_CASE("Direct CPU tick advances execution state but not committed device time", "[cpu]") {

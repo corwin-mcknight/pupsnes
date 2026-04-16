@@ -34,12 +34,17 @@ enum class MicroBusAction : uint8_t {
     FetchPC,   // Read byte from PBR:PC, increment PC
     ReadAddr,  // Read byte from effective address (addr_)
     WriteAddr, // Write fetch_data_ to effective address (addr_)
+    WriteA8Addr, // Write A low byte to effective address (addr_)
 };
 
 // Internal register operations performed after the bus action completes.
 enum class MicroInternalOp : uint8_t {
     None,
     LoadALow_UpdateNZ, // A_lo = fetch_data_; update N/Z from A (respects M flag)
+    BranchRelative8,   // Apply signed 8-bit branch offset stored in fetch_data_ to PC
+    SetAddrLowFromFetch,  // addr_[7:0] = fetch_data_
+    SetAddrHighFromFetch, // addr_[15:8] = fetch_data_
+    SetAddrBankFromFetch, // addr_[23:16] = fetch_data_
 };
 
 struct MicroOp {
@@ -78,6 +83,8 @@ class CPU : public Device {
     explicit CPU(SNES *snes);
     ~CPU() override = default;
 
+    void reset();
+
     [[nodiscard]] TickResult tick(time_master_delta_t budget) override;
     void onEvent(const SchedulerEvent &event) override;
 
@@ -100,6 +107,11 @@ class CPU : public Device {
 
     void executeInternalOp(MicroInternalOp op);
     void opLoadALow_UpdateNZ();
+    void opBranchRelative8();
+    void opSetAddrLowFromFetch();
+    void opSetAddrHighFromFetch();
+    void opSetAddrBankFromFetch();
+    [[nodiscard]] uint8_t readResetVectorByte(snes_addr_t addr);
 
     [[nodiscard]] snes_addr_t pcAddr() const;
 
