@@ -370,7 +370,7 @@ constexpr OpcodeMetadata LowerMetadata(const OpcodeSpec& spec) {
 }
 
 template <std::size_t N>
-consteval OpcodeArtifacts BuildOpcodeArtifacts(const std::array<OpcodeSpec, N>& specs) {
+consteval OpcodeArtifacts BuildOpcodeArtifacts(const std::array<OpcodeSpec, N>& specs) noexcept {
   OpcodeArtifacts artifacts{};
 
   for (OpcodeMetadata& metadata : artifacts.metadata_table) {

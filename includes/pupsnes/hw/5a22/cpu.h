@@ -42,8 +42,15 @@ enum class MicroBusAction : uint8_t {
 // Internal register operations performed after the bus action completes.
 enum class MicroInternalOp : uint8_t {
   kNone,
-  kLoadALowUpdateNz,         // A_lo = fetch_data_; update N/Z from A (respects M flag)
-  kLoadXLowUpdateNz,         // X_lo = fetch_data_; update N/Z from X (respects X flag)
+  kLoadA8UpdateNz,           // A_lo = fetch_data_; update N/Z using effective 8-bit accumulator width
+  kLoadALow,                 // A_lo = fetch_data_
+  kLoadAHighUpdateNz,        // A_hi = fetch_data_; update N/Z using effective 16-bit accumulator width
+  kLoadX8UpdateNz,           // X_lo = fetch_data_; update N/Z using effective 8-bit index width
+  kLoadXLow,                 // X_lo = fetch_data_
+  kLoadXHighUpdateNz,        // X_hi = fetch_data_; update N/Z using effective 16-bit index width
+  kLoadY8UpdateNz,           // Y_lo = fetch_data_; update N/Z using effective 8-bit index width
+  kLoadYLow,                 // Y_lo = fetch_data_
+  kLoadYHighUpdateNz,        // Y_hi = fetch_data_; update N/Z using effective 16-bit index width
   kSetBranchTaken,           // branch_taken = true
   kSetBranchTakenIfNotZero,  // branch_taken = !Z
   kBranchRelative8,          // Apply signed 8-bit branch offset stored in fetch_data_
@@ -55,6 +62,8 @@ enum class MicroInternalOp : uint8_t {
 
 enum class TimingCondition : uint8_t {
   kBranchTaken = 0,
+  kAccumulator16 = 1,
+  kIndex16 = 2,
 };
 
 enum class TimingRuleOp : uint8_t {
@@ -184,8 +193,18 @@ class CPU : public Device {
   [[nodiscard]] std::optional<TickResult> PerformBusAction(MicroBusAction action, TimeMasterDeltaT cycle_time);
 
   void ExecuteInternalOp(MicroInternalOp op);
-  void OpLoadALowUpdateNz();
-  void OpLoadXLowUpdateNz();
+  [[nodiscard]] bool IsAccumulator16Bit() const;
+  [[nodiscard]] bool IsIndex16Bit() const;
+
+  void OpLoadA8UpdateNz();
+  void OpLoadALow();
+  void OpLoadAHighUpdateNz();
+  void OpLoadX8UpdateNz();
+  void OpLoadXLow();
+  void OpLoadXHighUpdateNz();
+  void OpLoadY8UpdateNz();
+  void OpLoadYLow();
+  void OpLoadYHighUpdateNz();
   void OpSetBranchTaken(bool taken);
   void OpSetBranchTakenIfNotZero();
   void OpBranchRelative8();

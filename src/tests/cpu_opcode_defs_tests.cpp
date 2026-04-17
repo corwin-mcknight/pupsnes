@@ -42,15 +42,30 @@ TEST_CASE("Opcode specs lower into expected execution entries", "[cpu][opcode-de
 
   const InstructionEntry& lda_imm = table[0xA9];
   REQUIRE(lda_imm.disposition == InstructionDisposition::kImplemented);
-  REQUIRE(lda_imm.remaining_op_count == 1);
+  REQUIRE(lda_imm.remaining_op_count == 3);
+  REQUIRE(lda_imm.rule_count == 3);
   REQUIRE(lda_imm.ops[0].bus_action == MicroBusAction::kFetchPc);
-  REQUIRE(lda_imm.ops[0].internal_op == MicroInternalOp::kLoadALowUpdateNz);
+  REQUIRE(lda_imm.ops[0].internal_op == MicroInternalOp::kLoadA8UpdateNz);
+  REQUIRE(lda_imm.ops[1].internal_op == MicroInternalOp::kLoadALow);
+  REQUIRE(lda_imm.ops[2].internal_op == MicroInternalOp::kLoadAHighUpdateNz);
 
   const InstructionEntry& ldx_imm = table[0xA2];
   REQUIRE(ldx_imm.disposition == InstructionDisposition::kImplemented);
-  REQUIRE(ldx_imm.remaining_op_count == 1);
+  REQUIRE(ldx_imm.remaining_op_count == 3);
+  REQUIRE(ldx_imm.rule_count == 3);
   REQUIRE(ldx_imm.ops[0].bus_action == MicroBusAction::kFetchPc);
-  REQUIRE(ldx_imm.ops[0].internal_op == MicroInternalOp::kLoadXLowUpdateNz);
+  REQUIRE(ldx_imm.ops[0].internal_op == MicroInternalOp::kLoadX8UpdateNz);
+  REQUIRE(ldx_imm.ops[1].internal_op == MicroInternalOp::kLoadXLow);
+  REQUIRE(ldx_imm.ops[2].internal_op == MicroInternalOp::kLoadXHighUpdateNz);
+
+  const InstructionEntry& ldy_imm = table[0xA0];
+  REQUIRE(ldy_imm.disposition == InstructionDisposition::kImplemented);
+  REQUIRE(ldy_imm.remaining_op_count == 3);
+  REQUIRE(ldy_imm.rule_count == 3);
+  REQUIRE(ldy_imm.ops[0].bus_action == MicroBusAction::kFetchPc);
+  REQUIRE(ldy_imm.ops[0].internal_op == MicroInternalOp::kLoadY8UpdateNz);
+  REQUIRE(ldy_imm.ops[1].internal_op == MicroInternalOp::kLoadYLow);
+  REQUIRE(ldy_imm.ops[2].internal_op == MicroInternalOp::kLoadYHighUpdateNz);
 
   const InstructionEntry& sta_long = table[0x8F];
   REQUIRE(sta_long.disposition == InstructionDisposition::kImplemented);
@@ -88,6 +103,13 @@ TEST_CASE("Opcode metadata preserves readable lowered cycle labels", "[cpu][opco
   REQUIRE(metadata[0xEA].implemented);
   REQUIRE(metadata[0xEA].mnemonic == "NOP");
   REQUIRE(metadata[0xEA].cycle_labels[0] == "idle");
+
+  REQUIRE(metadata[0xA9].implemented);
+  REQUIRE(metadata[0xA9].mnemonic == "LDA");
+  REQUIRE(metadata[0xA9].addressing_mode == "immediate");
+  REQUIRE(metadata[0xA9].cycle_labels[0] == "fetch immediate low");
+  REQUIRE(metadata[0xA9].cycle_labels[1] == "fetch immediate low");
+  REQUIRE(metadata[0xA9].cycle_labels[2] == "fetch immediate high");
 
   REQUIRE(metadata[0x8F].implemented);
   REQUIRE(metadata[0x8F].mnemonic == "STA");

@@ -376,6 +376,69 @@ TEST_CASE("LDX immediate updates X and flags through direct tick", "[cpu]") {
   REQUIRE(f.cpu.GetTime() == 0);
 }
 
+TEST_CASE("LDY immediate updates Y and flags through direct tick", "[cpu]") {
+  TestFixture f;
+  f.LoadAt(0, {0xA0, 0x80});
+
+  TickResult r = f.cpu.Tick(2);
+  REQUIRE(r.completed_cycles == 2);
+  REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().Y) == 0x80);
+  REQUIRE(f.cpu.GetRegs().P.N == true);
+  REQUIRE(f.cpu.GetRegs().P.Z == false);
+  REQUIRE(f.cpu.GetTime() == 0);
+}
+
+TEST_CASE("LDA immediate uses 16-bit width when M is clear", "[cpu]") {
+  TestFixture f;
+  f.LoadAt(0, {0xA9, 0xAB, 0xCD});
+
+  auto regs = f.cpu.GetRegs();
+  regs.P.E = false;
+  regs.P.M = false;
+  f.cpu.SetRegs(regs);
+
+  TickResult r = f.cpu.Tick(3);
+  REQUIRE(r.completed_cycles == 3);
+  REQUIRE(f.cpu.GetRegs().A == 0xCDAB);
+  REQUIRE(f.cpu.GetRegs().PC == 0x8003);
+  REQUIRE(f.cpu.GetRegs().P.N == true);
+  REQUIRE(f.cpu.GetRegs().P.Z == false);
+}
+
+TEST_CASE("LDX immediate uses 16-bit width when X is clear", "[cpu]") {
+  TestFixture f;
+  f.LoadAt(0, {0xA2, 0x34, 0x12});
+
+  auto regs = f.cpu.GetRegs();
+  regs.P.E = false;
+  regs.P.X = false;
+  f.cpu.SetRegs(regs);
+
+  TickResult r = f.cpu.Tick(3);
+  REQUIRE(r.completed_cycles == 3);
+  REQUIRE(f.cpu.GetRegs().X == 0x1234);
+  REQUIRE(f.cpu.GetRegs().PC == 0x8003);
+  REQUIRE(f.cpu.GetRegs().P.N == false);
+  REQUIRE(f.cpu.GetRegs().P.Z == false);
+}
+
+TEST_CASE("LDY immediate uses 16-bit width when X is clear", "[cpu]") {
+  TestFixture f;
+  f.LoadAt(0, {0xA0, 0x00, 0x80});
+
+  auto regs = f.cpu.GetRegs();
+  regs.P.E = false;
+  regs.P.X = false;
+  f.cpu.SetRegs(regs);
+
+  TickResult r = f.cpu.Tick(3);
+  REQUIRE(r.completed_cycles == 3);
+  REQUIRE(f.cpu.GetRegs().Y == 0x8000);
+  REQUIRE(f.cpu.GetRegs().PC == 0x8003);
+  REQUIRE(f.cpu.GetRegs().P.N == true);
+  REQUIRE(f.cpu.GetRegs().P.Z == false);
+}
+
 TEST_CASE(
     "Fetch from unmapped address returns open-bus value and faults on the "
     "unimplemented opcode",
@@ -388,9 +451,13 @@ TEST_CASE(
   REQUIRE(r.reason == TickStopReason::kFaulted);
   REQUIRE(cpu.GetRegs().PC == 0x0001);
   REQUIRE(cpu.GetTime() == 0);
-  REQUIRE(cpu.GetFault().has_value());
-  REQUIRE(cpu.GetFault()->opcode == 0xFF);
-  REQUIRE(cpu.GetFault()->opcode_address == 0x000000U);
+  const auto& fault = cpu.GetFault();
+  REQUIRE(fault.has_value());
+  if (!fault.has_value()) {
+    return;
+  }
+  REQUIRE(fault->opcode == 0xFF);
+  REQUIRE(fault->opcode_address == 0x000000U);
 }
 
 TEST_CASE("Consecutive same-tick bus accesses use increasing absolute timestamps", "[cpu]") {
@@ -442,9 +509,13 @@ TEST_CASE("Direct CPU tick faults on unimplemented opcode fetch", "[cpu]") {
   REQUIRE(r.reason == TickStopReason::kFaulted);
   REQUIRE(f.cpu.GetRegs().PC == 0x8001);
   REQUIRE(f.cpu.GetTime() == 0);
-  REQUIRE(f.cpu.GetFault().has_value());
-  REQUIRE(f.cpu.GetFault()->opcode == 0x00);
-  REQUIRE(f.cpu.GetFault()->opcode_address == 0x008000U);
+  const auto& fault = f.cpu.GetFault();
+  REQUIRE(fault.has_value());
+  if (!fault.has_value()) {
+    return;
+  }
+  REQUIRE(fault->opcode == 0x00);
+  REQUIRE(fault->opcode_address == 0x008000U);
 }
 
 TEST_CASE("Scheduler-driven CPU faults are terminal and do not reschedule", "[cpu]") {
@@ -455,8 +526,12 @@ TEST_CASE("Scheduler-driven CPU faults are terminal and do not reschedule", "[cp
   f.snes.scheduler->Step();
 
   REQUIRE(f.cpu.GetTime() == 1);
-  REQUIRE(f.cpu.GetFault().has_value());
-  REQUIRE(f.cpu.GetFault()->opcode == 0x00);
+  const auto& fault = f.cpu.GetFault();
+  REQUIRE(fault.has_value());
+  if (!fault.has_value()) {
+    return;
+  }
+  REQUIRE(fault->opcode == 0x00);
   REQUIRE_FALSE(SchedulerTestAccess::HasPendingRun(*f.snes.scheduler, f.cpu.GetDeviceId()));
 }
 

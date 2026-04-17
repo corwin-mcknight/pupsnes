@@ -15,3 +15,4 @@ To make the most accurate and feature-rich emulator.
 
 See `docs/architecture.md` for the scheduling model and timing details.
 See `docs/test-roms.md` for the in-repo test ROM source/build pipeline.
+See `docs/cpu-opcodes.md` for the current 5A22 opcode authoring model.

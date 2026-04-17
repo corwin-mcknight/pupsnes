@@ -72,16 +72,53 @@ void CPU::Reset() {
   regs_.PC = static_cast<uint16_t>(static_cast<uint16_t>(vector_hi) << 8U) | vector_lo;
 }
 
-void CPU::OpLoadALowUpdateNz() {
+bool CPU::IsAccumulator16Bit() const { return !regs_.P.E && !regs_.P.M; }
+
+bool CPU::IsIndex16Bit() const { return !regs_.P.E && !regs_.P.X; }
+
+void CPU::OpLoadA8UpdateNz() {
   regs_.A = static_cast<uint16_t>((regs_.A & 0xFF00U) | fetch_data_);
   regs_.P.Z = (static_cast<uint8_t>(regs_.A) == 0U);
   regs_.P.N = (regs_.A & 0x0080U) != 0U;
 }
 
-void CPU::OpLoadXLowUpdateNz() {
+void CPU::OpLoadALow() { regs_.A = static_cast<uint16_t>((regs_.A & 0xFF00U) | fetch_data_); }
+
+void CPU::OpLoadAHighUpdateNz() {
+  const uint16_t high = static_cast<uint16_t>(static_cast<uint16_t>(fetch_data_) << 8U);
+  regs_.A = static_cast<uint16_t>(high | (regs_.A & 0x00FFU));
+  regs_.P.Z = (regs_.A == 0U);
+  regs_.P.N = (regs_.A & 0x8000U) != 0U;
+}
+
+void CPU::OpLoadX8UpdateNz() {
   regs_.X = static_cast<uint16_t>((regs_.X & 0xFF00U) | fetch_data_);
   regs_.P.Z = (static_cast<uint8_t>(regs_.X) == 0U);
   regs_.P.N = (regs_.X & 0x0080U) != 0U;
+}
+
+void CPU::OpLoadXLow() { regs_.X = static_cast<uint16_t>((regs_.X & 0xFF00U) | fetch_data_); }
+
+void CPU::OpLoadXHighUpdateNz() {
+  const uint16_t high = static_cast<uint16_t>(static_cast<uint16_t>(fetch_data_) << 8U);
+  regs_.X = static_cast<uint16_t>(high | (regs_.X & 0x00FFU));
+  regs_.P.Z = (regs_.X == 0U);
+  regs_.P.N = (regs_.X & 0x8000U) != 0U;
+}
+
+void CPU::OpLoadY8UpdateNz() {
+  regs_.Y = static_cast<uint16_t>((regs_.Y & 0xFF00U) | fetch_data_);
+  regs_.P.Z = (static_cast<uint8_t>(regs_.Y) == 0U);
+  regs_.P.N = (regs_.Y & 0x0080U) != 0U;
+}
+
+void CPU::OpLoadYLow() { regs_.Y = static_cast<uint16_t>((regs_.Y & 0xFF00U) | fetch_data_); }
+
+void CPU::OpLoadYHighUpdateNz() {
+  const uint16_t high = static_cast<uint16_t>(static_cast<uint16_t>(fetch_data_) << 8U);
+  regs_.Y = static_cast<uint16_t>(high | (regs_.Y & 0x00FFU));
+  regs_.P.Z = (regs_.Y == 0U);
+  regs_.P.N = (regs_.Y & 0x8000U) != 0U;
 }
 
 void CPU::OpSetBranchTaken(bool taken) { timing_context_.branch_taken = taken; }
@@ -102,11 +139,32 @@ void CPU::ExecuteInternalOp(MicroInternalOp op) {
   switch (op) {
     case MicroInternalOp::kNone:
       break;
-    case MicroInternalOp::kLoadALowUpdateNz:
-      OpLoadALowUpdateNz();
+    case MicroInternalOp::kLoadA8UpdateNz:
+      OpLoadA8UpdateNz();
       break;
-    case MicroInternalOp::kLoadXLowUpdateNz:
-      OpLoadXLowUpdateNz();
+    case MicroInternalOp::kLoadALow:
+      OpLoadALow();
+      break;
+    case MicroInternalOp::kLoadAHighUpdateNz:
+      OpLoadAHighUpdateNz();
+      break;
+    case MicroInternalOp::kLoadX8UpdateNz:
+      OpLoadX8UpdateNz();
+      break;
+    case MicroInternalOp::kLoadXLow:
+      OpLoadXLow();
+      break;
+    case MicroInternalOp::kLoadXHighUpdateNz:
+      OpLoadXHighUpdateNz();
+      break;
+    case MicroInternalOp::kLoadY8UpdateNz:
+      OpLoadY8UpdateNz();
+      break;
+    case MicroInternalOp::kLoadYLow:
+      OpLoadYLow();
+      break;
+    case MicroInternalOp::kLoadYHighUpdateNz:
+      OpLoadYHighUpdateNz();
       break;
     case MicroInternalOp::kSetBranchTaken:
       OpSetBranchTaken(true);
@@ -161,6 +219,10 @@ bool CPU::EvaluateTimingCondition(TimingCondition condition) const {
   switch (condition) {
     case TimingCondition::kBranchTaken:
       return timing_context_.branch_taken;
+    case TimingCondition::kAccumulator16:
+      return IsAccumulator16Bit();
+    case TimingCondition::kIndex16:
+      return IsIndex16Bit();
   }
   return false;
 }
