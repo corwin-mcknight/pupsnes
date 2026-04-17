@@ -36,8 +36,7 @@ struct TickResult {
 class Device {
  protected:
   TimeMasterT local_time_ = 0;
-  SNES* snes_ =
-      nullptr;  // Non-owning. Owned by caller; must outlive this Device.
+  SNES* snes_ = nullptr;  // Non-owning. Owned by caller; must outlive this Device.
   DeviceIdT device_id_ = 0;
 
  public:

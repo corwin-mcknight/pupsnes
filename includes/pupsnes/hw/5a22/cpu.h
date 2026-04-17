@@ -19,8 +19,7 @@ struct CpuFlags {
   bool V = false;  // Overflow
   bool M = true;   // Memory/accumulator select: 1=8-bit (always true in
                    // emulation mode)
-  bool X =
-      true;  // Index register select: 1=8-bit (always true in emulation mode)
+  bool X = true;   // Index register select: 1=8-bit (always true in emulation mode)
   bool D = false;  // Decimal mode
   bool I = true;   // IRQ disable
   bool Z = false;  // Zero
@@ -43,15 +42,15 @@ enum class MicroBusAction : uint8_t {
 // Internal register operations performed after the bus action completes.
 enum class MicroInternalOp : uint8_t {
   kNone,
-  kLoadALowUpdateNz,  // A_lo = fetch_data_; update N/Z from A (respects M flag)
-  kLoadXLowUpdateNz,  // X_lo = fetch_data_; update N/Z from X (respects X flag)
-  kSetBranchTaken,    // branch_taken = true
+  kLoadALowUpdateNz,         // A_lo = fetch_data_; update N/Z from A (respects M flag)
+  kLoadXLowUpdateNz,         // X_lo = fetch_data_; update N/Z from X (respects X flag)
+  kSetBranchTaken,           // branch_taken = true
   kSetBranchTakenIfNotZero,  // branch_taken = !Z
-  kBranchRelative8,  // Apply signed 8-bit branch offset stored in fetch_data_
-                     // to PC
-  kSetAddrLowFromFetch,   // addr_[7:0] = fetch_data_
-  kSetAddrHighFromFetch,  // addr_[15:8] = fetch_data_
-  kSetAddrBankFromFetch,  // addr_[23:16] = fetch_data_
+  kBranchRelative8,          // Apply signed 8-bit branch offset stored in fetch_data_
+                             // to PC
+  kSetAddrLowFromFetch,      // addr_[7:0] = fetch_data_
+  kSetAddrHighFromFetch,     // addr_[15:8] = fetch_data_
+  kSetAddrBankFromFetch,     // addr_[23:16] = fetch_data_
 };
 
 enum class TimingCondition : uint8_t {
@@ -100,8 +99,7 @@ enum class InstructionDisposition : uint8_t {
 // Per-opcode micro-op sequence (the cycles that follow the initial opcode
 // fetch). Total instruction cycles = 1 (opcode fetch) + remaining_op_count.
 struct InstructionEntry {
-  InstructionDisposition disposition =
-      InstructionDisposition::kFaultUnimplemented;
+  InstructionDisposition disposition = InstructionDisposition::kFaultUnimplemented;
   uint8_t remaining_op_count = 0;
   uint8_t rule_count = 0;
   std::array<MicroOp, kMaxRemainingOps> ops{};
@@ -172,9 +170,7 @@ class CPU : public Device {
   // Opcode → micro-op sequence table.  Defined in cpu_opcodes.cpp.
   static const std::array<InstructionEntry, 256> kOpcodeTable;
 
-  [[nodiscard]] bool ShouldFetchInstruction() const {
-    return micro_op_index_ == 0;
-  }
+  [[nodiscard]] bool ShouldFetchInstruction() const { return micro_op_index_ == 0; }
 
   struct StepResult {
     bool consumed_cycle = false;
@@ -185,8 +181,7 @@ class CPU : public Device {
   // TickResult if the access blocks (caller must return it).
   [[nodiscard]] StepResult FetchOpcode(TimeMasterDeltaT cycle_time);
   [[nodiscard]] StepResult ExecuteMicroOp(TimeMasterDeltaT cycle_time);
-  [[nodiscard]] std::optional<TickResult> PerformBusAction(
-      MicroBusAction action, TimeMasterDeltaT cycle_time);
+  [[nodiscard]] std::optional<TickResult> PerformBusAction(MicroBusAction action, TimeMasterDeltaT cycle_time);
 
   void ExecuteInternalOp(MicroInternalOp op);
   void OpLoadALowUpdateNz();
@@ -209,21 +204,18 @@ class CPU : public Device {
 
   // Issue a Plan/Follow pair against the system bus at local_time_+cycle_time.
   // Returns the follow result; caller interprets outcome.
-  [[nodiscard]] BusFollowResult PlanAndFollow(SnesAddrT addr,
-                                              BusAccessType type, uint8_t data,
+  [[nodiscard]] BusFollowResult PlanAndFollow(SnesAddrT addr, BusAccessType type, uint8_t data,
                                               TimeMasterDeltaT cycle_time);
 
   // Execute a bus read. Returns a TickResult if the access blocks (caller must
   // return it). On inline completion, writes the read byte to fetch_data_ and
   // returns nullopt. On rejected (unmapped), writes 0xFF to fetch_data_ and
   // returns nullopt.
-  [[nodiscard]] std::optional<TickResult> BusRead(SnesAddrT addr,
-                                                  TimeMasterDeltaT cycle_time);
+  [[nodiscard]] std::optional<TickResult> BusRead(SnesAddrT addr, TimeMasterDeltaT cycle_time);
 
   // Execute a bus write. Returns a TickResult if the access blocks, nullopt
   // otherwise.
-  [[nodiscard]] std::optional<TickResult> BusWrite(SnesAddrT addr, uint8_t data,
-                                                   TimeMasterDeltaT cycle_time);
+  [[nodiscard]] std::optional<TickResult> BusWrite(SnesAddrT addr, uint8_t data, TimeMasterDeltaT cycle_time);
 };
 
 }  // namespace pupsnes

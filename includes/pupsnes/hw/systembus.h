@@ -67,10 +67,8 @@ class SystemBus {
   void MapPage(const PageMapParams& params);
   void UnmapPage(uint8_t bank, uint8_t page);
 
-  [[nodiscard]] BusPlan Plan(SnesAddrT address, BusAccessType type,
-                             uint8_t write_data = 0) const;
-  BusFollowResult Follow(const BusPlan& plan, TimeMasterT current_time,
-                         DeviceIdT source_device);
+  [[nodiscard]] BusPlan Plan(SnesAddrT address, BusAccessType type, uint8_t write_data = 0) const;
+  BusFollowResult Follow(const BusPlan& plan, TimeMasterT current_time, DeviceIdT source_device);
 
  private:
   SNES* snes_;  // Non-owning. SNES owns this SystemBus; pointer back to parent.
@@ -79,8 +77,7 @@ class SystemBus {
   std::array<PageRow, 256> page_table_{};
 
   BusFollowResult FollowInline(const BusPlan& plan, TimeMasterT current_time);
-  BusFollowResult FollowScheduled(const BusPlan& plan, TimeMasterT current_time,
-                                  DeviceIdT source_device);
+  BusFollowResult FollowScheduled(const BusPlan& plan, TimeMasterT current_time, DeviceIdT source_device);
 
   friend struct SystemBusTestAccess;
 };

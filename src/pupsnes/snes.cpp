@@ -17,22 +17,14 @@ pupsnes::Device::Device(SNES* snes) : snes_(snes) {
 
 // --- SNES ---
 
-pupsnes::SNES::SNES()
-    : scheduler(std::make_unique<Scheduler>(this)),
-      system_bus(std::make_unique<SystemBus>(this)) {}
+pupsnes::SNES::SNES() : scheduler(std::make_unique<Scheduler>(this)), system_bus(std::make_unique<SystemBus>(this)) {}
 pupsnes::SNES::~SNES() = default;
+pupsnes::Device* pupsnes::SNES::GetDevice(DeviceIdT id) const { return id < devices_.size() ? devices_[id] : nullptr; }
 
 pupsnes::DeviceIdT pupsnes::SNES::RegisterDevice(Device* device) {
   auto id = static_cast<DeviceIdT>(devices_.size());
   devices_.push_back(device);
   return id;
-}
-
-pupsnes::Device* pupsnes::SNES::GetDevice(DeviceIdT id) const {
-  if (id >= devices_.size()) {
-    return nullptr;
-  }
-  return devices_[id];
 }
 
 void pupsnes::SNES::DebugPrintInfo() {

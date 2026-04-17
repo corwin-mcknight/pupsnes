@@ -11,8 +11,7 @@ std::vector<uint8_t> ReadBinaryFile(const std::filesystem::path& path) {
   std::ifstream stream(path, std::ios::binary);
   REQUIRE(stream.good());
 
-  return std::vector<uint8_t>(std::istreambuf_iterator<char>(stream),
-                              std::istreambuf_iterator<char>());
+  return std::vector<uint8_t>(std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>());
 }
 
 }  // namespace
@@ -21,8 +20,7 @@ TEST_CASE(
     "Generated reset smoke test ROM has the expected reset vector and program "
     "bytes",
     "[unit]") {
-  const std::filesystem::path rom_path =
-      std::filesystem::path(PUPSNES_TEST_ROM_DIR) / "reset_smoke.sfc";
+  const std::filesystem::path rom_path = std::filesystem::path(PUPSNES_TEST_ROM_DIR) / "reset_smoke.sfc";
   const std::vector<uint8_t> rom = ReadBinaryFile(rom_path);
 
   REQUIRE(rom.size() == 32U * 1024U);
@@ -35,10 +33,8 @@ TEST_CASE(
   REQUIRE(rom[0x7FFD] == 0x80);
 }
 
-TEST_CASE("Generated WRAM signature ROM encodes long store into WRAM",
-          "[unit]") {
-  const std::filesystem::path rom_path =
-      std::filesystem::path(PUPSNES_TEST_ROM_DIR) / "wram_signature.sfc";
+TEST_CASE("Generated WRAM signature ROM encodes long store into WRAM", "[unit]") {
+  const std::filesystem::path rom_path = std::filesystem::path(PUPSNES_TEST_ROM_DIR) / "wram_signature.sfc";
   const std::vector<uint8_t> rom = ReadBinaryFile(rom_path);
 
   REQUIRE(rom.size() == 32U * 1024U);
@@ -58,8 +54,7 @@ TEST_CASE(
     "Generated instruction smoke ROM is assembled from shared boilerplate and "
     "code bytes",
     "[unit]") {
-  const std::filesystem::path rom_path =
-      std::filesystem::path(PUPSNES_TEST_ROM_DIR) / "instruction_smoke.sfc";
+  const std::filesystem::path rom_path = std::filesystem::path(PUPSNES_TEST_ROM_DIR) / "instruction_smoke.sfc";
   const std::vector<uint8_t> rom = ReadBinaryFile(rom_path);
 
   REQUIRE(rom.size() == 32U * 1024U);

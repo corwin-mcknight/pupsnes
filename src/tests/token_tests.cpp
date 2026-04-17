@@ -6,8 +6,7 @@ TEST_CASE("TokenTable creates tokens with sequential IDs", "[unit]") {
   pupsnes::TokenTable table;
 
   auto id1 = table.Create({pupsnes::TokenType::kBusRead, 0, 100, 0x2100, 0});
-  auto id2 =
-      table.Create({pupsnes::TokenType::kBusWrite, 1, 105, 0x2101, 0x42});
+  auto id2 = table.Create({pupsnes::TokenType::kBusWrite, 1, 105, 0x2101, 0x42});
 
   REQUIRE(id1 == 1);
   REQUIRE(id2 == 2);
@@ -49,8 +48,7 @@ TEST_CASE("TokenTable resolveAt completes tokens due at given time", "[unit]") {
 
   auto id1 = table.Create({pupsnes::TokenType::kBusRead, 0, 100, 0x2100, 0});
   auto id2 = table.Create({pupsnes::TokenType::kBusRead, 1, 200, 0x2101, 0});
-  auto id3 =
-      table.Create({pupsnes::TokenType::kBusWrite, 2, 100, 0x2102, 0xFF});
+  auto id3 = table.Create({pupsnes::TokenType::kBusWrite, 2, 100, 0x2102, 0xFF});
 
   (void)table.ResolveAt(100);
 

@@ -6,9 +6,8 @@ namespace pupsnes {
 
 TokenIdT TokenTable::Create(const TokenCreateParams& params) {
   TokenIdT id = next_token_id_++;
-  tokens_.emplace(
-      id, Token{id, params.type, TokenState::kPending, params.source_device,
-                params.completion_time, params.address, params.data});
+  tokens_.emplace(id, Token{id, params.type, TokenState::kPending, params.source_device, params.completion_time,
+                            params.address, params.data});
   return id;
 }
 
@@ -52,8 +51,6 @@ void TokenTable::Remove(TokenIdT id) {
   blocked_.erase(id);
 }
 
-void TokenTable::SetBlocked(TokenIdT token_id, DeviceIdT device_id) {
-  blocked_[token_id] = device_id;
-}
+void TokenTable::SetBlocked(TokenIdT token_id, DeviceIdT device_id) { blocked_[token_id] = device_id; }
 
 }  // namespace pupsnes

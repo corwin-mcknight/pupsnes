@@ -66,8 +66,7 @@ constexpr TimingRuleExpr Condition(TimingCondition condition) {
   return expr;
 }
 
-constexpr TimingRuleNode ShiftTimingRuleNode(const TimingRuleNode& node,
-                                             uint8_t offset) {
+constexpr TimingRuleNode ShiftTimingRuleNode(const TimingRuleNode& node, uint8_t offset) {
   TimingRuleNode shifted = node;
   switch (node.op) {
     case TimingRuleOp::kNot:
@@ -90,9 +89,7 @@ constexpr TimingRuleExpr Not(const TimingRuleExpr& expr) {
   out.node_count = static_cast<uint8_t>(expr.node_count + 1U);
   out.root_index = expr.node_count;
 
-  const uint8_t copy_count = (expr.node_count < kMaxTimingRuleNodes)
-                                 ? expr.node_count
-                                 : kMaxTimingRuleNodes;
+  const uint8_t copy_count = (expr.node_count < kMaxTimingRuleNodes) ? expr.node_count : kMaxTimingRuleNodes;
   for (uint8_t i = 0; i < copy_count; ++i) {
     out.nodes[i] = expr.nodes[i];
   }
@@ -103,8 +100,7 @@ constexpr TimingRuleExpr Not(const TimingRuleExpr& expr) {
   return out;
 }
 
-constexpr TimingRuleExpr MergeRules(TimingRuleOp op, const TimingRuleExpr& lhs,
-                                    const TimingRuleExpr& rhs) {
+constexpr TimingRuleExpr MergeRules(TimingRuleOp op, const TimingRuleExpr& lhs, const TimingRuleExpr& rhs) {
   TimingRuleExpr out{};
   const uint8_t rhs_offset = lhs.node_count;
   out.node_count = static_cast<uint8_t>(lhs.node_count + rhs.node_count + 1U);
@@ -113,52 +109,42 @@ constexpr TimingRuleExpr MergeRules(TimingRuleOp op, const TimingRuleExpr& lhs,
   for (uint8_t i = 0; i < lhs.node_count && i < kMaxTimingRuleNodes; ++i) {
     out.nodes[i] = lhs.nodes[i];
   }
-  for (uint8_t i = 0;
-       i < rhs.node_count &&
-       static_cast<uint8_t>(rhs_offset + i) < kMaxTimingRuleNodes;
-       ++i) {
+  for (uint8_t i = 0; i < rhs.node_count && static_cast<uint8_t>(rhs_offset + i) < kMaxTimingRuleNodes; ++i) {
     out.nodes[rhs_offset + i] = ShiftTimingRuleNode(rhs.nodes[i], rhs_offset);
   }
   if (out.root_index < kMaxTimingRuleNodes) {
     out.nodes[out.root_index].op = op;
     out.nodes[out.root_index].lhs = lhs.root_index;
-    out.nodes[out.root_index].rhs =
-        static_cast<uint8_t>(rhs.root_index + rhs_offset);
+    out.nodes[out.root_index].rhs = static_cast<uint8_t>(rhs.root_index + rhs_offset);
   }
   return out;
 }
 
-constexpr TimingRuleExpr AllOf(const TimingRuleExpr& lhs,
-                               const TimingRuleExpr& rhs) {
+constexpr TimingRuleExpr AllOf(const TimingRuleExpr& lhs, const TimingRuleExpr& rhs) {
   return MergeRules(TimingRuleOp::kAllOf, lhs, rhs);
 }
 
-constexpr TimingRuleExpr AnyOf(const TimingRuleExpr& lhs,
-                               const TimingRuleExpr& rhs) {
+constexpr TimingRuleExpr AnyOf(const TimingRuleExpr& lhs, const TimingRuleExpr& rhs) {
   return MergeRules(TimingRuleOp::kAnyOf, lhs, rhs);
 }
 
-constexpr CycleSlotSpec FetchPc(
-    MicroInternalOp internal_op = MicroInternalOp::kNone,
-    TimingRuleExpr rule = Always(), std::string_view label = {}) {
+constexpr CycleSlotSpec FetchPc(MicroInternalOp internal_op = MicroInternalOp::kNone, TimingRuleExpr rule = Always(),
+                                std::string_view label = {}) {
   return CycleSlotSpec{MicroBusAction::kFetchPc, internal_op, rule, label};
 }
 
-constexpr CycleSlotSpec ReadAddr(
-    MicroInternalOp internal_op = MicroInternalOp::kNone,
-    TimingRuleExpr rule = Always(), std::string_view label = {}) {
+constexpr CycleSlotSpec ReadAddr(MicroInternalOp internal_op = MicroInternalOp::kNone, TimingRuleExpr rule = Always(),
+                                 std::string_view label = {}) {
   return CycleSlotSpec{MicroBusAction::kReadAddr, internal_op, rule, label};
 }
 
-constexpr CycleSlotSpec WriteA8Addr(
-    MicroInternalOp internal_op = MicroInternalOp::kNone,
-    TimingRuleExpr rule = Always(), std::string_view label = {}) {
+constexpr CycleSlotSpec WriteA8Addr(MicroInternalOp internal_op = MicroInternalOp::kNone,
+                                    TimingRuleExpr rule = Always(), std::string_view label = {}) {
   return CycleSlotSpec{MicroBusAction::kWriteA8Addr, internal_op, rule, label};
 }
 
-constexpr CycleSlotSpec Internal(
-    MicroInternalOp internal_op = MicroInternalOp::kNone,
-    TimingRuleExpr rule = Always(), std::string_view label = {}) {
+constexpr CycleSlotSpec Internal(MicroInternalOp internal_op = MicroInternalOp::kNone, TimingRuleExpr rule = Always(),
+                                 std::string_view label = {}) {
   return CycleSlotSpec{MicroBusAction::kNone, internal_op, rule, label};
 }
 
@@ -182,8 +168,7 @@ constexpr CycleFragmentBuilder Fragment() { return CycleFragmentBuilder{}; }
 struct OpcodeSpecBuilder {
   OpcodeSpec spec{};
 
-  constexpr OpcodeSpecBuilder(uint8_t opcode, std::string_view mnemonic,
-                              std::string_view addressing_mode) {
+  constexpr OpcodeSpecBuilder(uint8_t opcode, std::string_view mnemonic, std::string_view addressing_mode) {
     spec.opcode = opcode;
     spec.disposition = OpcodeSpecDisposition::kImplemented;
     spec.mnemonic = mnemonic;
@@ -210,14 +195,12 @@ struct OpcodeSpecBuilder {
   constexpr OpcodeSpec Build() const { return spec; }
 };
 
-constexpr OpcodeSpecBuilder Opcode(uint8_t opcode, std::string_view mnemonic,
-                                   std::string_view addressing_mode) {
+constexpr OpcodeSpecBuilder Opcode(uint8_t opcode, std::string_view mnemonic, std::string_view addressing_mode) {
   return OpcodeSpecBuilder(opcode, mnemonic, addressing_mode);
 }
 
 template <typename T, std::size_t N, std::size_t M>
-constexpr auto ConcatArrays(const std::array<T, N>& lhs,
-                            const std::array<T, M>& rhs) {
+constexpr auto ConcatArrays(const std::array<T, N>& lhs, const std::array<T, M>& rhs) {
   std::array<T, N + M> out{};
   for (std::size_t i = 0; i < N; ++i) {
     out[i] = lhs[i];
@@ -228,14 +211,11 @@ constexpr auto ConcatArrays(const std::array<T, N>& lhs,
   return out;
 }
 
-constexpr bool TimingRuleNodesEqual(const TimingRuleNode& lhs,
-                                    const TimingRuleNode& rhs) {
-  return lhs.op == rhs.op && lhs.condition == rhs.condition &&
-         lhs.lhs == rhs.lhs && lhs.rhs == rhs.rhs;
+constexpr bool TimingRuleNodesEqual(const TimingRuleNode& lhs, const TimingRuleNode& rhs) {
+  return lhs.op == rhs.op && lhs.condition == rhs.condition && lhs.lhs == rhs.lhs && lhs.rhs == rhs.rhs;
 }
 
-constexpr bool TimingRulesEqual(const TimingRuleExpr& lhs,
-                                const TimingRuleExpr& rhs) {
+constexpr bool TimingRulesEqual(const TimingRuleExpr& lhs, const TimingRuleExpr& rhs) {
   if (lhs.node_count != rhs.node_count || lhs.root_index != rhs.root_index) {
     return false;
   }
@@ -251,8 +231,7 @@ constexpr bool ValidateTimingRule(const TimingRuleExpr& rule) {
   if (rule.node_count == 0) {
     return true;
   }
-  if (rule.node_count > kMaxTimingRuleNodes ||
-      rule.root_index >= rule.node_count) {
+  if (rule.node_count > kMaxTimingRuleNodes || rule.root_index >= rule.node_count) {
     return false;
   }
 
@@ -282,8 +261,7 @@ constexpr bool ValidateOpcodeSpec(const OpcodeSpec& spec) {
   if (spec.disposition != OpcodeSpecDisposition::kImplemented) {
     return spec.cycle_count == 0 && !spec.overflowed;
   }
-  if (spec.cycle_count == 0 || spec.cycle_count > kMaxRemainingOps ||
-      spec.overflowed) {
+  if (spec.cycle_count == 0 || spec.cycle_count > kMaxRemainingOps || spec.overflowed) {
     return false;
   }
   for (uint8_t i = 0; i < spec.cycle_count; ++i) {
@@ -347,8 +325,7 @@ constexpr bool ValidateOpcodeSpecs(const std::array<OpcodeSpec, N>& specs) {
   return true;
 }
 
-constexpr uint8_t FindRuleIndex(const InstructionEntry& entry,
-                                const TimingRuleExpr& rule) {
+constexpr uint8_t FindRuleIndex(const InstructionEntry& entry, const TimingRuleExpr& rule) {
   for (uint8_t i = 0; i < entry.rule_count; ++i) {
     if (TimingRulesEqual(entry.rules[i], rule)) {
       return i;
@@ -382,8 +359,7 @@ constexpr InstructionEntry LowerOpcode(const OpcodeSpec& spec) {
 
 constexpr OpcodeMetadata LowerMetadata(const OpcodeSpec& spec) {
   OpcodeMetadata metadata{};
-  metadata.implemented =
-      (spec.disposition == OpcodeSpecDisposition::kImplemented);
+  metadata.implemented = (spec.disposition == OpcodeSpecDisposition::kImplemented);
   metadata.mnemonic = spec.mnemonic;
   metadata.addressing_mode = spec.addressing_mode;
   metadata.cycle_count = spec.cycle_count;
@@ -394,8 +370,7 @@ constexpr OpcodeMetadata LowerMetadata(const OpcodeSpec& spec) {
 }
 
 template <std::size_t N>
-consteval OpcodeArtifacts BuildOpcodeArtifacts(
-    const std::array<OpcodeSpec, N>& specs) {
+consteval OpcodeArtifacts BuildOpcodeArtifacts(const std::array<OpcodeSpec, N>& specs) {
   OpcodeArtifacts artifacts{};
 
   for (OpcodeMetadata& metadata : artifacts.metadata_table) {

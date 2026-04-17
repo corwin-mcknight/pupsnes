@@ -21,15 +21,11 @@ class TestROM : public Device {
 
   explicit TestROM(SNES* snes) : Device(snes) {}
 
-  TickResult Tick(TimeMasterDeltaT budget) override {
-    return {budget, TickStopReason::kBudgetExhausted};
-  }
+  TickResult Tick(TimeMasterDeltaT budget) override { return {budget, TickStopReason::kBudgetExhausted}; }
   void OnEvent(const SchedulerEvent&) override {}
 
   uint8_t ReadRegister(uint32_t offset) override { return mem[offset % kSize]; }
-  void WriteRegister(uint32_t offset, uint8_t data) override {
-    mem[offset % kSize] = data;
-  }
+  void WriteRegister(uint32_t offset, uint8_t data) override { mem[offset % kSize] = data; }
 };
 
 class ObservedMMIO : public Device {
@@ -40,9 +36,7 @@ class ObservedMMIO : public Device {
 
   explicit ObservedMMIO(SNES* snes) : Device(snes) {}
 
-  TickResult Tick(TimeMasterDeltaT budget) override {
-    return {budget, TickStopReason::kBudgetExhausted};
-  }
+  TickResult Tick(TimeMasterDeltaT budget) override { return {budget, TickStopReason::kBudgetExhausted}; }
   void OnEvent(const SchedulerEvent&) override {}
 
   uint8_t ReadRegister(uint32_t offset) override {
@@ -57,10 +51,8 @@ struct TestFixture {
   CPU cpu{&snes};
 
   TestFixture() {
-    snes.system_bus->MapPage(
-        {0x00, 0x80, rom.GetDeviceId(), 0x000, PageDeviceKind::kMemory, 8});
-    snes.system_bus->MapPage(
-        {0x00, 0x81, rom.GetDeviceId(), 0x100, PageDeviceKind::kMemory, 8});
+    snes.system_bus->MapPage({0x00, 0x80, rom.GetDeviceId(), 0x000, PageDeviceKind::kMemory, 8});
+    snes.system_bus->MapPage({0x00, 0x81, rom.GetDeviceId(), 0x100, PageDeviceKind::kMemory, 8});
 
     auto r = cpu.GetRegs();
     r.PC = 0x8000;
@@ -81,10 +73,8 @@ struct MMIOProgramFixture {
   CPU cpu{&snes};
 
   MMIOProgramFixture() {
-    snes.system_bus->MapPage({0x00, 0x80, program.GetDeviceId(), 0x000,
-                              PageDeviceKind::kSameClockMmio, 8});
-    snes.system_bus->MapPage({0x00, 0x81, program.GetDeviceId(), 0x100,
-                              PageDeviceKind::kSameClockMmio, 8});
+    snes.system_bus->MapPage({0x00, 0x80, program.GetDeviceId(), 0x000, PageDeviceKind::kSameClockMmio, 8});
+    snes.system_bus->MapPage({0x00, 0x81, program.GetDeviceId(), 0x100, PageDeviceKind::kSameClockMmio, 8});
 
     auto r = cpu.GetRegs();
     r.PC = 0x8000;
@@ -105,8 +95,7 @@ struct AsyncProgramFixture {
   CPU cpu{&snes};
 
   AsyncProgramFixture() {
-    snes.system_bus->MapPage({0x00, 0x80, async_target.GetDeviceId(), 0x000,
-                              PageDeviceKind::kCrossClockMmio, 8});
+    snes.system_bus->MapPage({0x00, 0x80, async_target.GetDeviceId(), 0x000, PageDeviceKind::kCrossClockMmio, 8});
 
     auto r = cpu.GetRegs();
     r.PC = 0x8000;
@@ -169,8 +158,7 @@ TEST_CASE("CPU initial register state", "[cpu]") {
   REQUIRE(cpu.GetMicroOpIndex() == 0);
 }
 
-TEST_CASE("CPU reset fetches the reset vector through cartridge mapping",
-          "[cpu]") {
+TEST_CASE("CPU reset fetches the reset vector through cartridge mapping", "[cpu]") {
   ResetFixture f;
 
   f.cpu.Reset();
@@ -261,8 +249,7 @@ TEST_CASE("BRA supports negative displacements for tight loops", "[cpu]") {
   REQUIRE(f.cpu.GetRegs().PC == 0x8000);
 }
 
-TEST_CASE("BNE not taken falls through without the guarded branch cycle",
-          "[cpu]") {
+TEST_CASE("BNE not taken falls through without the guarded branch cycle", "[cpu]") {
   ResetFixture f;
   f.SetRomByte(0x0000U, 0xD0);
   f.SetRomByte(0x0001U, 0x02);
@@ -333,9 +320,7 @@ TEST_CASE("STA long writes accumulator low byte to mapped WRAM", "[cpu]") {
   REQUIRE(f.wram.Peek(0x0000) == 0x5A);
 }
 
-TEST_CASE(
-    "Direct CPU tick advances execution state but not committed device time",
-    "[cpu]") {
+TEST_CASE("Direct CPU tick advances execution state but not committed device time", "[cpu]") {
   TestFixture f;
   f.LoadAt(0, {0xEA, 0xA9, 0x42});
 
@@ -352,8 +337,7 @@ TEST_CASE(
   REQUIRE(f.cpu.GetTime() == 0);
 }
 
-TEST_CASE("NOP tick slices still compose correctly without local_time mutation",
-          "[cpu]") {
+TEST_CASE("NOP tick slices still compose correctly without local_time mutation", "[cpu]") {
   TestFixture f;
   f.LoadAt(0, {0xEA, 0xEA});
 
@@ -409,9 +393,7 @@ TEST_CASE(
   REQUIRE(cpu.GetFault()->opcode_address == 0x000000U);
 }
 
-TEST_CASE(
-    "Consecutive same-tick bus accesses use increasing absolute timestamps",
-    "[cpu]") {
+TEST_CASE("Consecutive same-tick bus accesses use increasing absolute timestamps", "[cpu]") {
   MMIOProgramFixture f;
   f.LoadAt(0, {0xA9, 0x42});
   f.cpu.AdvanceLocalTime(100);
@@ -431,18 +413,14 @@ TEST_CASE(
   f.LoadAt(0, {0xEA, 0xA9, 0x42});
 
   f.snes.scheduler->ScheduleDeviceRun(&f.cpu, 0);
-  f.snes.scheduler->ScheduleEvent(2, &f.rom, SchedulerPhase::kWakeSample,
-                                  EventType::kDeviceBoundary);
-  f.snes.scheduler->ScheduleEvent(4, &f.rom, SchedulerPhase::kWakeSample,
-                                  EventType::kDeviceBoundary);
+  f.snes.scheduler->ScheduleEvent(2, &f.rom, SchedulerPhase::kWakeSample, EventType::kDeviceBoundary);
+  f.snes.scheduler->ScheduleEvent(4, &f.rom, SchedulerPhase::kWakeSample, EventType::kDeviceBoundary);
 
   f.snes.scheduler->Step();
   REQUIRE(f.cpu.GetRegs().PC == 0x8001);
   REQUIRE(f.cpu.GetTime() == 2);
-  REQUIRE(SchedulerTestAccess::HasPendingRun(*f.snes.scheduler,
-                                             f.cpu.GetDeviceId()));
-  REQUIRE(SchedulerTestAccess::PendingRunTime(*f.snes.scheduler,
-                                              f.cpu.GetDeviceId()) == 2);
+  REQUIRE(SchedulerTestAccess::HasPendingRun(*f.snes.scheduler, f.cpu.GetDeviceId()));
+  REQUIRE(SchedulerTestAccess::PendingRunTime(*f.snes.scheduler, f.cpu.GetDeviceId()) == 2);
 
   f.snes.scheduler->Step();
   REQUIRE(f.snes.GetMasterTime() == 2);
@@ -451,8 +429,7 @@ TEST_CASE(
   REQUIRE(f.cpu.GetRegs().PC == 0x8003);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x42);
   REQUIRE(f.cpu.GetTime() == 4);
-  REQUIRE(SchedulerTestAccess::PendingRunTime(*f.snes.scheduler,
-                                              f.cpu.GetDeviceId()) == 4);
+  REQUIRE(SchedulerTestAccess::PendingRunTime(*f.snes.scheduler, f.cpu.GetDeviceId()) == 4);
 }
 
 TEST_CASE("Direct CPU tick faults on unimplemented opcode fetch", "[cpu]") {
@@ -470,8 +447,7 @@ TEST_CASE("Direct CPU tick faults on unimplemented opcode fetch", "[cpu]") {
   REQUIRE(f.cpu.GetFault()->opcode_address == 0x008000U);
 }
 
-TEST_CASE("Scheduler-driven CPU faults are terminal and do not reschedule",
-          "[cpu]") {
+TEST_CASE("Scheduler-driven CPU faults are terminal and do not reschedule", "[cpu]") {
   TestFixture f;
   f.LoadAt(0, {0x00});
 
@@ -481,8 +457,7 @@ TEST_CASE("Scheduler-driven CPU faults are terminal and do not reschedule",
   REQUIRE(f.cpu.GetTime() == 1);
   REQUIRE(f.cpu.GetFault().has_value());
   REQUIRE(f.cpu.GetFault()->opcode == 0x00);
-  REQUIRE_FALSE(SchedulerTestAccess::HasPendingRun(*f.snes.scheduler,
-                                                   f.cpu.GetDeviceId()));
+  REQUIRE_FALSE(SchedulerTestAccess::HasPendingRun(*f.snes.scheduler, f.cpu.GetDeviceId()));
 }
 
 TEST_CASE(
@@ -494,19 +469,15 @@ TEST_CASE(
   f.snes.scheduler->ScheduleDeviceRun(&f.cpu, 0);
 
   f.snes.scheduler->Step();
-  const auto blocked_token =
-      SchedulerTestAccess::BlockedToken(*f.snes.scheduler, f.cpu.GetDeviceId());
+  const auto blocked_token = SchedulerTestAccess::BlockedToken(*f.snes.scheduler, f.cpu.GetDeviceId());
   REQUIRE(blocked_token != 0);
-  REQUIRE_FALSE(SchedulerTestAccess::HasPendingRun(*f.snes.scheduler,
-                                                   f.cpu.GetDeviceId()));
+  REQUIRE_FALSE(SchedulerTestAccess::HasPendingRun(*f.snes.scheduler, f.cpu.GetDeviceId()));
   REQUIRE(f.cpu.GetTime() == 0);
 
   f.snes.scheduler->Step();
   REQUIRE(f.snes.GetMasterTime() == 8);
-  REQUIRE(SchedulerTestAccess::HasPendingRun(*f.snes.scheduler,
-                                             f.cpu.GetDeviceId()));
-  REQUIRE(SchedulerTestAccess::PendingRunTime(*f.snes.scheduler,
-                                              f.cpu.GetDeviceId()) == 8);
+  REQUIRE(SchedulerTestAccess::HasPendingRun(*f.snes.scheduler, f.cpu.GetDeviceId()));
+  REQUIRE(SchedulerTestAccess::PendingRunTime(*f.snes.scheduler, f.cpu.GetDeviceId()) == 8);
 }
 
 TEST_CASE(
@@ -517,8 +488,7 @@ TEST_CASE(
   f.LoadAt(0, {0xA9, 0x7F});
 
   f.snes.scheduler->ScheduleDeviceRun(&f.cpu, 100);
-  f.snes.scheduler->ScheduleEvent(102, &f.program, SchedulerPhase::kWakeSample,
-                                  EventType::kDeviceBoundary);
+  f.snes.scheduler->ScheduleEvent(102, &f.program, SchedulerPhase::kWakeSample, EventType::kDeviceBoundary);
 
   f.snes.scheduler->Step();
 
@@ -564,8 +534,7 @@ TEST_CASE("CpuFlags::FromByte in native mode sets M and X from byte", "[cpu]") {
   REQUIRE(f.X == true);
 }
 
-TEST_CASE("CpuFlags::FromByte in emulation mode ignores M and X bits",
-          "[cpu]") {
+TEST_CASE("CpuFlags::FromByte in emulation mode ignores M and X bits", "[cpu]") {
   CpuFlags f{};
   f.M = true;
   f.X = true;

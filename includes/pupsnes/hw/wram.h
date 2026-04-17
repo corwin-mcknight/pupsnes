@@ -24,9 +24,7 @@ class WRAM : public Device {
   [[nodiscard]] uint8_t ReadRegister(uint32_t offset) override;
   void WriteRegister(uint32_t offset, uint8_t data) override;
 
-  [[nodiscard]] uint8_t Peek(uint32_t offset) const {
-    return bytes_[offset % kSize];
-  }
+  [[nodiscard]] uint8_t Peek(uint32_t offset) const { return bytes_[offset % kSize]; }
 
  private:
   std::array<uint8_t, kSize> bytes_{};

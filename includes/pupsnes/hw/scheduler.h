@@ -15,18 +15,13 @@ class Device;
 struct TickResult;
 
 /// Phases a scheduler may be in.
-enum class SchedulerPhase : uint8_t {
-  kCommitComplete = 0,
-  kWakeSample = 1,
-  kRun = 2
-};
+enum class SchedulerPhase : uint8_t { kCommitComplete = 0, kWakeSample = 1, kRun = 2 };
 
 /// Priority levels for scheduled events.
 enum class EventType : uint8_t {
-  kDeviceRun = 0,  // Normal device execution, scheduled rarely but is how to
-                   // "unpause" a device.
-  kDeviceBoundary =
-      1,  // Device running normally but is communicating a sync boundary.
+  kDeviceRun = 0,       // Normal device execution, scheduled rarely but is how to
+                        // "unpause" a device.
+  kDeviceBoundary = 1,  // Device running normally but is communicating a sync boundary.
 };
 
 /// An event scheduled in the scheduler.
@@ -41,16 +36,13 @@ struct SchedulerEvent {
 
 struct SchedulerEventComparator {
   bool operator()(const SchedulerEvent& a, const SchedulerEvent& b) const {
-    return std::tie(a.time, a.subphase, a.type, a.seq) >
-           std::tie(b.time, b.subphase, b.type, b.seq);
+    return std::tie(a.time, a.subphase, a.type, a.seq) > std::tie(b.time, b.subphase, b.type, b.seq);
   }
 };
 
 class Scheduler {
  private:
-  using EventMinHeap =
-      std::priority_queue<SchedulerEvent, std::vector<SchedulerEvent>,
-                          SchedulerEventComparator>;
+  using EventMinHeap = std::priority_queue<SchedulerEvent, std::vector<SchedulerEvent>, SchedulerEventComparator>;
   struct DeviceRunState {
     bool has_pending_run = false;
     TimeMasterT pending_run_time = 0;
@@ -74,8 +66,7 @@ class Scheduler {
   void ClearPendingRun(DeviceRunState& state);
   void ResetZeroProgressGuard(DeviceRunState& state);
   void RecordZeroProgressRun(DeviceRunState& state, const Device& device);
-  void ValidateTickResult(const Device& device, const TickResult& result,
-                          TimeMasterDeltaT budget) const;
+  void ValidateTickResult(const Device& device, const TickResult& result, TimeMasterDeltaT budget) const;
   [[nodiscard]] bool IsStaleRunEvent(const SchedulerEvent& event) const;
   void DiscardStaleRunEventsAtHead();
   void HandleRunResult(Device* device, const TickResult& result);
@@ -89,8 +80,8 @@ class Scheduler {
   explicit Scheduler(SNES* snes);
   ~Scheduler();
 
-  void ScheduleEvent(TimeMasterT time, Device* source, SchedulerPhase subphase,
-                     EventType type, uint64_t run_generation = 0);
+  void ScheduleEvent(TimeMasterT time, Device* source, SchedulerPhase subphase, EventType type,
+                     uint64_t run_generation = 0);
   void ScheduleDeviceRun(Device* device, TimeMasterT time);
 
   void Step();

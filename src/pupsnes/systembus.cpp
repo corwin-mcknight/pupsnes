@@ -20,12 +20,9 @@ void SystemBus::MapPage(const PageMapParams& params) {
   entry.access_speed = params.access_speed;
 }
 
-void SystemBus::UnmapPage(uint8_t bank, uint8_t page) {
-  page_table_[bank][page] = PageTableEntry{};
-}
+void SystemBus::UnmapPage(uint8_t bank, uint8_t page) { page_table_[bank][page] = PageTableEntry{}; }
 
-BusPlan SystemBus::Plan(SnesAddrT address, BusAccessType type,
-                        uint8_t write_data) const {
+BusPlan SystemBus::Plan(SnesAddrT address, BusAccessType type, uint8_t write_data) const {
   SnesAddrT addr = util::WrapAddr(address);
   uint8_t bank = static_cast<uint8_t>(addr >> 16);
   uint8_t page = static_cast<uint8_t>((addr >> 8) & 0xFF);
@@ -56,8 +53,7 @@ BusPlan SystemBus::Plan(SnesAddrT address, BusAccessType type,
   return plan;
 }
 
-BusFollowResult SystemBus::Follow(const BusPlan& plan, TimeMasterT current_time,
-                                  DeviceIdT source_device) {
+BusFollowResult SystemBus::Follow(const BusPlan& plan, TimeMasterT current_time, DeviceIdT source_device) {
   switch (plan.outcome) {
     case BusPlanOutcome::kInlineComplete:
       return FollowInline(plan, current_time);
@@ -66,17 +62,13 @@ BusFollowResult SystemBus::Follow(const BusPlan& plan, TimeMasterT current_time,
     case BusPlanOutcome::kRejected:
       if constexpr (config::kLogUnmappedBusAccess) {
         if (plan.access_type == BusAccessType::kRead) {
-          std::fprintf(stderr,
-                       "[BUS] unmapped read  $%02X:%04X -> open-bus 0x%02X\n",
+          std::fprintf(stderr, "[BUS] unmapped read  $%02X:%04X -> open-bus 0x%02X\n",
                        static_cast<unsigned>(plan.original_address >> 16),
-                       static_cast<unsigned>(plan.original_address & 0xFFFF),
-                       last_data_bus_value_);
+                       static_cast<unsigned>(plan.original_address & 0xFFFF), last_data_bus_value_);
         } else {
-          std::fprintf(stderr,
-                       "[BUS] unmapped write $%02X:%04X <- 0x%02X (dropped)\n",
+          std::fprintf(stderr, "[BUS] unmapped write $%02X:%04X <- 0x%02X (dropped)\n",
                        static_cast<unsigned>(plan.original_address >> 16),
-                       static_cast<unsigned>(plan.original_address & 0xFFFF),
-                       plan.write_data);
+                       static_cast<unsigned>(plan.original_address & 0xFFFF), plan.write_data);
         }
       }
       return {BusPlanOutcome::kRejected, last_data_bus_value_, 0};
@@ -84,16 +76,14 @@ BusFollowResult SystemBus::Follow(const BusPlan& plan, TimeMasterT current_time,
   return {BusPlanOutcome::kRejected, last_data_bus_value_, 0};
 }
 
-BusFollowResult SystemBus::FollowInline(const BusPlan& plan,
-                                        TimeMasterT current_time) {
+BusFollowResult SystemBus::FollowInline(const BusPlan& plan, TimeMasterT current_time) {
   Device* device = snes_->GetDevice(plan.target_device);
   if (device == nullptr) {
     return {BusPlanOutcome::kRejected, 0, 0};
   }
 
-  const PageTableEntry& entry =
-      page_table_[static_cast<uint8_t>(plan.original_address >> 16)]
-                 [static_cast<uint8_t>((plan.original_address >> 8) & 0xFF)];
+  const PageTableEntry& entry = page_table_[static_cast<uint8_t>(plan.original_address >> 16)]
+                                           [static_cast<uint8_t>((plan.original_address >> 8) & 0xFF)];
 
   if (entry.kind == PageDeviceKind::kSameClockMmio) {
     snes_->scheduler->CatchUpDevice(plan.target_device, current_time);
@@ -114,12 +104,9 @@ BusFollowResult SystemBus::FollowInline(const BusPlan& plan,
   return result;
 }
 
-BusFollowResult SystemBus::FollowScheduled(const BusPlan& plan,
-                                           TimeMasterT current_time,
-                                           DeviceIdT source_device) {
+BusFollowResult SystemBus::FollowScheduled(const BusPlan& plan, TimeMasterT current_time, DeviceIdT source_device) {
   TokenIdT token_id = snes_->scheduler->CreateToken({
-      .type = (plan.access_type == BusAccessType::kRead) ? TokenType::kBusRead
-                                                         : TokenType::kBusWrite,
+      .type = (plan.access_type == BusAccessType::kRead) ? TokenType::kBusRead : TokenType::kBusWrite,
       .source_device = source_device,
       .completion_time = current_time + plan.access_cycles,
       .address = plan.original_address,

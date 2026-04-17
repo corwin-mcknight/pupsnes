@@ -28,7 +28,6 @@ class SNES {
 
  private:
   TimeMasterT time_now_ = 0;
-  std::vector<Device*>
-      devices_;  // Non-owning. Devices register themselves; caller owns them.
+  std::vector<Device*> devices_;  // Non-owning. Devices register themselves; caller owns them.
 };
 }  // namespace pupsnes

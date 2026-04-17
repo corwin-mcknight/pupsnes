@@ -3,40 +3,33 @@
 
 #include "pupsnes/5a22/cpu_opcode_defs_internal.h"
 
-using namespace pupsnes;  // NOLINT(google-build-using-namespace)
-using namespace pupsnes::
-    opcode_defs_internal;  // NOLINT(google-build-using-namespace)
+using namespace pupsnes;                        // NOLINT(google-build-using-namespace)
+using namespace pupsnes::opcode_defs_internal;  // NOLINT(google-build-using-namespace)
 
 namespace {
 
 constexpr auto kDuplicateOpcodeSpecs = std::array{
-    Opcode(0xEA, "NOP", "implied")
-        .Then(Internal(MicroInternalOp::kNone, Always(), "idle"))
-        .Build(),
-    Opcode(0xEA, "ALT", "test")
-        .Then(Internal(MicroInternalOp::kNone, Always(), "duplicate"))
-        .Build(),
+    Opcode(0xEA, "NOP", "implied").Then(Internal(MicroInternalOp::kNone, Always(), "idle")).Build(),
+    Opcode(0xEA, "ALT", "test").Then(Internal(MicroInternalOp::kNone, Always(), "duplicate")).Build(),
 };
 
-constexpr auto kOversizedSpec =
-    Opcode(0x01, "OVR", "test")
-        .Then(Internal(MicroInternalOp::kNone, Always(), "c0"))
-        .Then(Internal(MicroInternalOp::kNone, Always(), "c1"))
-        .Then(Internal(MicroInternalOp::kNone, Always(), "c2"))
-        .Then(Internal(MicroInternalOp::kNone, Always(), "c3"))
-        .Then(Internal(MicroInternalOp::kNone, Always(), "c4"))
-        .Then(Internal(MicroInternalOp::kNone, Always(), "c5"))
-        .Then(Internal(MicroInternalOp::kNone, Always(), "c6"))
-        .Then(Internal(MicroInternalOp::kNone, Always(), "c7"))
-        .Build();
+constexpr auto kOversizedSpec = Opcode(0x01, "OVR", "test")
+                                    .Then(Internal(MicroInternalOp::kNone, Always(), "c0"))
+                                    .Then(Internal(MicroInternalOp::kNone, Always(), "c1"))
+                                    .Then(Internal(MicroInternalOp::kNone, Always(), "c2"))
+                                    .Then(Internal(MicroInternalOp::kNone, Always(), "c3"))
+                                    .Then(Internal(MicroInternalOp::kNone, Always(), "c4"))
+                                    .Then(Internal(MicroInternalOp::kNone, Always(), "c5"))
+                                    .Then(Internal(MicroInternalOp::kNone, Always(), "c6"))
+                                    .Then(Internal(MicroInternalOp::kNone, Always(), "c7"))
+                                    .Build();
 
 static_assert(!ValidateUniqueOpcodes(kDuplicateOpcodeSpecs));
 static_assert(!ValidateOpcodeSpec(kOversizedSpec));
 
 }  // namespace
 
-TEST_CASE("Opcode specs lower into expected execution entries",
-          "[cpu][opcode-defs]") {
+TEST_CASE("Opcode specs lower into expected execution entries", "[cpu][opcode-defs]") {
   const auto& table = kOpcodeArtifacts.execution_table;
 
   const InstructionEntry& nop = table[0xEA];
@@ -63,10 +56,8 @@ TEST_CASE("Opcode specs lower into expected execution entries",
   REQUIRE(sta_long.disposition == InstructionDisposition::kImplemented);
   REQUIRE(sta_long.remaining_op_count == 4);
   REQUIRE(sta_long.ops[0].internal_op == MicroInternalOp::kSetAddrLowFromFetch);
-  REQUIRE(sta_long.ops[1].internal_op ==
-          MicroInternalOp::kSetAddrHighFromFetch);
-  REQUIRE(sta_long.ops[2].internal_op ==
-          MicroInternalOp::kSetAddrBankFromFetch);
+  REQUIRE(sta_long.ops[1].internal_op == MicroInternalOp::kSetAddrHighFromFetch);
+  REQUIRE(sta_long.ops[2].internal_op == MicroInternalOp::kSetAddrBankFromFetch);
   REQUIRE(sta_long.ops[3].bus_action == MicroBusAction::kWriteA8Addr);
 
   const InstructionEntry& bra = table[0x80];
@@ -91,8 +82,7 @@ TEST_CASE("Opcode specs lower into expected execution entries",
   REQUIRE(bne.rules[1].nodes[0].condition == TimingCondition::kBranchTaken);
 }
 
-TEST_CASE("Opcode metadata preserves readable lowered cycle labels",
-          "[cpu][opcode-defs]") {
+TEST_CASE("Opcode metadata preserves readable lowered cycle labels", "[cpu][opcode-defs]") {
   const auto& metadata = kOpcodeArtifacts.metadata_table;
 
   REQUIRE(metadata[0xEA].implemented);
@@ -108,8 +98,7 @@ TEST_CASE("Opcode metadata preserves readable lowered cycle labels",
   REQUIRE(metadata[0x8F].cycle_labels[3] == "write A low");
 }
 
-TEST_CASE("Unimplemented opcodes lower to explicit fault entries",
-          "[cpu][opcode-defs]") {
+TEST_CASE("Unimplemented opcodes lower to explicit fault entries", "[cpu][opcode-defs]") {
   const InstructionEntry& entry = kOpcodeArtifacts.execution_table[0x00];
   const OpcodeMetadata& metadata = kOpcodeArtifacts.metadata_table[0x00];
 

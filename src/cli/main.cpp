@@ -13,8 +13,7 @@ int main(int /*argc*/, char** /*argv*/) {
   SNES snes;
   snes.DebugPrintInfo();
 
-  snes.scheduler->ScheduleEvent(1000, nullptr, SchedulerPhase::kRun,
-                                EventType::kDeviceRun);
+  snes.scheduler->ScheduleEvent(1000, nullptr, SchedulerPhase::kRun, EventType::kDeviceRun);
   snes.scheduler->Step();
 
   return 0;
