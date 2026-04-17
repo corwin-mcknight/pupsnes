@@ -1,0 +1,39 @@
+rom_name = "stack_push"
+title = "Stack Push"
+purpose = "Verify PHA and PHB push the accumulator and data-bank register onto LowRAM-mirrored stack memory with SP decrementing correctly."
+why_expected_to_fail = "This ROM previously failed before PHA and PHB were implemented and before the LowRAM mirror exposed the stack to WRAM."
+cycle_budget = 14
+expected_current_status = "pass"
+initial_dbr = 0x7E
+
+[goal]
+name = "parks-at-loop-label"
+description = "Program counter should settle at the BRA loop target after pushes complete."
+kind = "cpu_pc"
+expected_value = 0x8004
+
+[goal]
+name = "stack-pointer-moved-past-two-pushes"
+description = "Two single-byte pushes should leave the stack pointer at $01FD."
+kind = "cpu_sp"
+expected_value = 0x01FD
+
+[goal]
+name = "dbr-preserved-by-phb"
+description = "PHB must not modify DBR; it stays at the initial $7E."
+kind = "cpu_dbr"
+expected_value = 0x7E
+
+[goal]
+name = "pha-wrote-accumulator-to-stack"
+description = "PHA should have written the accumulator low byte to $00:01FF (mirrored into WRAM)."
+kind = "wram_byte"
+address = 0x01FF
+expected_value = 0xAB
+
+[goal]
+name = "phb-wrote-dbr-to-stack"
+description = "PHB should have written DBR to $00:01FE (mirrored into WRAM)."
+kind = "wram_byte"
+address = 0x01FE
+expected_value = 0x7E

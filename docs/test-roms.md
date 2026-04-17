@@ -71,6 +71,12 @@ Supported goal kinds:
 
 - `cpu_a8`
 - `cpu_pc`
+- `cpu_sp`
+- `cpu_dbr`
 - `wram_byte`
+
+Optional scenario fields:
+
+- `initial_dbr` — override the reset-value DBR (e.g. `0x7E`) before the scheduler starts; useful for exercising instructions that observe DBR while there are no in-ROM instructions to set it.
 
 Right now the scenarios are intentionally marked as expected failures, so the test suite records bring-up progress without pretending unsupported instructions already work.

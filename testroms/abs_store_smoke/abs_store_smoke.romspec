@@ -1,0 +1,45 @@
+rom_name = "abs_store_smoke"
+title = "Absolute Store Smoke"
+purpose = "Verify STA/STX/STY absolute route through DBR set via PLB and land in WRAM."
+why_expected_to_fail = "This ROM previously failed before STA/STX/STY absolute and PLB were implemented."
+cycle_budget = 30
+expected_current_status = "pass"
+
+[goal]
+name = "parks-at-loop-label"
+description = "Program counter should settle at the BRA loop target after all stores complete."
+kind = "cpu_pc"
+expected_value = 0x8013
+
+[goal]
+name = "plb-sets-data-bank"
+description = "PLB should have pulled $7E off the stack into DBR."
+kind = "cpu_dbr"
+expected_value = 0x7E
+
+[goal]
+name = "pha-plb-restores-stack-pointer"
+description = "The PHA/PLB pair should leave SP back at $01FF."
+kind = "cpu_sp"
+expected_value = 0x01FF
+
+[goal]
+name = "sta-absolute-writes-dbr-bank"
+description = "STA absolute should write A to $7E:0000 via DBR."
+kind = "wram_byte"
+address = 0x0000
+expected_value = 0x11
+
+[goal]
+name = "stx-absolute-writes-dbr-bank"
+description = "STX absolute should write X to $7E:0001 via DBR."
+kind = "wram_byte"
+address = 0x0001
+expected_value = 0x22
+
+[goal]
+name = "sty-absolute-writes-dbr-bank"
+description = "STY absolute should write Y to $7E:0002 via DBR."
+kind = "wram_byte"
+address = 0x0002
+expected_value = 0x33

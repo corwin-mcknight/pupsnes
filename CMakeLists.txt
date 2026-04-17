@@ -128,6 +128,8 @@ if(BUILD_TESTING)
     ${CMAKE_CURRENT_SOURCE_DIR}/testroms/reset_smoke/reset_smoke.s
     ${CMAKE_CURRENT_SOURCE_DIR}/testroms/instruction_smoke/instruction_smoke.s
     ${CMAKE_CURRENT_SOURCE_DIR}/testroms/wram_signature/wram_signature.s
+    ${CMAKE_CURRENT_SOURCE_DIR}/testroms/stack_push/stack_push.s
+    ${CMAKE_CURRENT_SOURCE_DIR}/testroms/abs_store_smoke/abs_store_smoke.s
   )
   set(PUPSNES_TEST_ROM_COMMON_INCLUDES
     ${CMAKE_CURRENT_SOURCE_DIR}/testroms/pupsnes.inc

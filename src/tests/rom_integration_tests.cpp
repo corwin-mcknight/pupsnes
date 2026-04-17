@@ -31,6 +31,8 @@ enum class GoalObservationKind : uint8_t {
   kCpuA8 = 0,
   kCpuPc = 1,
   kWramByte = 2,
+  kCpuSp = 3,
+  kCpuDbr = 4,
 };
 
 struct GoalSpec {
@@ -48,6 +50,7 @@ struct RomScenario {
   std::string why_expected_to_fail;
   TimeMasterT cycle_budget = 0;
   RomStatus expected_current_status = RomStatus::kFail;
+  std::optional<uint8_t> initial_dbr;
   std::vector<GoalSpec> goals;
 };
 
@@ -152,6 +155,12 @@ GoalObservationKind ParseGoalKind(const std::string& value, const std::filesyste
   if (value == "wram_byte") {
     return GoalObservationKind::kWramByte;
   }
+  if (value == "cpu_sp") {
+    return GoalObservationKind::kCpuSp;
+  }
+  if (value == "cpu_dbr") {
+    return GoalObservationKind::kCpuDbr;
+  }
 
   std::ostringstream out;
   out << path << ":" << line_number << ": unsupported goal kind '" << value << "'";
@@ -182,6 +191,10 @@ void ApplyScenarioField(RomScenario& scenario, const std::string& key, const std
   }
   if (key == "expected_current_status") {
     scenario.expected_current_status = ParseRomStatus(ParseQuotedString(value, path, line_number), path, line_number);
+    return;
+  }
+  if (key == "initial_dbr") {
+    scenario.initial_dbr = static_cast<uint8_t>(ParseUnsignedValue(value, path, line_number));
     return;
   }
 
@@ -330,6 +343,10 @@ uint32_t ReadObservationValue(const GoalSpec& goal, const CPU& cpu, const WRAM& 
       return cpu.GetRegs().PC;
     case GoalObservationKind::kWramByte:
       return wram.Peek(goal.address);
+    case GoalObservationKind::kCpuSp:
+      return cpu.GetRegs().SP;
+    case GoalObservationKind::kCpuDbr:
+      return cpu.GetRegs().DBR;
   }
 
   return 0;
@@ -346,6 +363,10 @@ std::string ObservationLabel(const GoalSpec& goal) {
       out << "wram[$" << std::hex << std::uppercase << goal.address << "]";
       return out.str();
     }
+    case GoalObservationKind::kCpuSp:
+      return "cpu.sp";
+    case GoalObservationKind::kCpuDbr:
+      return "cpu.dbr";
   }
 
   return "unknown";
@@ -411,6 +432,11 @@ RomExecutionResult RunScenario(const RomScenario& scenario) {
     wram.MapSystemBus(*snes.system_bus);
 
     cpu.Reset();
+    if (scenario.initial_dbr.has_value()) {
+      CPU::Regs regs = cpu.GetRegs();
+      regs.DBR = *scenario.initial_dbr;
+      cpu.SetRegs(regs);
+    }
     snes.scheduler->ScheduleDeviceRun(&cpu, 0);
     snes.scheduler->ScheduleEvent(scenario.cycle_budget, nullptr, SchedulerPhase::kWakeSample,
                                   EventType::kDeviceBoundary);

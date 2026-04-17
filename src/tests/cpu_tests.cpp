@@ -105,6 +105,36 @@ struct AsyncProgramFixture {
 
 using RegPtr = uint16_t CPU::Regs::*;
 
+static void SetDataBank(CPU& cpu, uint8_t dbr) {
+  auto regs = cpu.GetRegs();
+  regs.DBR = dbr;
+  cpu.SetRegs(regs);
+}
+
+static void SetAccumulator16(CPU& cpu, uint16_t value) {
+  auto regs = cpu.GetRegs();
+  regs.P.E = false;
+  regs.P.M = false;
+  regs.A = value;
+  cpu.SetRegs(regs);
+}
+
+static void SetIndex16X(CPU& cpu, uint16_t value) {
+  auto regs = cpu.GetRegs();
+  regs.P.E = false;
+  regs.P.X = false;
+  regs.X = value;
+  cpu.SetRegs(regs);
+}
+
+static void SetIndex16Y(CPU& cpu, uint16_t value) {
+  auto regs = cpu.GetRegs();
+  regs.P.E = false;
+  regs.P.X = false;
+  regs.Y = value;
+  cpu.SetRegs(regs);
+}
+
 struct ResetFixture {
   SNES snes;
   Cartridge cartridge{&snes};
@@ -302,6 +332,55 @@ TEST_CASE("BNE supports negative displacements for tight loops", "[cpu]") {
   REQUIRE(f.cpu.GetRegs().PC == 0x8000);
 }
 
+TEST_CASE("BRA adds a penalty cycle when a taken branch crosses a page in emulation mode", "[cpu]") {
+  ResetFixture f;
+  f.SetResetVector(0x80FD);
+  f.SetRomByte(0x00FDU, 0x80);
+  f.SetRomByte(0x00FEU, 0x04);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  TickResult r = f.cpu.Tick(4);
+
+  REQUIRE(r.completed_cycles == 4);
+  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(f.cpu.GetRegs().PC == 0x8103);
+}
+
+TEST_CASE("BRA page-cross penalty does not fire in native mode", "[cpu]") {
+  ResetFixture f;
+  f.SetResetVector(0x80FD);
+  f.SetRomByte(0x00FDU, 0x80);
+  f.SetRomByte(0x00FEU, 0x04);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  auto regs = f.cpu.GetRegs();
+  regs.P.E = false;
+  f.cpu.SetRegs(regs);
+
+  TickResult r = f.cpu.Tick(3);
+
+  REQUIRE(r.completed_cycles == 3);
+  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(f.cpu.GetRegs().PC == 0x8103);
+}
+
+TEST_CASE("BNE taken with page cross in emulation mode consumes the penalty cycle", "[cpu]") {
+  ResetFixture f;
+  f.SetResetVector(0x80FD);
+  f.SetRomByte(0x00FDU, 0xD0);
+  f.SetRomByte(0x00FEU, 0x04);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  TickResult r = f.cpu.Tick(4);
+
+  REQUIRE(r.completed_cycles == 4);
+  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(f.cpu.GetRegs().PC == 0x8103);
+}
+
 TEST_CASE("STA long writes accumulator low byte to mapped WRAM", "[cpu]") {
   ResetFixture f;
   f.SetRomByte(0x0000U, 0xA9);
@@ -320,6 +399,340 @@ TEST_CASE("STA long writes accumulator low byte to mapped WRAM", "[cpu]") {
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x5A);
   REQUIRE(f.cpu.GetRegs().PC == 0x8006);
   REQUIRE(f.wram.Peek(0x0000) == 0x5A);
+}
+
+TEST_CASE("STA absolute uses DBR and writes accumulator low byte to WRAM", "[cpu]") {
+  ResetFixture f;
+  f.SetRomByte(0x0000U, 0x8D);
+  f.SetRomByte(0x0001U, 0x00);
+  f.SetRomByte(0x0002U, 0x00);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  auto regs = f.cpu.GetRegs();
+  regs.A = 0x005A;
+  regs.DBR = 0x7E;
+  f.cpu.SetRegs(regs);
+
+  TickResult r = f.cpu.Tick(4);
+
+  REQUIRE(r.completed_cycles == 4);
+  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(f.cpu.GetRegs().PC == 0x8003);
+  REQUIRE(f.wram.Peek(0x0000) == 0x5A);
+}
+
+TEST_CASE("STX absolute uses DBR and writes X low byte to WRAM", "[cpu]") {
+  ResetFixture f;
+  f.SetRomByte(0x0000U, 0x8E);
+  f.SetRomByte(0x0001U, 0x01);
+  f.SetRomByte(0x0002U, 0x00);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  SetDataBank(f.cpu, 0x7E);
+  auto regs = f.cpu.GetRegs();
+  regs.X = 0x0034;
+  f.cpu.SetRegs(regs);
+
+  TickResult r = f.cpu.Tick(4);
+
+  REQUIRE(r.completed_cycles == 4);
+  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(f.cpu.GetRegs().PC == 0x8003);
+  REQUIRE(f.wram.Peek(0x0001) == 0x34);
+}
+
+TEST_CASE("STY absolute uses DBR and writes Y low byte to WRAM", "[cpu]") {
+  ResetFixture f;
+  f.SetRomByte(0x0000U, 0x8C);
+  f.SetRomByte(0x0001U, 0x02);
+  f.SetRomByte(0x0002U, 0x00);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  SetDataBank(f.cpu, 0x7E);
+  auto regs = f.cpu.GetRegs();
+  regs.Y = 0x0078;
+  f.cpu.SetRegs(regs);
+
+  TickResult r = f.cpu.Tick(4);
+
+  REQUIRE(r.completed_cycles == 4);
+  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(f.cpu.GetRegs().PC == 0x8003);
+  REQUIRE(f.wram.Peek(0x0002) == 0x78);
+}
+
+TEST_CASE("STA long writes both accumulator bytes when M is clear", "[cpu]") {
+  ResetFixture f;
+  f.SetRomByte(0x0000U, 0x8F);
+  f.SetRomByte(0x0001U, 0x00);
+  f.SetRomByte(0x0002U, 0x00);
+  f.SetRomByte(0x0003U, 0x7E);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  SetAccumulator16(f.cpu, 0xBEEF);
+
+  TickResult r = f.cpu.Tick(6);
+
+  REQUIRE(r.completed_cycles == 6);
+  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(f.cpu.GetRegs().PC == 0x8004);
+  REQUIRE(f.wram.Peek(0x0000) == 0xEF);
+  REQUIRE(f.wram.Peek(0x0001) == 0xBE);
+}
+
+TEST_CASE("STX absolute writes both index bytes when X is clear", "[cpu]") {
+  ResetFixture f;
+  f.SetRomByte(0x0000U, 0x8E);
+  f.SetRomByte(0x0001U, 0x10);
+  f.SetRomByte(0x0002U, 0x00);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  SetDataBank(f.cpu, 0x7E);
+  SetIndex16X(f.cpu, 0x1234);
+
+  TickResult r = f.cpu.Tick(5);
+
+  REQUIRE(r.completed_cycles == 5);
+  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(f.cpu.GetRegs().PC == 0x8003);
+  REQUIRE(f.wram.Peek(0x0010) == 0x34);
+  REQUIRE(f.wram.Peek(0x0011) == 0x12);
+}
+
+TEST_CASE("STY absolute writes both index bytes when X is clear", "[cpu]") {
+  ResetFixture f;
+  f.SetRomByte(0x0000U, 0x8C);
+  f.SetRomByte(0x0001U, 0x20);
+  f.SetRomByte(0x0002U, 0x00);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  SetDataBank(f.cpu, 0x7E);
+  SetIndex16Y(f.cpu, 0xABCD);
+
+  TickResult r = f.cpu.Tick(5);
+
+  REQUIRE(r.completed_cycles == 5);
+  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(f.cpu.GetRegs().PC == 0x8003);
+  REQUIRE(f.wram.Peek(0x0020) == 0xCD);
+  REQUIRE(f.wram.Peek(0x0021) == 0xAB);
+}
+
+TEST_CASE("STA absolute writes both accumulator bytes when M is clear", "[cpu]") {
+  ResetFixture f;
+  f.SetRomByte(0x0000U, 0x8D);
+  f.SetRomByte(0x0001U, 0x30);
+  f.SetRomByte(0x0002U, 0x00);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  SetDataBank(f.cpu, 0x7E);
+  SetAccumulator16(f.cpu, 0xCAFE);
+
+  TickResult r = f.cpu.Tick(5);
+
+  REQUIRE(r.completed_cycles == 5);
+  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(f.cpu.GetRegs().PC == 0x8003);
+  REQUIRE(f.wram.Peek(0x0030) == 0xFE);
+  REQUIRE(f.wram.Peek(0x0031) == 0xCA);
+}
+
+TEST_CASE("STA absolute 16-bit high-byte write carries into the next bank at $FFFF", "[cpu]") {
+  ResetFixture f;
+  f.SetRomByte(0x0000U, 0x8D);
+  f.SetRomByte(0x0001U, 0xFF);
+  f.SetRomByte(0x0002U, 0xFF);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  SetDataBank(f.cpu, 0x7E);
+  SetAccumulator16(f.cpu, 0xBEEF);
+
+  TickResult r = f.cpu.Tick(5);
+
+  REQUIRE(r.completed_cycles == 5);
+  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(f.cpu.GetRegs().PC == 0x8003);
+  REQUIRE(f.wram.Peek(0xFFFF) == 0xEF);
+  REQUIRE(f.wram.Peek(0x10000) == 0xBE);
+}
+
+TEST_CASE("PHA 8-bit pushes accumulator low byte and decrements SP", "[cpu]") {
+  ResetFixture f;
+  f.SetRomByte(0x0000U, 0xA9);
+  f.SetRomByte(0x0001U, 0x42);
+  f.SetRomByte(0x0002U, 0x48);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  TickResult r = f.cpu.Tick(5);
+
+  REQUIRE(r.completed_cycles == 5);
+  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(f.cpu.GetRegs().PC == 0x8003);
+  REQUIRE(f.cpu.GetRegs().SP == 0x01FE);
+  REQUIRE(f.wram.Peek(0x01FF) == 0x42);
+}
+
+TEST_CASE("PHA 8-bit in emulation mode wraps SP across page 1", "[cpu]") {
+  ResetFixture f;
+  f.SetRomByte(0x0000U, 0x48);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  auto regs = f.cpu.GetRegs();
+  regs.A = 0x007A;
+  regs.SP = 0x0100;
+  f.cpu.SetRegs(regs);
+
+  TickResult r = f.cpu.Tick(3);
+
+  REQUIRE(r.completed_cycles == 3);
+  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(f.cpu.GetRegs().SP == 0x01FF);
+  REQUIRE(f.wram.Peek(0x0100) == 0x7A);
+}
+
+TEST_CASE("PHA 16-bit pushes both accumulator bytes when M is clear", "[cpu]") {
+  ResetFixture f;
+  f.SetRomByte(0x0000U, 0x48);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  SetAccumulator16(f.cpu, 0xBEEF);
+
+  TickResult r = f.cpu.Tick(4);
+
+  REQUIRE(r.completed_cycles == 4);
+  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(f.cpu.GetRegs().SP == 0x01FD);
+  REQUIRE(f.wram.Peek(0x01FF) == 0xBE);
+  REQUIRE(f.wram.Peek(0x01FE) == 0xEF);
+}
+
+TEST_CASE("PHB pushes data bank register and decrements SP", "[cpu]") {
+  ResetFixture f;
+  f.SetRomByte(0x0000U, 0x8B);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  SetDataBank(f.cpu, 0x7E);
+
+  TickResult r = f.cpu.Tick(3);
+
+  REQUIRE(r.completed_cycles == 3);
+  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(f.cpu.GetRegs().PC == 0x8001);
+  REQUIRE(f.cpu.GetRegs().DBR == 0x7E);
+  REQUIRE(f.cpu.GetRegs().SP == 0x01FE);
+  REQUIRE(f.wram.Peek(0x01FF) == 0x7E);
+}
+
+TEST_CASE("PLB pulls data bank register from stack and updates DBR and flags", "[cpu]") {
+  ResetFixture f;
+  f.SetRomByte(0x0000U, 0xAB);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  f.wram.WriteRegister(0x01FF, 0x42);
+  auto regs = f.cpu.GetRegs();
+  regs.SP = 0x01FE;
+  regs.DBR = 0x00;
+  regs.P.N = true;
+  regs.P.Z = true;
+  f.cpu.SetRegs(regs);
+
+  TickResult r = f.cpu.Tick(4);
+
+  REQUIRE(r.completed_cycles == 4);
+  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(f.cpu.GetRegs().PC == 0x8001);
+  REQUIRE(f.cpu.GetRegs().DBR == 0x42);
+  REQUIRE(f.cpu.GetRegs().SP == 0x01FF);
+  REQUIRE(f.cpu.GetRegs().P.N == false);
+  REQUIRE(f.cpu.GetRegs().P.Z == false);
+}
+
+TEST_CASE("PLB sets Z when pulled value is zero", "[cpu]") {
+  ResetFixture f;
+  f.SetRomByte(0x0000U, 0xAB);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  f.wram.WriteRegister(0x01FF, 0x00);
+  auto regs = f.cpu.GetRegs();
+  regs.SP = 0x01FE;
+  regs.DBR = 0x7E;
+  f.cpu.SetRegs(regs);
+
+  TickResult r = f.cpu.Tick(4);
+
+  REQUIRE(r.completed_cycles == 4);
+  REQUIRE(f.cpu.GetRegs().DBR == 0x00);
+  REQUIRE(f.cpu.GetRegs().P.Z == true);
+  REQUIRE(f.cpu.GetRegs().P.N == false);
+}
+
+TEST_CASE("PLB sets N when pulled value has bit 7 set", "[cpu]") {
+  ResetFixture f;
+  f.SetRomByte(0x0000U, 0xAB);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  f.wram.WriteRegister(0x01FF, 0x80);
+  auto regs = f.cpu.GetRegs();
+  regs.SP = 0x01FE;
+  f.cpu.SetRegs(regs);
+
+  TickResult r = f.cpu.Tick(4);
+
+  REQUIRE(r.completed_cycles == 4);
+  REQUIRE(f.cpu.GetRegs().DBR == 0x80);
+  REQUIRE(f.cpu.GetRegs().P.N == true);
+  REQUIRE(f.cpu.GetRegs().P.Z == false);
+}
+
+TEST_CASE("PLB in emulation mode wraps SP across page 1", "[cpu]") {
+  ResetFixture f;
+  f.SetRomByte(0x0000U, 0xAB);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  f.wram.WriteRegister(0x0100, 0x33);
+  auto regs = f.cpu.GetRegs();
+  regs.SP = 0x01FF;
+  f.cpu.SetRegs(regs);
+
+  TickResult r = f.cpu.Tick(4);
+
+  REQUIRE(r.completed_cycles == 4);
+  REQUIRE(f.cpu.GetRegs().DBR == 0x33);
+  REQUIRE(f.cpu.GetRegs().SP == 0x0100);
+}
+
+TEST_CASE("PHB followed by PLB restores DBR", "[cpu]") {
+  ResetFixture f;
+  f.SetRomByte(0x0000U, 0x8B);
+  f.SetRomByte(0x0001U, 0xAB);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  SetDataBank(f.cpu, 0x7E);
+
+  TickResult r = f.cpu.Tick(7);
+
+  REQUIRE(r.completed_cycles == 7);
+  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(f.cpu.GetRegs().PC == 0x8002);
+  REQUIRE(f.cpu.GetRegs().DBR == 0x7E);
+  REQUIRE(f.cpu.GetRegs().SP == 0x01FF);
 }
 
 TEST_CASE("Direct CPU tick advances execution state but not committed device time", "[cpu]") {

@@ -143,6 +143,51 @@ constexpr CycleSlotSpec WriteA8Addr(MicroInternalOp internal_op = MicroInternalO
   return CycleSlotSpec{MicroBusAction::kWriteA8Addr, internal_op, rule, label};
 }
 
+constexpr CycleSlotSpec WriteX8Addr(MicroInternalOp internal_op = MicroInternalOp::kNone,
+                                    TimingRuleExpr rule = Always(), std::string_view label = {}) {
+  return CycleSlotSpec{MicroBusAction::kWriteX8Addr, internal_op, rule, label};
+}
+
+constexpr CycleSlotSpec WriteY8Addr(MicroInternalOp internal_op = MicroInternalOp::kNone,
+                                    TimingRuleExpr rule = Always(), std::string_view label = {}) {
+  return CycleSlotSpec{MicroBusAction::kWriteY8Addr, internal_op, rule, label};
+}
+
+constexpr CycleSlotSpec WriteAHighAddr(MicroInternalOp internal_op = MicroInternalOp::kNone,
+                                       TimingRuleExpr rule = Always(), std::string_view label = {}) {
+  return CycleSlotSpec{MicroBusAction::kWriteAHighAddr, internal_op, rule, label};
+}
+
+constexpr CycleSlotSpec WriteXHighAddr(MicroInternalOp internal_op = MicroInternalOp::kNone,
+                                       TimingRuleExpr rule = Always(), std::string_view label = {}) {
+  return CycleSlotSpec{MicroBusAction::kWriteXHighAddr, internal_op, rule, label};
+}
+
+constexpr CycleSlotSpec WriteYHighAddr(MicroInternalOp internal_op = MicroInternalOp::kNone,
+                                       TimingRuleExpr rule = Always(), std::string_view label = {}) {
+  return CycleSlotSpec{MicroBusAction::kWriteYHighAddr, internal_op, rule, label};
+}
+
+constexpr CycleSlotSpec PushA8(MicroInternalOp internal_op = MicroInternalOp::kNone, TimingRuleExpr rule = Always(),
+                               std::string_view label = {}) {
+  return CycleSlotSpec{MicroBusAction::kPushA8, internal_op, rule, label};
+}
+
+constexpr CycleSlotSpec PushAHigh(MicroInternalOp internal_op = MicroInternalOp::kNone, TimingRuleExpr rule = Always(),
+                                  std::string_view label = {}) {
+  return CycleSlotSpec{MicroBusAction::kPushAHigh, internal_op, rule, label};
+}
+
+constexpr CycleSlotSpec PushDbr(MicroInternalOp internal_op = MicroInternalOp::kNone, TimingRuleExpr rule = Always(),
+                                std::string_view label = {}) {
+  return CycleSlotSpec{MicroBusAction::kPushDbr, internal_op, rule, label};
+}
+
+constexpr CycleSlotSpec PullStack(MicroInternalOp internal_op = MicroInternalOp::kNone,
+                                  TimingRuleExpr rule = Always(), std::string_view label = {}) {
+  return CycleSlotSpec{MicroBusAction::kPullStack, internal_op, rule, label};
+}
+
 constexpr CycleSlotSpec Internal(MicroInternalOp internal_op = MicroInternalOp::kNone, TimingRuleExpr rule = Always(),
                                  std::string_view label = {}) {
   return CycleSlotSpec{MicroBusAction::kNone, internal_op, rule, label};

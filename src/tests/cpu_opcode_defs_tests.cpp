@@ -84,24 +84,67 @@ TEST_CASE("Opcode specs lower into expected execution and metadata entries", "[c
                 {B::kFetchPc, M::kLoadYLow, 2, "fetch immediate low"},
                 {B::kFetchPc, M::kLoadYHighUpdateNz, 2, "fetch immediate high"}});
 
-  ExpectOpcode(0x8F, "STA", "absolute long", 1,
+  ExpectOpcode(0x8D, "STA", "absolute", 2,
+               {{B::kFetchPc, M::kSetAddrLowFromFetch, 0, "fetch address low"},
+                {B::kFetchPc, M::kSetAddrHighFromFetchAndBankFromDbr, 0, "fetch address high"},
+                {B::kWriteA8Addr, M::kIncrementAddr, 0, "write A low"},
+                {B::kWriteAHighAddr, M::kNone, 1, "write A high"}});
+
+  ExpectOpcode(0x8E, "STX", "absolute", 2,
+               {{B::kFetchPc, M::kSetAddrLowFromFetch, 0, "fetch address low"},
+                {B::kFetchPc, M::kSetAddrHighFromFetchAndBankFromDbr, 0, "fetch address high"},
+                {B::kWriteX8Addr, M::kIncrementAddr, 0, "write X low"},
+                {B::kWriteXHighAddr, M::kNone, 1, "write X high"}});
+
+  ExpectOpcode(0x8C, "STY", "absolute", 2,
+               {{B::kFetchPc, M::kSetAddrLowFromFetch, 0, "fetch address low"},
+                {B::kFetchPc, M::kSetAddrHighFromFetchAndBankFromDbr, 0, "fetch address high"},
+                {B::kWriteY8Addr, M::kIncrementAddr, 0, "write Y low"},
+                {B::kWriteYHighAddr, M::kNone, 1, "write Y high"}});
+
+  ExpectOpcode(0x8F, "STA", "absolute long", 2,
                {{B::kFetchPc, M::kSetAddrLowFromFetch, 0, "fetch address low"},
                 {B::kFetchPc, M::kSetAddrHighFromFetch, 0, "fetch address high"},
                 {B::kFetchPc, M::kSetAddrBankFromFetch, 0, "fetch address bank"},
-                {B::kWriteA8Addr, M::kNone, 0, "write A low"}});
+                {B::kWriteA8Addr, M::kIncrementAddr, 0, "write A low"},
+                {B::kWriteAHighAddr, M::kNone, 1, "write A high"}});
 
-  ExpectOpcode(
-      0x80, "BRA", "relative", 2,
-      {{B::kFetchPc, M::kSetBranchTaken, 0, "fetch displacement"}, {B::kNone, M::kBranchRelative8, 1, "apply branch"}});
+  ExpectOpcode(0x80, "BRA", "relative", 3,
+               {{B::kFetchPc, M::kSetBranchTaken, 0, "fetch displacement"},
+                {B::kNone, M::kBranchRelative8, 1, "apply branch"},
+                {B::kNone, M::kNone, 2, "emulation page-cross penalty"}});
 
-  ExpectOpcode(0xD0, "BNE", "relative", 2,
+  ExpectOpcode(0xD0, "BNE", "relative", 3,
                {{B::kFetchPc, M::kSetBranchTakenIfNotZero, 0, "fetch displacement"},
-                {B::kNone, M::kBranchRelative8, 1, "apply branch"}});
+                {B::kNone, M::kBranchRelative8, 1, "apply branch"},
+                {B::kNone, M::kNone, 2, "emulation page-cross penalty"}});
 
   const auto& bne_branch_rule = kOpcodeArtifacts.execution_table[0xD0].rules[1];
   REQUIRE(bne_branch_rule.node_count == 1);
   REQUIRE(bne_branch_rule.nodes[0].op == TimingRuleOp::kCondition);
   REQUIRE(bne_branch_rule.nodes[0].condition == TimingCondition::kBranchTaken);
+
+  const auto& bne_penalty_rule = kOpcodeArtifacts.execution_table[0xD0].rules[2];
+  REQUIRE(bne_penalty_rule.node_count == 3);
+  REQUIRE(bne_penalty_rule.nodes[bne_penalty_rule.root_index].op == TimingRuleOp::kAllOf);
+
+  ExpectOpcode(0x48, "PHA", "implied", 2,
+               {{B::kNone, M::kNone, 0, "internal"},
+                {B::kPushAHigh, M::kDecrementSp, 1, "push A high"},
+                {B::kPushA8, M::kDecrementSp, 0, "push A low"}});
+
+  const auto& pha_high_rule = kOpcodeArtifacts.execution_table[0x48].rules[1];
+  REQUIRE(pha_high_rule.node_count == 1);
+  REQUIRE(pha_high_rule.nodes[0].op == TimingRuleOp::kCondition);
+  REQUIRE(pha_high_rule.nodes[0].condition == TimingCondition::kAccumulator16);
+
+  ExpectOpcode(0x8B, "PHB", "implied", 1,
+               {{B::kNone, M::kNone, 0, "internal"}, {B::kPushDbr, M::kDecrementSp, 0, "push DBR"}});
+
+  ExpectOpcode(0xAB, "PLB", "implied", 1,
+               {{B::kNone, M::kNone, 0, "internal"},
+                {B::kNone, M::kIncrementSp, 0, "increment SP"},
+                {B::kPullStack, M::kLoadDbrUpdateNz, 0, "pull DBR"}});
 }
 
 TEST_CASE("Unimplemented opcodes lower to explicit fault entries", "[cpu][opcode-defs]") {

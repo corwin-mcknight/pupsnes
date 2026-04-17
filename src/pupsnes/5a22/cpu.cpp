@@ -127,8 +127,36 @@ void CPU::OpSetBranchTakenIfNotZero() { OpSetBranchTaken(!regs_.P.Z); }
 
 void CPU::OpBranchRelative8() {
   const int8_t displacement = static_cast<int8_t>(fetch_data_);
+  const uint16_t old_pc = regs_.PC;
   regs_.PC = static_cast<uint16_t>(regs_.PC + displacement);
+  timing_context_.branch_page_crossed = ((old_pc ^ regs_.PC) & 0xFF00U) != 0U;
 }
+
+void CPU::OpDecrementSp() {
+  if (regs_.P.E) {
+    const uint8_t sp_lo = static_cast<uint8_t>(static_cast<uint8_t>(regs_.SP) - 1U);
+    regs_.SP = static_cast<uint16_t>(0x0100U | sp_lo);
+  } else {
+    regs_.SP = static_cast<uint16_t>(regs_.SP - 1U);
+  }
+}
+
+void CPU::OpIncrementSp() {
+  if (regs_.P.E) {
+    const uint8_t sp_lo = static_cast<uint8_t>(static_cast<uint8_t>(regs_.SP) + 1U);
+    regs_.SP = static_cast<uint16_t>(0x0100U | sp_lo);
+  } else {
+    regs_.SP = static_cast<uint16_t>(regs_.SP + 1U);
+  }
+}
+
+void CPU::OpLoadDbrUpdateNz() {
+  regs_.DBR = fetch_data_;
+  regs_.P.Z = (regs_.DBR == 0U);
+  regs_.P.N = (regs_.DBR & 0x80U) != 0U;
+}
+
+SnesAddrT CPU::StackAddr() const { return static_cast<SnesAddrT>(regs_.SP); }
 
 void CPU::SetAddrByteFromFetch(unsigned shift) {
   const uint32_t mask = ~(uint32_t{0xFFU} << shift) & 0xFFFFFFU;
@@ -184,6 +212,22 @@ void CPU::ExecuteInternalOp(MicroInternalOp op) {
     case MicroInternalOp::kSetAddrBankFromFetch:
       SetAddrByteFromFetch(16);
       break;
+    case MicroInternalOp::kSetAddrHighFromFetchAndBankFromDbr:
+      SetAddrByteFromFetch(8);
+      addr_ = (addr_ & 0x00FFFFU) | (static_cast<uint32_t>(regs_.DBR) << 16U);
+      break;
+    case MicroInternalOp::kIncrementAddr:
+      addr_ = (addr_ + 1U) & 0xFFFFFFU;
+      break;
+    case MicroInternalOp::kDecrementSp:
+      OpDecrementSp();
+      break;
+    case MicroInternalOp::kIncrementSp:
+      OpIncrementSp();
+      break;
+    case MicroInternalOp::kLoadDbrUpdateNz:
+      OpLoadDbrUpdateNz();
+      break;
   }
 }
 
@@ -223,6 +267,10 @@ bool CPU::EvaluateTimingCondition(TimingCondition condition) const {
       return IsAccumulator16Bit();
     case TimingCondition::kIndex16:
       return IsIndex16Bit();
+    case TimingCondition::kEmulationMode:
+      return regs_.P.E;
+    case TimingCondition::kBranchPageCrossed:
+      return timing_context_.branch_page_crossed;
   }
   return false;
 }
@@ -330,6 +378,24 @@ std::optional<TickResult> CPU::PerformBusAction(MicroBusAction action, TimeMaste
       return BusWrite(addr_, fetch_data_, cycle_time);
     case MicroBusAction::kWriteA8Addr:
       return BusWrite(addr_, static_cast<uint8_t>(regs_.A), cycle_time);
+    case MicroBusAction::kWriteX8Addr:
+      return BusWrite(addr_, static_cast<uint8_t>(regs_.X), cycle_time);
+    case MicroBusAction::kWriteY8Addr:
+      return BusWrite(addr_, static_cast<uint8_t>(regs_.Y), cycle_time);
+    case MicroBusAction::kWriteAHighAddr:
+      return BusWrite(addr_, static_cast<uint8_t>(regs_.A >> 8U), cycle_time);
+    case MicroBusAction::kWriteXHighAddr:
+      return BusWrite(addr_, static_cast<uint8_t>(regs_.X >> 8U), cycle_time);
+    case MicroBusAction::kWriteYHighAddr:
+      return BusWrite(addr_, static_cast<uint8_t>(regs_.Y >> 8U), cycle_time);
+    case MicroBusAction::kPushA8:
+      return BusWrite(StackAddr(), static_cast<uint8_t>(regs_.A), cycle_time);
+    case MicroBusAction::kPushAHigh:
+      return BusWrite(StackAddr(), static_cast<uint8_t>(regs_.A >> 8U), cycle_time);
+    case MicroBusAction::kPushDbr:
+      return BusWrite(StackAddr(), regs_.DBR, cycle_time);
+    case MicroBusAction::kPullStack:
+      return BusRead(StackAddr(), cycle_time);
   }
   return std::nullopt;
 }

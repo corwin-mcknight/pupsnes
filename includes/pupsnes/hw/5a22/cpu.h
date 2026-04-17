@@ -32,38 +32,54 @@ struct CpuFlags {
 
 // Bus actions a micro-op can perform in a single master clock cycle.
 enum class MicroBusAction : uint8_t {
-  kNone,         // Internal cycle — no bus transaction
-  kFetchPc,      // Read byte from PBR:PC, increment PC
-  kReadAddr,     // Read byte from effective address (addr_)
-  kWriteAddr,    // Write fetch_data_ to effective address (addr_)
-  kWriteA8Addr,  // Write A low byte to effective address (addr_)
+  kNone,            // Internal cycle — no bus transaction
+  kFetchPc,         // Read byte from PBR:PC, increment PC
+  kReadAddr,        // Read byte from effective address (addr_)
+  kWriteAddr,       // Write fetch_data_ to effective address (addr_)
+  kWriteA8Addr,     // Write A low byte to effective address (addr_)
+  kWriteX8Addr,     // Write X low byte to effective address (addr_)
+  kWriteY8Addr,     // Write Y low byte to effective address (addr_)
+  kWriteAHighAddr,  // Write A high byte to effective address (addr_)
+  kWriteXHighAddr,  // Write X high byte to effective address (addr_)
+  kWriteYHighAddr,  // Write Y high byte to effective address (addr_)
+  kPushA8,          // Write A low byte to stack ($00:SP)
+  kPushAHigh,       // Write A high byte to stack ($00:SP)
+  kPushDbr,         // Write DBR to stack ($00:SP)
+  kPullStack,       // Read byte from stack ($00:SP) into fetch_data_
 };
 
 // Internal register operations performed after the bus action completes.
 enum class MicroInternalOp : uint8_t {
   kNone,
-  kLoadA8UpdateNz,           // A_lo = fetch_data_; update N/Z using effective 8-bit accumulator width
-  kLoadALow,                 // A_lo = fetch_data_
-  kLoadAHighUpdateNz,        // A_hi = fetch_data_; update N/Z using effective 16-bit accumulator width
-  kLoadX8UpdateNz,           // X_lo = fetch_data_; update N/Z using effective 8-bit index width
-  kLoadXLow,                 // X_lo = fetch_data_
-  kLoadXHighUpdateNz,        // X_hi = fetch_data_; update N/Z using effective 16-bit index width
-  kLoadY8UpdateNz,           // Y_lo = fetch_data_; update N/Z using effective 8-bit index width
-  kLoadYLow,                 // Y_lo = fetch_data_
-  kLoadYHighUpdateNz,        // Y_hi = fetch_data_; update N/Z using effective 16-bit index width
-  kSetBranchTaken,           // branch_taken = true
-  kSetBranchTakenIfNotZero,  // branch_taken = !Z
-  kBranchRelative8,          // Apply signed 8-bit branch offset stored in fetch_data_
-                             // to PC
-  kSetAddrLowFromFetch,      // addr_[7:0] = fetch_data_
-  kSetAddrHighFromFetch,     // addr_[15:8] = fetch_data_
-  kSetAddrBankFromFetch,     // addr_[23:16] = fetch_data_
+  kLoadA8UpdateNz,                      // A_lo = fetch_data_; update N/Z using effective 8-bit accumulator width
+  kLoadALow,                            // A_lo = fetch_data_
+  kLoadAHighUpdateNz,                   // A_hi = fetch_data_; update N/Z using effective 16-bit accumulator width
+  kLoadX8UpdateNz,                      // X_lo = fetch_data_; update N/Z using effective 8-bit index width
+  kLoadXLow,                            // X_lo = fetch_data_
+  kLoadXHighUpdateNz,                   // X_hi = fetch_data_; update N/Z using effective 16-bit index width
+  kLoadY8UpdateNz,                      // Y_lo = fetch_data_; update N/Z using effective 8-bit index width
+  kLoadYLow,                            // Y_lo = fetch_data_
+  kLoadYHighUpdateNz,                   // Y_hi = fetch_data_; update N/Z using effective 16-bit index width
+  kSetBranchTaken,                      // branch_taken = true
+  kSetBranchTakenIfNotZero,             // branch_taken = !Z
+  kBranchRelative8,                     // Apply signed 8-bit branch offset stored in fetch_data_
+                                        // to PC
+  kSetAddrLowFromFetch,                 // addr_[7:0] = fetch_data_
+  kSetAddrHighFromFetch,                // addr_[15:8] = fetch_data_
+  kSetAddrBankFromFetch,                // addr_[23:16] = fetch_data_
+  kSetAddrHighFromFetchAndBankFromDbr,  // addr_[15:8] = fetch_data_, addr_[23:16] = DBR
+  kIncrementAddr,                       // addr_ = addr_ + 1
+  kDecrementSp,                         // Decrement SP (wraps in page 1 when E=1)
+  kIncrementSp,                         // Increment SP (wraps in page 1 when E=1)
+  kLoadDbrUpdateNz,                     // DBR = fetch_data_; update N/Z (8-bit)
 };
 
 enum class TimingCondition : uint8_t {
   kBranchTaken = 0,
   kAccumulator16 = 1,
   kIndex16 = 2,
+  kEmulationMode = 3,
+  kBranchPageCrossed = 4,
 };
 
 enum class TimingRuleOp : uint8_t {
@@ -161,6 +177,7 @@ class CPU : public Device {
  private:
   struct TimingContext {
     bool branch_taken = false;
+    bool branch_page_crossed = false;
   };
 
   Regs regs_;
@@ -208,6 +225,10 @@ class CPU : public Device {
   void OpSetBranchTaken(bool taken);
   void OpSetBranchTakenIfNotZero();
   void OpBranchRelative8();
+  void OpDecrementSp();
+  void OpIncrementSp();
+  void OpLoadDbrUpdateNz();
+  [[nodiscard]] SnesAddrT StackAddr() const;
   // Replace byte [shift, shift+7] of addr_ with fetch_data_.
   void SetAddrByteFromFetch(unsigned shift);
   void FinishInstruction();
