@@ -1,5 +1,7 @@
 #include <array>
 #include <catch2/catch_test_macros.hpp>
+#include <cstddef>
+#include <initializer_list>
 
 #include "pupsnes/5a22/cpu_opcode_defs_internal.h"
 
@@ -27,97 +29,79 @@ constexpr auto kOversizedSpec = Opcode(0x01, "OVR", "test")
 static_assert(!ValidateUniqueOpcodes(kDuplicateOpcodeSpecs));
 static_assert(!ValidateOpcodeSpec(kOversizedSpec));
 
-}  // namespace
+struct CycleExpect {
+  MicroBusAction bus;
+  MicroInternalOp op;
+  uint8_t rule_index;
+  const char* label;
+};
 
-TEST_CASE("Opcode specs lower into expected execution entries", "[cpu][opcode-defs]") {
-  const auto& table = kOpcodeArtifacts.execution_table;
+void ExpectOpcode(uint8_t opcode, const char* mnemonic, const char* addressing, uint8_t rule_count,
+                  std::initializer_list<CycleExpect> cycles) {
+  CAPTURE(opcode);
+  const auto& e = kOpcodeArtifacts.execution_table[opcode];
+  REQUIRE(e.disposition == InstructionDisposition::kImplemented);
+  REQUIRE(e.remaining_op_count == cycles.size());
+  REQUIRE(e.rule_count == rule_count);
 
-  const InstructionEntry& nop = table[0xEA];
-  REQUIRE(nop.disposition == InstructionDisposition::kImplemented);
-  REQUIRE(nop.remaining_op_count == 1);
-  REQUIRE(nop.rule_count == 1);
-  REQUIRE(nop.ops[0].bus_action == MicroBusAction::kNone);
-  REQUIRE(nop.ops[0].internal_op == MicroInternalOp::kNone);
-  REQUIRE(nop.ops[0].rule_index == 0);
+  const auto& m = kOpcodeArtifacts.metadata_table[opcode];
+  REQUIRE(m.implemented);
+  REQUIRE(m.mnemonic == mnemonic);
+  REQUIRE(m.addressing_mode == addressing);
+  REQUIRE(m.cycle_count == cycles.size());
 
-  const InstructionEntry& lda_imm = table[0xA9];
-  REQUIRE(lda_imm.disposition == InstructionDisposition::kImplemented);
-  REQUIRE(lda_imm.remaining_op_count == 3);
-  REQUIRE(lda_imm.rule_count == 3);
-  REQUIRE(lda_imm.ops[0].bus_action == MicroBusAction::kFetchPc);
-  REQUIRE(lda_imm.ops[0].internal_op == MicroInternalOp::kLoadA8UpdateNz);
-  REQUIRE(lda_imm.ops[1].internal_op == MicroInternalOp::kLoadALow);
-  REQUIRE(lda_imm.ops[2].internal_op == MicroInternalOp::kLoadAHighUpdateNz);
-
-  const InstructionEntry& ldx_imm = table[0xA2];
-  REQUIRE(ldx_imm.disposition == InstructionDisposition::kImplemented);
-  REQUIRE(ldx_imm.remaining_op_count == 3);
-  REQUIRE(ldx_imm.rule_count == 3);
-  REQUIRE(ldx_imm.ops[0].bus_action == MicroBusAction::kFetchPc);
-  REQUIRE(ldx_imm.ops[0].internal_op == MicroInternalOp::kLoadX8UpdateNz);
-  REQUIRE(ldx_imm.ops[1].internal_op == MicroInternalOp::kLoadXLow);
-  REQUIRE(ldx_imm.ops[2].internal_op == MicroInternalOp::kLoadXHighUpdateNz);
-
-  const InstructionEntry& ldy_imm = table[0xA0];
-  REQUIRE(ldy_imm.disposition == InstructionDisposition::kImplemented);
-  REQUIRE(ldy_imm.remaining_op_count == 3);
-  REQUIRE(ldy_imm.rule_count == 3);
-  REQUIRE(ldy_imm.ops[0].bus_action == MicroBusAction::kFetchPc);
-  REQUIRE(ldy_imm.ops[0].internal_op == MicroInternalOp::kLoadY8UpdateNz);
-  REQUIRE(ldy_imm.ops[1].internal_op == MicroInternalOp::kLoadYLow);
-  REQUIRE(ldy_imm.ops[2].internal_op == MicroInternalOp::kLoadYHighUpdateNz);
-
-  const InstructionEntry& sta_long = table[0x8F];
-  REQUIRE(sta_long.disposition == InstructionDisposition::kImplemented);
-  REQUIRE(sta_long.remaining_op_count == 4);
-  REQUIRE(sta_long.ops[0].internal_op == MicroInternalOp::kSetAddrLowFromFetch);
-  REQUIRE(sta_long.ops[1].internal_op == MicroInternalOp::kSetAddrHighFromFetch);
-  REQUIRE(sta_long.ops[2].internal_op == MicroInternalOp::kSetAddrBankFromFetch);
-  REQUIRE(sta_long.ops[3].bus_action == MicroBusAction::kWriteA8Addr);
-
-  const InstructionEntry& bra = table[0x80];
-  REQUIRE(bra.disposition == InstructionDisposition::kImplemented);
-  REQUIRE(bra.remaining_op_count == 2);
-  REQUIRE(bra.rule_count == 2);
-  REQUIRE(bra.ops[0].internal_op == MicroInternalOp::kSetBranchTaken);
-  REQUIRE(bra.ops[1].internal_op == MicroInternalOp::kBranchRelative8);
-  REQUIRE(bra.ops[1].rule_index == 1);
-
-  const InstructionEntry& bne = table[0xD0];
-  REQUIRE(bne.disposition == InstructionDisposition::kImplemented);
-  REQUIRE(bne.remaining_op_count == 2);
-  REQUIRE(bne.rule_count == 2);
-  REQUIRE(bne.ops[0].bus_action == MicroBusAction::kFetchPc);
-  REQUIRE(bne.ops[0].internal_op == MicroInternalOp::kSetBranchTakenIfNotZero);
-  REQUIRE(bne.ops[1].bus_action == MicroBusAction::kNone);
-  REQUIRE(bne.ops[1].internal_op == MicroInternalOp::kBranchRelative8);
-  REQUIRE(bne.ops[1].rule_index == 1);
-  REQUIRE(bne.rules[1].node_count == 1);
-  REQUIRE(bne.rules[1].nodes[0].op == TimingRuleOp::kCondition);
-  REQUIRE(bne.rules[1].nodes[0].condition == TimingCondition::kBranchTaken);
+  std::size_t i = 0;
+  for (const auto& c : cycles) {
+    CAPTURE(i);
+    REQUIRE(e.ops[i].bus_action == c.bus);
+    REQUIRE(e.ops[i].internal_op == c.op);
+    REQUIRE(e.ops[i].rule_index == c.rule_index);
+    REQUIRE(m.cycle_labels[i] == c.label);
+    ++i;
+  }
 }
 
-TEST_CASE("Opcode metadata preserves readable lowered cycle labels", "[cpu][opcode-defs]") {
-  const auto& metadata = kOpcodeArtifacts.metadata_table;
+}  // namespace
 
-  REQUIRE(metadata[0xEA].implemented);
-  REQUIRE(metadata[0xEA].mnemonic == "NOP");
-  REQUIRE(metadata[0xEA].cycle_labels[0] == "idle");
+TEST_CASE("Opcode specs lower into expected execution and metadata entries", "[cpu][opcode-defs]") {
+  using B = MicroBusAction;
+  using M = MicroInternalOp;
 
-  REQUIRE(metadata[0xA9].implemented);
-  REQUIRE(metadata[0xA9].mnemonic == "LDA");
-  REQUIRE(metadata[0xA9].addressing_mode == "immediate");
-  REQUIRE(metadata[0xA9].cycle_labels[0] == "fetch immediate low");
-  REQUIRE(metadata[0xA9].cycle_labels[1] == "fetch immediate low");
-  REQUIRE(metadata[0xA9].cycle_labels[2] == "fetch immediate high");
+  ExpectOpcode(0xEA, "NOP", "implied", 1, {{B::kNone, M::kNone, 0, "idle"}});
 
-  REQUIRE(metadata[0x8F].implemented);
-  REQUIRE(metadata[0x8F].mnemonic == "STA");
-  REQUIRE(metadata[0x8F].addressing_mode == "absolute long");
-  REQUIRE(metadata[0x8F].cycle_labels[0] == "fetch address low");
-  REQUIRE(metadata[0x8F].cycle_labels[1] == "fetch address high");
-  REQUIRE(metadata[0x8F].cycle_labels[2] == "fetch address bank");
-  REQUIRE(metadata[0x8F].cycle_labels[3] == "write A low");
+  ExpectOpcode(0xA9, "LDA", "immediate", 3,
+               {{B::kFetchPc, M::kLoadA8UpdateNz, 1, "fetch immediate low"},
+                {B::kFetchPc, M::kLoadALow, 2, "fetch immediate low"},
+                {B::kFetchPc, M::kLoadAHighUpdateNz, 2, "fetch immediate high"}});
+
+  ExpectOpcode(0xA2, "LDX", "immediate", 3,
+               {{B::kFetchPc, M::kLoadX8UpdateNz, 1, "fetch immediate low"},
+                {B::kFetchPc, M::kLoadXLow, 2, "fetch immediate low"},
+                {B::kFetchPc, M::kLoadXHighUpdateNz, 2, "fetch immediate high"}});
+
+  ExpectOpcode(0xA0, "LDY", "immediate", 3,
+               {{B::kFetchPc, M::kLoadY8UpdateNz, 1, "fetch immediate low"},
+                {B::kFetchPc, M::kLoadYLow, 2, "fetch immediate low"},
+                {B::kFetchPc, M::kLoadYHighUpdateNz, 2, "fetch immediate high"}});
+
+  ExpectOpcode(0x8F, "STA", "absolute long", 1,
+               {{B::kFetchPc, M::kSetAddrLowFromFetch, 0, "fetch address low"},
+                {B::kFetchPc, M::kSetAddrHighFromFetch, 0, "fetch address high"},
+                {B::kFetchPc, M::kSetAddrBankFromFetch, 0, "fetch address bank"},
+                {B::kWriteA8Addr, M::kNone, 0, "write A low"}});
+
+  ExpectOpcode(
+      0x80, "BRA", "relative", 2,
+      {{B::kFetchPc, M::kSetBranchTaken, 0, "fetch displacement"}, {B::kNone, M::kBranchRelative8, 1, "apply branch"}});
+
+  ExpectOpcode(0xD0, "BNE", "relative", 2,
+               {{B::kFetchPc, M::kSetBranchTakenIfNotZero, 0, "fetch displacement"},
+                {B::kNone, M::kBranchRelative8, 1, "apply branch"}});
+
+  const auto& bne_branch_rule = kOpcodeArtifacts.execution_table[0xD0].rules[1];
+  REQUIRE(bne_branch_rule.node_count == 1);
+  REQUIRE(bne_branch_rule.nodes[0].op == TimingRuleOp::kCondition);
+  REQUIRE(bne_branch_rule.nodes[0].condition == TimingCondition::kBranchTaken);
 }
 
 TEST_CASE("Unimplemented opcodes lower to explicit fault entries", "[cpu][opcode-defs]") {

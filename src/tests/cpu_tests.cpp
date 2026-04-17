@@ -103,6 +103,8 @@ struct AsyncProgramFixture {
   }
 };
 
+using RegPtr = uint16_t CPU::Regs::*;
+
 struct ResetFixture {
   SNES snes;
   Cartridge cartridge{&snes};
@@ -352,91 +354,47 @@ TEST_CASE("NOP tick slices still compose correctly without local_time mutation",
   REQUIRE(f.cpu.GetTime() == 0);
 }
 
-TEST_CASE("LDA immediate updates A and flags through direct tick", "[cpu]") {
+static void CheckImm8Load(uint8_t opcode, RegPtr reg) {
   TestFixture f;
-  f.LoadAt(0, {0xA9, 0x80});
-
+  f.LoadAt(0, {opcode, 0x80});
   TickResult r = f.cpu.Tick(2);
+  auto regs = f.cpu.GetRegs();
   REQUIRE(r.completed_cycles == 2);
-  REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x80);
-  REQUIRE(f.cpu.GetRegs().P.N == true);
-  REQUIRE(f.cpu.GetRegs().P.Z == false);
+  REQUIRE(static_cast<uint8_t>(regs.*reg) == 0x80);
+  REQUIRE(regs.P.N == true);
+  REQUIRE(regs.P.Z == false);
   REQUIRE(f.cpu.GetTime() == 0);
 }
 
-TEST_CASE("LDX immediate updates X and flags through direct tick", "[cpu]") {
+TEST_CASE("LDA immediate updates A and flags through direct tick", "[cpu]") { CheckImm8Load(0xA9, &CPU::Regs::A); }
+TEST_CASE("LDX immediate updates X and flags through direct tick", "[cpu]") { CheckImm8Load(0xA2, &CPU::Regs::X); }
+TEST_CASE("LDY immediate updates Y and flags through direct tick", "[cpu]") { CheckImm8Load(0xA0, &CPU::Regs::Y); }
+
+static void CheckImm16Load(uint8_t opcode, uint8_t lo, uint8_t hi, uint16_t expected, bool clear_m, RegPtr reg,
+                           bool expect_n) {
   TestFixture f;
-  f.LoadAt(0, {0xA2, 0x80});
-
-  TickResult r = f.cpu.Tick(2);
-  REQUIRE(r.completed_cycles == 2);
-  REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().X) == 0x80);
-  REQUIRE(f.cpu.GetRegs().P.N == true);
-  REQUIRE(f.cpu.GetRegs().P.Z == false);
-  REQUIRE(f.cpu.GetTime() == 0);
-}
-
-TEST_CASE("LDY immediate updates Y and flags through direct tick", "[cpu]") {
-  TestFixture f;
-  f.LoadAt(0, {0xA0, 0x80});
-
-  TickResult r = f.cpu.Tick(2);
-  REQUIRE(r.completed_cycles == 2);
-  REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().Y) == 0x80);
-  REQUIRE(f.cpu.GetRegs().P.N == true);
-  REQUIRE(f.cpu.GetRegs().P.Z == false);
-  REQUIRE(f.cpu.GetTime() == 0);
+  f.LoadAt(0, {opcode, lo, hi});
+  auto regs = f.cpu.GetRegs();
+  regs.P.E = false;
+  (clear_m ? regs.P.M : regs.P.X) = false;
+  f.cpu.SetRegs(regs);
+  TickResult r = f.cpu.Tick(3);
+  auto out = f.cpu.GetRegs();
+  REQUIRE(r.completed_cycles == 3);
+  REQUIRE(out.*reg == expected);
+  REQUIRE(out.PC == 0x8003);
+  REQUIRE(out.P.N == expect_n);
+  REQUIRE(out.P.Z == false);
 }
 
 TEST_CASE("LDA immediate uses 16-bit width when M is clear", "[cpu]") {
-  TestFixture f;
-  f.LoadAt(0, {0xA9, 0xAB, 0xCD});
-
-  auto regs = f.cpu.GetRegs();
-  regs.P.E = false;
-  regs.P.M = false;
-  f.cpu.SetRegs(regs);
-
-  TickResult r = f.cpu.Tick(3);
-  REQUIRE(r.completed_cycles == 3);
-  REQUIRE(f.cpu.GetRegs().A == 0xCDAB);
-  REQUIRE(f.cpu.GetRegs().PC == 0x8003);
-  REQUIRE(f.cpu.GetRegs().P.N == true);
-  REQUIRE(f.cpu.GetRegs().P.Z == false);
+  CheckImm16Load(0xA9, 0xAB, 0xCD, 0xCDAB, true, &CPU::Regs::A, true);
 }
-
 TEST_CASE("LDX immediate uses 16-bit width when X is clear", "[cpu]") {
-  TestFixture f;
-  f.LoadAt(0, {0xA2, 0x34, 0x12});
-
-  auto regs = f.cpu.GetRegs();
-  regs.P.E = false;
-  regs.P.X = false;
-  f.cpu.SetRegs(regs);
-
-  TickResult r = f.cpu.Tick(3);
-  REQUIRE(r.completed_cycles == 3);
-  REQUIRE(f.cpu.GetRegs().X == 0x1234);
-  REQUIRE(f.cpu.GetRegs().PC == 0x8003);
-  REQUIRE(f.cpu.GetRegs().P.N == false);
-  REQUIRE(f.cpu.GetRegs().P.Z == false);
+  CheckImm16Load(0xA2, 0x34, 0x12, 0x1234, false, &CPU::Regs::X, false);
 }
-
 TEST_CASE("LDY immediate uses 16-bit width when X is clear", "[cpu]") {
-  TestFixture f;
-  f.LoadAt(0, {0xA0, 0x00, 0x80});
-
-  auto regs = f.cpu.GetRegs();
-  regs.P.E = false;
-  regs.P.X = false;
-  f.cpu.SetRegs(regs);
-
-  TickResult r = f.cpu.Tick(3);
-  REQUIRE(r.completed_cycles == 3);
-  REQUIRE(f.cpu.GetRegs().Y == 0x8000);
-  REQUIRE(f.cpu.GetRegs().PC == 0x8003);
-  REQUIRE(f.cpu.GetRegs().P.N == true);
-  REQUIRE(f.cpu.GetRegs().P.Z == false);
+  CheckImm16Load(0xA0, 0x00, 0x80, 0x8000, false, &CPU::Regs::Y, true);
 }
 
 TEST_CASE(
@@ -453,9 +411,7 @@ TEST_CASE(
   REQUIRE(cpu.GetTime() == 0);
   const auto& fault = cpu.GetFault();
   REQUIRE(fault.has_value());
-  if (!fault.has_value()) {
-    return;
-  }
+  if (!fault) return;
   REQUIRE(fault->opcode == 0xFF);
   REQUIRE(fault->opcode_address == 0x000000U);
 }
@@ -511,9 +467,7 @@ TEST_CASE("Direct CPU tick faults on unimplemented opcode fetch", "[cpu]") {
   REQUIRE(f.cpu.GetTime() == 0);
   const auto& fault = f.cpu.GetFault();
   REQUIRE(fault.has_value());
-  if (!fault.has_value()) {
-    return;
-  }
+  if (!fault) return;
   REQUIRE(fault->opcode == 0x00);
   REQUIRE(fault->opcode_address == 0x008000U);
 }
@@ -528,9 +482,7 @@ TEST_CASE("Scheduler-driven CPU faults are terminal and do not reschedule", "[cp
   REQUIRE(f.cpu.GetTime() == 1);
   const auto& fault = f.cpu.GetFault();
   REQUIRE(fault.has_value());
-  if (!fault.has_value()) {
-    return;
-  }
+  if (!fault) return;
   REQUIRE(fault->opcode == 0x00);
   REQUIRE_FALSE(SchedulerTestAccess::HasPendingRun(*f.snes.scheduler, f.cpu.GetDeviceId()));
 }
