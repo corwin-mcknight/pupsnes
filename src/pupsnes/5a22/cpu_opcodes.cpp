@@ -1,4 +1,5 @@
 #include "cpu_opcode_defs_internal.h"
+#include "pupsnes/5a22/opcode_metadata.h"
 
 namespace pupsnes::opcode_defs_internal {
 namespace {
@@ -115,8 +116,8 @@ constexpr auto MakeStackSpecs() {
 constexpr auto MakeLoadSpecs() {
   return std::array{
       Opcode(0xA9, "LDA", "immediate").Then(LoadAccumulatorImmediate()).Build(),
-      Opcode(0xA2, "LDX", "immediate").Then(LoadIndexXImmediate()).Build(),
-      Opcode(0xA0, "LDY", "immediate").Then(LoadIndexYImmediate()).Build(),
+      Opcode(0xA2, "LDX", "immediate index").Then(LoadIndexXImmediate()).Build(),
+      Opcode(0xA0, "LDY", "immediate index").Then(LoadIndexYImmediate()).Build(),
   };
 }
 
@@ -149,5 +150,112 @@ const OpcodeArtifacts kOpcodeArtifacts = BuildOpcodeArtifacts(kExplicitOpcodeSpe
 }  // namespace pupsnes::opcode_defs_internal
 
 namespace pupsnes {
+
+namespace {
+
+constexpr OpcodeAddressingMode MapAddressingMode(std::string_view mode) {
+  if (mode == "implied") {
+    return OpcodeAddressingMode::kImplied;
+  }
+  if (mode == "immediate") {
+    return OpcodeAddressingMode::kImmediateAccumulator;
+  }
+  if (mode == "immediate index") {
+    return OpcodeAddressingMode::kImmediateIndex;
+  }
+  if (mode == "absolute") {
+    return OpcodeAddressingMode::kAbsolute;
+  }
+  if (mode == "absolute long") {
+    return OpcodeAddressingMode::kAbsoluteLong;
+  }
+  if (mode == "relative") {
+    return OpcodeAddressingMode::kRelative8;
+  }
+  return OpcodeAddressingMode::kUnknown;
+}
+
+constexpr OpcodeMetadataView LowerPublicMetadata(const opcode_defs_internal::OpcodeMetadata& metadata) {
+  OpcodeMetadataView view{};
+  view.mnemonic = metadata.mnemonic;
+  view.implementation_status =
+      metadata.implemented ? OpcodeImplementationStatus::kImplemented : OpcodeImplementationStatus::kUnimplemented;
+  view.addressing_mode = MapAddressingMode(metadata.addressing_mode);
+
+  switch (view.addressing_mode) {
+    case OpcodeAddressingMode::kImplied:
+    case OpcodeAddressingMode::kUnknown:
+      view.base_length = 1;
+      break;
+    case OpcodeAddressingMode::kImmediateAccumulator:
+      view.base_length = 2;
+      view.accumulator_width_dependent = true;
+      break;
+    case OpcodeAddressingMode::kImmediateIndex:
+      view.base_length = 2;
+      view.index_width_dependent = true;
+      break;
+    case OpcodeAddressingMode::kAbsolute:
+      view.base_length = 3;
+      break;
+    case OpcodeAddressingMode::kAbsoluteLong:
+      view.base_length = 4;
+      break;
+    case OpcodeAddressingMode::kRelative8:
+      view.base_length = 2;
+      break;
+  }
+
+  return view;
+}
+
+std::array<OpcodeMetadataView, 256> BuildPublicMetadataTable() {
+  std::array<OpcodeMetadataView, 256> table{};
+  for (std::size_t i = 0; i < table.size(); ++i) {
+    table[i] = LowerPublicMetadata(opcode_defs_internal::kOpcodeArtifacts.metadata_table[i]);
+  }
+  return table;
+}
+
+}  // namespace
+
 const std::array<InstructionEntry, 256> CPU::kOpcodeTable = opcode_defs_internal::kOpcodeArtifacts.execution_table;
+
+const std::array<OpcodeMetadataView, 256>& GetOpcodeMetadataTable() {
+  static const std::array<OpcodeMetadataView, 256> kPublicOpcodeMetadata = BuildPublicMetadataTable();
+  return kPublicOpcodeMetadata;
+}
+
+const OpcodeMetadataView& GetOpcodeMetadata(uint8_t opcode) { return GetOpcodeMetadataTable()[opcode]; }
+
+uint8_t ComputeInstructionLength(const OpcodeMetadataView& metadata, const CpuFlags& flags) {
+  uint8_t length = metadata.base_length;
+  if (metadata.accumulator_width_dependent && !flags.E && !flags.M) {
+    length = static_cast<uint8_t>(length + 1U);
+  }
+  if (metadata.index_width_dependent && !flags.E && !flags.X) {
+    length = static_cast<uint8_t>(length + 1U);
+  }
+  return length;
+}
+
+std::string_view GetAddressingModeName(OpcodeAddressingMode mode) {
+  switch (mode) {
+    case OpcodeAddressingMode::kUnknown:
+      return "unknown";
+    case OpcodeAddressingMode::kImplied:
+      return "implied";
+    case OpcodeAddressingMode::kImmediateAccumulator:
+      return "immediate";
+    case OpcodeAddressingMode::kImmediateIndex:
+      return "immediate index";
+    case OpcodeAddressingMode::kAbsolute:
+      return "absolute";
+    case OpcodeAddressingMode::kAbsoluteLong:
+      return "absolute long";
+    case OpcodeAddressingMode::kRelative8:
+      return "relative";
+  }
+  return "unknown";
+}
 }  // namespace pupsnes

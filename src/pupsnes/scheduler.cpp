@@ -5,6 +5,8 @@
 #include <format>
 #include <iostream>
 #include <stdexcept>
+#include <string>
+#include <vector>
 
 #include "pupsnes/hw/device.h"
 #include "pupsnes/hw/snes.h"
@@ -35,6 +37,14 @@ void DebugPrintSchedulerEvent(const SchedulerEvent& event, bool multiline) {
 
 Scheduler::Scheduler(SNES* snes) : snes_(snes) {}
 Scheduler::~Scheduler() = default;
+
+void Scheduler::Reset() {
+  phase_ = SchedulerPhase::kCommitComplete;
+  eventQueue_ = EventMinHeap{};
+  device_run_states_.clear();
+  nextEventSeq_ = 0;
+  token_table_ = TokenTable{};
+}
 
 Scheduler::DeviceRunState& Scheduler::EnsureRunState(DeviceIdT device_id) {
   if (device_id >= device_run_states_.size()) {
@@ -384,6 +394,31 @@ void Scheduler::CatchUpDevice(DeviceIdT device_id, TimeMasterT target_time) {
   }
 }
 
+std::vector<SchedulerEventView> Scheduler::SnapshotQueue() const {
+  EventMinHeap temp_queue = eventQueue_;
+  std::vector<SchedulerEventView> snapshot;
+  snapshot.reserve(temp_queue.size());
+
+  while (!temp_queue.empty()) {
+    const SchedulerEvent& event = temp_queue.top();
+    temp_queue.pop();
+
+    if (IsStaleRunEvent(event)) {
+      continue;
+    }
+
+    snapshot.push_back({
+        .time = event.time,
+        .device_id = (event.source != nullptr) ? std::optional<DeviceIdT>(event.source->GetDeviceId()) : std::nullopt,
+        .subphase = event.subphase,
+        .type = event.type,
+        .run_generation = event.run_generation,
+    });
+  }
+
+  return snapshot;
+}
+
 void Scheduler::DebugPrintNextEvent() {
   if (eventQueue_.empty()) {
     std::cerr << "No scheduled events.\n";
@@ -395,17 +430,17 @@ void Scheduler::DebugPrintNextEvent() {
 }
 
 void Scheduler::DebugPrintEventQueue() {
-  if (eventQueue_.empty()) {
+  const std::vector<SchedulerEventView> snapshot = SnapshotQueue();
+  if (snapshot.empty()) {
     std::cerr << "Event queue is empty.\n";
     return;
   }
 
-  EventMinHeap temp_queue = eventQueue_;
   std::cerr << "Scheduled Events:\n";
-  while (!temp_queue.empty()) {
-    const SchedulerEvent& event = temp_queue.top();
-    DebugPrintSchedulerEvent(event, false);
-    temp_queue.pop();
+  for (const SchedulerEventView& event : snapshot) {
+    std::cerr << std::format("  Time: {}, Source: {}, Subphase: {}, Type: {}, Run generation: {}\n", event.time,
+                             event.device_id.has_value() ? std::to_string(*event.device_id) : std::string("null"),
+                             static_cast<int>(event.subphase), static_cast<int>(event.type), event.run_generation);
   }
 }
 

@@ -12,6 +12,12 @@ namespace pupsnes {
 
 SystemBus::SystemBus(SNES* snes) : snes_(snes) {}
 
+namespace {
+
+SnesAddrT NormalizeAddress(SnesAddrT address) { return util::WrapAddr(address); }
+
+}  // namespace
+
 void SystemBus::MapPage(const PageMapParams& params) {
   PageTableEntry& entry = page_table_[params.bank][params.page];
   entry.device_id = params.device;
@@ -23,7 +29,7 @@ void SystemBus::MapPage(const PageMapParams& params) {
 void SystemBus::UnmapPage(uint8_t bank, uint8_t page) { page_table_[bank][page] = PageTableEntry{}; }
 
 BusPlan SystemBus::Plan(SnesAddrT address, BusAccessType type, uint8_t write_data) const {
-  SnesAddrT addr = util::WrapAddr(address);
+  SnesAddrT addr = NormalizeAddress(address);
   uint8_t bank = static_cast<uint8_t>(addr >> 16);
   uint8_t page = static_cast<uint8_t>((addr >> 8) & 0xFF);
   uint8_t offset_in_page = static_cast<uint8_t>(addr & 0xFF);
@@ -74,6 +80,73 @@ BusFollowResult SystemBus::Follow(const BusPlan& plan, TimeMasterT current_time,
       return {BusPlanOutcome::kRejected, last_data_bus_value_, 0};
   }
   return {BusPlanOutcome::kRejected, last_data_bus_value_, 0};
+}
+
+DebugReadResult SystemBus::MakeDebugReadResult(const BusPlan& plan) const {
+  DebugReadResult result{};
+  result.address = plan.original_address;
+  result.device_id = plan.target_device;
+  result.device_offset = plan.device_offset;
+
+  if (plan.outcome == BusPlanOutcome::kRejected) {
+    result.failure = DebugAccessFailureKind::kUnmapped;
+    return result;
+  }
+
+  Device* device = snes_->GetDevice(plan.target_device);
+  if (device == nullptr) {
+    result.failure = DebugAccessFailureKind::kDeviceUnavailable;
+    return result;
+  }
+
+  const std::optional<uint8_t> value = device->HandleDebugRead(plan.device_offset);
+  if (!value.has_value()) {
+    result.failure = DebugAccessFailureKind::kDeviceRefused;
+    return result;
+  }
+
+  result.ok = true;
+  result.value = *value;
+  result.failure = DebugAccessFailureKind::kNone;
+  return result;
+}
+
+DebugWriteResult SystemBus::MakeDebugWriteResult(const BusPlan& plan, uint8_t value) const {
+  DebugWriteResult result{};
+  result.address = plan.original_address;
+  result.device_id = plan.target_device;
+  result.device_offset = plan.device_offset;
+  result.value = value;
+
+  if (plan.outcome == BusPlanOutcome::kRejected) {
+    result.failure = DebugAccessFailureKind::kUnmapped;
+    return result;
+  }
+
+  Device* device = snes_->GetDevice(plan.target_device);
+  if (device == nullptr) {
+    result.failure = DebugAccessFailureKind::kDeviceUnavailable;
+    return result;
+  }
+
+  if (!device->HandleDebugWrite(plan.device_offset, value)) {
+    result.failure = DebugAccessFailureKind::kDeviceRefused;
+    return result;
+  }
+
+  result.ok = true;
+  result.failure = DebugAccessFailureKind::kNone;
+  return result;
+}
+
+DebugReadResult SystemBus::DebugRead(SnesAddrT address) const {
+  const BusPlan plan = Plan(NormalizeAddress(address), BusAccessType::kRead);
+  return MakeDebugReadResult(plan);
+}
+
+DebugWriteResult SystemBus::DebugWrite(SnesAddrT address, uint8_t value) {
+  const BusPlan plan = Plan(NormalizeAddress(address), BusAccessType::kWrite, value);
+  return MakeDebugWriteResult(plan, value);
 }
 
 BusFollowResult SystemBus::FollowInline(const BusPlan& plan, TimeMasterT current_time) {

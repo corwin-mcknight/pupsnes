@@ -423,15 +423,12 @@ RomExecutionResult RunScenario(const RomScenario& scenario) {
     const std::vector<uint8_t> rom_bytes = ReadBinaryFile(rom_path);
 
     SNES snes;
-    Cartridge cartridge(&snes);
-    WRAM wram(&snes);
-    CPU cpu(&snes);
+    WRAM& wram = snes.GetWram();
+    CPU& cpu = snes.GetCpu();
 
-    cartridge.LoadLoRom(rom_bytes);
-    cartridge.MapLoRom(*snes.system_bus);
-    wram.MapSystemBus(*snes.system_bus);
+    snes.LoadLoRom(rom_bytes);
 
-    cpu.Reset();
+    snes.Reset();
     if (scenario.initial_dbr.has_value()) {
       CPU::Regs regs = cpu.GetRegs();
       regs.DBR = *scenario.initial_dbr;

@@ -86,13 +86,12 @@ TEST_CASE("SNES assigns stable device IDs", "[unit]") {
   ScriptedDevice dev2(&snes);
   ScriptedDevice dev3(&snes);
 
-  REQUIRE(dev1.GetDeviceId() == 0);
-  REQUIRE(dev2.GetDeviceId() == 1);
-  REQUIRE(dev3.GetDeviceId() == 2);
+  REQUIRE(dev2.GetDeviceId() == dev1.GetDeviceId() + 1);
+  REQUIRE(dev3.GetDeviceId() == dev2.GetDeviceId() + 1);
 
-  REQUIRE(snes.GetDevice(0) == &dev1);
-  REQUIRE(snes.GetDevice(1) == &dev2);
-  REQUIRE(snes.GetDevice(2) == &dev3);
+  REQUIRE(snes.GetDevice(dev1.GetDeviceId()) == &dev1);
+  REQUIRE(snes.GetDevice(dev2.GetDeviceId()) == &dev2);
+  REQUIRE(snes.GetDevice(dev3.GetDeviceId()) == &dev3);
   REQUIRE(snes.GetDevice(99) == nullptr);
 }
 

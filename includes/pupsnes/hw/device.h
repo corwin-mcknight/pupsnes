@@ -46,9 +46,12 @@ class Device {
   virtual void OnEvent(const SchedulerEvent& event) = 0;
   virtual uint8_t ReadRegister(uint32_t /*offset*/) { return 0; }
   virtual void WriteRegister(uint32_t /*offset*/, uint8_t /*data*/) {}
+  [[nodiscard]] virtual std::optional<uint8_t> HandleDebugRead(uint32_t /*offset*/) const { return std::nullopt; }
+  virtual bool HandleDebugWrite(uint32_t /*offset*/, uint8_t /*data*/) { return false; }
 
   [[nodiscard]] TimeMasterT GetTime() const { return local_time_; }
   void AdvanceLocalTime(TimeMasterDeltaT delta) { local_time_ += delta; }
+  void SetLocalTime(TimeMasterT time) { local_time_ = time; }
   [[nodiscard]] DeviceIdT GetDeviceId() const { return device_id_; }
 };
 }  // namespace pupsnes

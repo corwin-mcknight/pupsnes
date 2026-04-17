@@ -1,0 +1,40 @@
+#pragma once
+
+#include <array>
+#include <cstdint>
+#include <string_view>
+
+#include "pupsnes/hw/5a22/cpu.h"
+
+namespace pupsnes {
+
+enum class OpcodeAddressingMode : uint8_t {
+  kUnknown = 0,
+  kImplied = 1,
+  kImmediateAccumulator = 2,
+  kImmediateIndex = 3,
+  kAbsolute = 4,
+  kAbsoluteLong = 5,
+  kRelative8 = 6,
+};
+
+enum class OpcodeImplementationStatus : uint8_t {
+  kImplemented = 0,
+  kUnimplemented = 1,
+};
+
+struct OpcodeMetadataView {
+  std::string_view mnemonic = "???";
+  OpcodeAddressingMode addressing_mode = OpcodeAddressingMode::kUnknown;
+  OpcodeImplementationStatus implementation_status = OpcodeImplementationStatus::kUnimplemented;
+  uint8_t base_length = 1;
+  bool accumulator_width_dependent = false;
+  bool index_width_dependent = false;
+};
+
+[[nodiscard]] const std::array<OpcodeMetadataView, 256>& GetOpcodeMetadataTable();
+[[nodiscard]] const OpcodeMetadataView& GetOpcodeMetadata(uint8_t opcode);
+[[nodiscard]] uint8_t ComputeInstructionLength(const OpcodeMetadataView& metadata, const CpuFlags& flags);
+[[nodiscard]] std::string_view GetAddressingModeName(OpcodeAddressingMode mode);
+
+}  // namespace pupsnes

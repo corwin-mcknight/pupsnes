@@ -85,7 +85,7 @@ TEST_CASE("plan decodes address to correct target and offset", "[unit]") {
 TEST_CASE("plan for unmapped address returns Rejected", "[unit]") {
   SNES snes;
 
-  BusPlan p = snes.system_bus->Plan(0x100000, BusAccessType::kRead);
+  BusPlan p = snes.system_bus->Plan(0x400000, BusAccessType::kRead);
   REQUIRE(p.outcome == BusPlanOutcome::kRejected);
 }
 
@@ -184,7 +184,7 @@ TEST_CASE("follow ScheduledComplete for CrossClockMMIO creates token", "[unit]")
 TEST_CASE("follow Rejected plan returns Rejected result", "[unit]") {
   SNES snes;
 
-  BusPlan p = snes.system_bus->Plan(0x100000, BusAccessType::kRead);
+  BusPlan p = snes.system_bus->Plan(0x400000, BusAccessType::kRead);
   REQUIRE(p.outcome == BusPlanOutcome::kRejected);
 
   BusFollowResult result = snes.system_bus->Follow(p, 0, 0);
@@ -247,8 +247,7 @@ TEST_CASE("multiple sequential plan/follow operations", "[unit]") {
 
 TEST_CASE("WRAM maps banks 7E and 7F as contiguous memory", "[unit]") {
   SNES snes;
-  WRAM wram(&snes);
-  wram.MapSystemBus(*snes.system_bus);
+  WRAM& wram = snes.GetWram();
 
   BusPlan write_first_bank = snes.system_bus->Plan(0x7E0001, BusAccessType::kWrite, 0x12);
   BusPlan write_second_bank = snes.system_bus->Plan(0x7F0002, BusAccessType::kWrite, 0x34);
@@ -270,7 +269,7 @@ TEST_CASE("WRAM maps banks 7E and 7F as contiguous memory", "[unit]") {
 
 TEST_CASE("Cartridge LoROM mapping exposes reset vector and program window", "[unit]") {
   SNES snes;
-  Cartridge cartridge(&snes);
+  Cartridge& cartridge = snes.GetCartridge();
   std::array<uint8_t, Cartridge::kLoROMWindowSize> rom{};
 
   rom.fill(0xFF);
@@ -279,8 +278,7 @@ TEST_CASE("Cartridge LoROM mapping exposes reset vector and program window", "[u
   rom[0x7FFC] = 0x00;
   rom[0x7FFD] = 0x80;
 
-  cartridge.LoadLoRom(rom);
-  cartridge.MapLoRom(*snes.system_bus);
+  snes.LoadLoRom(rom);
 
   BusFollowResult reset_lo =
       snes.system_bus->Follow(snes.system_bus->Plan(0x00FFFC, BusAccessType::kRead), 0, cartridge.GetDeviceId());

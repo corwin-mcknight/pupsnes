@@ -173,6 +173,9 @@ class CPU : public Device {
   void SetRegs(const Regs& r) { regs_ = r; }
   [[nodiscard]] uint8_t GetMicroOpIndex() const { return micro_op_index_; }
   [[nodiscard]] const std::optional<Fault>& GetFault() const { return fault_; }
+  void SetBoundaryStopEnabled(bool enabled) { stop_at_instruction_boundary_ = enabled; }
+  [[nodiscard]] bool GetBoundaryStopEnabled() const { return stop_at_instruction_boundary_; }
+  [[nodiscard]] uint64_t GetRetiredInstructionCount() const { return retired_instruction_count_; }
 
  private:
   struct TimingContext {
@@ -190,6 +193,8 @@ class CPU : public Device {
   uint32_t addr_ = 0;       // Effective address accumulator
   TimingContext timing_context_{};
   std::optional<Fault> fault_ = std::nullopt;
+  bool stop_at_instruction_boundary_ = false;
+  uint64_t retired_instruction_count_ = 0;
 
   const InstructionEntry* current_instr_ = nullptr;
 

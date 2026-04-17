@@ -34,4 +34,13 @@ uint8_t WRAM::ReadRegister(uint32_t offset) { return bytes_[static_cast<std::siz
 
 void WRAM::WriteRegister(uint32_t offset, uint8_t data) { bytes_[static_cast<std::size_t>(offset) % kSize] = data; }
 
+std::optional<uint8_t> WRAM::HandleDebugRead(uint32_t offset) const {
+  return bytes_[static_cast<std::size_t>(offset) % kSize];
+}
+
+bool WRAM::HandleDebugWrite(uint32_t offset, uint8_t data) {
+  bytes_[static_cast<std::size_t>(offset) % kSize] = data;
+  return true;
+}
+
 }  // namespace pupsnes

@@ -1,0 +1,85 @@
+#include "pupsnes/debugger/disasm.h"
+
+#include <format>
+#include <string>
+#include <utility>
+
+namespace pupsnes::debugger {
+
+namespace {
+
+SnesAddrT WrapAddress(SnesAddrT address) { return address & 0x00FFFFFFU; }
+
+std::string FormatAddress24(SnesAddrT address) {
+  return std::format("${:02X}:{:04X}", static_cast<unsigned>(address >> 16), static_cast<unsigned>(address & 0xFFFFU));
+}
+
+std::string FormatOperand(const OpcodeMetadataView& metadata, SnesAddrT pc, uint8_t length,
+                          const std::array<uint8_t, 4>& bytes) {
+  switch (metadata.addressing_mode) {
+    case OpcodeAddressingMode::kImplied:
+    case OpcodeAddressingMode::kUnknown:
+      return "";
+    case OpcodeAddressingMode::kImmediateAccumulator:
+    case OpcodeAddressingMode::kImmediateIndex:
+      if (length >= 3) {
+        return std::format("#${:04X}", static_cast<unsigned>(bytes[1] | (static_cast<uint16_t>(bytes[2]) << 8U)));
+      }
+      return std::format("#${:02X}", static_cast<unsigned>(bytes[1]));
+    case OpcodeAddressingMode::kAbsolute:
+      return std::format("${:04X}", static_cast<unsigned>(bytes[1] | (static_cast<uint16_t>(bytes[2]) << 8U)));
+    case OpcodeAddressingMode::kAbsoluteLong:
+      return std::format("${:02X}:{:04X}", static_cast<unsigned>(bytes[3]),
+                         static_cast<unsigned>(bytes[1] | (static_cast<uint16_t>(bytes[2]) << 8U)));
+    case OpcodeAddressingMode::kRelative8: {
+      const int8_t displacement = static_cast<int8_t>(bytes[1]);
+      const uint16_t next_pc = static_cast<uint16_t>((pc + 2U) & 0xFFFFU);
+      const uint16_t target = static_cast<uint16_t>(next_pc + displacement);
+      return std::format("${:04X}", static_cast<unsigned>(target));
+    }
+  }
+  return "";
+}
+
+}  // namespace
+
+DisassembledInstruction DisassembleInstruction(const SNES& snes, SnesAddrT pc, const CpuFlags& flags) {
+  DisassembledInstruction out{};
+  out.pc = WrapAddress(pc);
+
+  const DebugReadResult opcode_read = snes.GetSystemBus().DebugRead(out.pc);
+  out.complete = opcode_read.ok;
+  out.opcode = opcode_read.ok ? opcode_read.value : 0xFFU;
+  out.bytes[0] = out.opcode;
+  out.byte_count = 1;
+
+  const OpcodeMetadataView& metadata = GetOpcodeMetadata(out.opcode);
+  out.length = ComputeInstructionLength(metadata, flags);
+
+  for (uint8_t i = 1; i < out.length && i < out.bytes.size(); ++i) {
+    const DebugReadResult operand = snes.GetSystemBus().DebugRead(WrapAddress(out.pc + i));
+    if (!operand.ok) {
+      out.complete = false;
+      break;
+    }
+    out.bytes[i] = operand.value;
+    out.byte_count = i + 1U;
+  }
+
+  std::string text(metadata.mnemonic);
+  const std::string operand_text = FormatOperand(metadata, out.pc, out.length, out.bytes);
+  if (!operand_text.empty()) {
+    text += " ";
+    text += operand_text;
+  }
+  if (!out.complete) {
+    text += " ; debug-read-failed";
+  }
+  if (metadata.implementation_status == OpcodeImplementationStatus::kUnimplemented) {
+    text = std::format("??? ; {}", FormatAddress24(out.pc));
+  }
+  out.text = std::move(text);
+  return out;
+}
+
+}  // namespace pupsnes::debugger

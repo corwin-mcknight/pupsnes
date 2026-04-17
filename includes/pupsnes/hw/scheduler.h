@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <queue>
 #include <tuple>
 #include <vector>
@@ -38,6 +39,14 @@ struct SchedulerEventComparator {
   bool operator()(const SchedulerEvent& a, const SchedulerEvent& b) const {
     return std::tie(a.time, a.subphase, a.type, a.seq) > std::tie(b.time, b.subphase, b.type, b.seq);
   }
+};
+
+struct SchedulerEventView {
+  TimeMasterT time = 0;
+  std::optional<DeviceIdT> device_id = std::nullopt;
+  SchedulerPhase subphase = SchedulerPhase::kCommitComplete;
+  EventType type = EventType::kDeviceRun;
+  uint64_t run_generation = 0;
 };
 
 class Scheduler {
@@ -92,6 +101,8 @@ class Scheduler {
   void RemoveToken(TokenIdT id);
 
   void CatchUpDevice(DeviceIdT device_id, TimeMasterT target_time);
+  void Reset();
+  [[nodiscard]] std::vector<SchedulerEventView> SnapshotQueue() const;
 
   void DebugPrintNextEvent();
   void DebugPrintEventQueue();

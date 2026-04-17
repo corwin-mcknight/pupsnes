@@ -13,8 +13,27 @@ set(PUPSNES_LIB_SOURCES
   src/pupsnes/wram.cpp
 )
 
-set(PUPSNES_CLI_SOURCES
-  src/cli/main.cpp
+set(PUPSNES_DEBUGGER_CORE_SOURCES
+  src/debugger/breakpoints.cpp
+  src/debugger/disasm.cpp
+  src/debugger/error_log.cpp
+  src/debugger/run_control.cpp
+  src/debugger/trace.cpp
+)
+
+set(PUPSNES_DEBUGGER_SOURCES
+  src/debugger/app.cpp
+  src/debugger/main.cpp
+  src/debugger/panels/controls_panel.cpp
+  src/debugger/panels/disasm_panel.cpp
+  src/debugger/panels/errors_panel.cpp
+  src/debugger/panels/memory_panel.cpp
+  src/debugger/panels/registers_panel.cpp
+  src/debugger/panels/scheduler_panel.cpp
+  src/debugger/panels/trace_panel.cpp
+  src/debugger/third_party/imgui_glfw_backend.cpp
+  src/debugger/third_party/imgui_opengl3_backend.cpp
+  src/debugger/third_party/imgui_stdlib_binding.cpp
 )
 
 set(PUPSNES_TEST_SOURCES
@@ -27,6 +46,10 @@ set(PUPSNES_TEST_SOURCES
   src/tests/token_tests.cpp
   src/tests/mem_tests.cpp
   src/tests/systembus_tests.cpp
+  src/tests/breakpoints_tests.cpp
+  src/tests/disasm_tests.cpp
+  src/tests/error_log_tests.cpp
+  src/tests/run_control_tests.cpp
 )
 
 set(PUPSNES_PROFILE "PRODUCTION" CACHE STRING "Build profile: DEBUG, CI, or PRODUCTION")
@@ -38,13 +61,11 @@ target_include_directories(pupsnes PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/includes)
 target_include_directories(pupsnes PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_compile_definitions(pupsnes PUBLIC "PUPSNES_PROFILE_${PUPSNES_PROFILE}")
 
-if(PUPSNES_CLI_SOURCES)
-  add_executable(pupsnes_cli ${PUPSNES_CLI_SOURCES})
-  target_compile_features(pupsnes_cli PRIVATE cxx_std_20)
-  target_include_directories(pupsnes_cli PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/includes)
-  target_link_libraries(pupsnes_cli PRIVATE pupsnes)
-  set_target_properties(pupsnes_cli PROPERTIES OUTPUT_NAME pupsnes)
-endif()
+add_library(pupsnes_debugger_core STATIC ${PUPSNES_DEBUGGER_CORE_SOURCES})
+target_compile_features(pupsnes_debugger_core PUBLIC cxx_std_20)
+target_include_directories(pupsnes_debugger_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/includes)
+target_include_directories(pupsnes_debugger_core PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(pupsnes_debugger_core PUBLIC pupsnes)
 
 # Treat third-party (Conan) include dirs as SYSTEM so clang-tidy / warnings
 # don't report issues inside vendor headers or macro expansions from them.
@@ -57,6 +78,33 @@ function(pupsnes_mark_system target)
     endif()
   endif()
 endfunction()
+
+find_package(imgui CONFIG REQUIRED)
+find_package(glfw3 CONFIG REQUIRED)
+find_package(OpenGL REQUIRED)
+pupsnes_mark_system(imgui::imgui)
+pupsnes_mark_system(glfw)
+get_target_property(PUPSNES_IMGUI_INCLUDE_DIR imgui::imgui INTERFACE_INCLUDE_DIRECTORIES)
+list(GET PUPSNES_IMGUI_INCLUDE_DIR 0 PUPSNES_IMGUI_INCLUDE_DIR)
+string(REGEX REPLACE "^\\$<\\$<CONFIG:[^>]+>:(.*)>$" "\\1" PUPSNES_IMGUI_INCLUDE_DIR "${PUPSNES_IMGUI_INCLUDE_DIR}")
+get_filename_component(PUPSNES_IMGUI_ROOT "${PUPSNES_IMGUI_INCLUDE_DIR}" DIRECTORY)
+
+add_executable(pupsnes_debugger ${PUPSNES_DEBUGGER_SOURCES})
+target_compile_features(pupsnes_debugger PRIVATE cxx_std_20)
+target_include_directories(pupsnes_debugger PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/includes)
+target_include_directories(pupsnes_debugger PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/src
+  ${PUPSNES_IMGUI_ROOT}/res/bindings
+  ${PUPSNES_IMGUI_ROOT}/res/misc/cpp
+)
+target_link_libraries(pupsnes_debugger PRIVATE pupsnes_debugger_core imgui::imgui glfw OpenGL::GL)
+set_source_files_properties(
+  src/debugger/third_party/imgui_glfw_backend.cpp
+  src/debugger/third_party/imgui_opengl3_backend.cpp
+  src/debugger/third_party/imgui_stdlib_binding.cpp
+  PROPERTIES COMPILE_OPTIONS "-w"
+)
+set_target_properties(pupsnes_debugger PROPERTIES OUTPUT_NAME pupsnes-debugger)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
@@ -110,9 +158,8 @@ function(pupsnes_apply_warnings target)
 endfunction()
 
 pupsnes_apply_warnings(pupsnes)
-if(TARGET pupsnes_cli)
-  pupsnes_apply_warnings(pupsnes_cli)
-endif()
+pupsnes_apply_warnings(pupsnes_debugger_core)
+pupsnes_apply_warnings(pupsnes_debugger)
 
 include(CTest)
 if(BUILD_TESTING)
@@ -166,7 +213,7 @@ if(BUILD_TESTING)
   target_compile_features(pupsnes_tests PRIVATE cxx_std_20)
   target_include_directories(pupsnes_tests PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/includes)
   target_include_directories(pupsnes_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-  target_link_libraries(pupsnes_tests PRIVATE pupsnes Catch2::Catch2WithMain)
+  target_link_libraries(pupsnes_tests PRIVATE pupsnes pupsnes_debugger_core Catch2::Catch2WithMain)
   target_compile_definitions(pupsnes_tests PRIVATE
     "PUPSNES_TEST_ROM_DIR=\"${PUPSNES_TEST_ROM_DIR}\""
     "PUPSNES_TEST_ROM_METADATA_DIR=\"${PUPSNES_TEST_ROM_METADATA_DIR}\""
@@ -186,6 +233,14 @@ set(PUPSNES_HEADERS
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/config.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/types.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/mem.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/5a22/opcode_metadata.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/debugger/breakpoints.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/debugger/disasm.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/debugger/error_log.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/debugger/run_control.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/debugger/trace.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/app.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/panels/panels.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/5a22/cpu.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/cartridge.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/device.h
@@ -198,7 +253,8 @@ set(PUPSNES_HEADERS
 
 set(PUPSNES_ALL_SOURCES
   ${PUPSNES_LIB_SOURCES}
-  ${PUPSNES_CLI_SOURCES}
+  ${PUPSNES_DEBUGGER_CORE_SOURCES}
+  ${PUPSNES_DEBUGGER_SOURCES}
   ${PUPSNES_TEST_SOURCES}
 )
 
@@ -212,9 +268,11 @@ foreach(PUPSNES_SOURCE IN LISTS PUPSNES_ALL_SOURCES)
 endforeach()
 
 set(PUPSNES_LINT_FILES ${PUPSNES_ABS_SOURCES} ${PUPSNES_HEADERS})
+list(FILTER PUPSNES_LINT_FILES EXCLUDE REGEX ".*/src/debugger/third_party/.*")
 
 set(PUPSNES_TIDY_FILES ${PUPSNES_ABS_SOURCES})
 list(FILTER PUPSNES_TIDY_FILES INCLUDE REGEX ".*\\.(c|cc|cpp|cxx)$")
+list(FILTER PUPSNES_TIDY_FILES EXCLUDE REGEX ".*/src/debugger/third_party/.*")
 
 if(CLANG_FORMAT_EXE)
   add_custom_target(format

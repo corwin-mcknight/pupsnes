@@ -43,4 +43,12 @@ uint8_t Cartridge::ReadRegister(uint32_t offset) {
   return rom_[static_cast<std::size_t>(offset) % rom_.size()];
 }
 
+std::optional<uint8_t> Cartridge::HandleDebugRead(uint32_t offset) const {
+  if (rom_.empty()) {
+    return 0xFFU;
+  }
+
+  return rom_[static_cast<std::size_t>(offset) % rom_.size()];
+}
+
 }  // namespace pupsnes

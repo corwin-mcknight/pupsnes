@@ -137,15 +137,14 @@ static void SetIndex16Y(CPU& cpu, uint16_t value) {
 
 struct ResetFixture {
   SNES snes;
-  Cartridge cartridge{&snes};
-  WRAM wram{&snes};
-  CPU cpu{&snes};
+  Cartridge& cartridge;
+  WRAM& wram;
+  CPU& cpu;
   std::array<uint8_t, Cartridge::kLoROMWindowSize> rom{};
 
-  ResetFixture() {
+  ResetFixture() : cartridge(snes.GetCartridge()), wram(snes.GetWram()), cpu(snes.GetCpu()) {
     rom.fill(0xEA);
     SetResetVector(0x8000);
-    wram.MapSystemBus(*snes.system_bus);
     SyncCartridge();
   }
 
@@ -156,10 +155,7 @@ struct ResetFixture {
 
   void SetRomByte(std::size_t offset, uint8_t value) { rom[offset] = value; }
 
-  void SyncCartridge() {
-    cartridge.LoadLoRom(rom);
-    cartridge.MapLoRom(*snes.system_bus);
-  }
+  void SyncCartridge() { snes.LoadLoRom(rom); }
 };
 
 TEST_CASE("CPU registers with SNES on construction", "[cpu]") {
@@ -168,6 +164,14 @@ TEST_CASE("CPU registers with SNES on construction", "[cpu]") {
 
   REQUIRE(cpu.GetDeviceId() != static_cast<DeviceIdT>(-1));
   REQUIRE(snes.GetDevice(cpu.GetDeviceId()) == &cpu);
+}
+
+TEST_CASE("SNES owns the core machine devices", "[cpu]") {
+  SNES snes;
+
+  REQUIRE(snes.GetDevice(snes.GetCpu().GetDeviceId()) == &snes.GetCpu());
+  REQUIRE(snes.GetDevice(snes.GetCartridge().GetDeviceId()) == &snes.GetCartridge());
+  REQUIRE(snes.GetDevice(snes.GetWram().GetDeviceId()) == &snes.GetWram());
 }
 
 TEST_CASE("CPU initial register state", "[cpu]") {
@@ -193,17 +197,17 @@ TEST_CASE("CPU initial register state", "[cpu]") {
 TEST_CASE("CPU reset fetches the reset vector through cartridge mapping", "[cpu]") {
   ResetFixture f;
 
-  f.cpu.Reset();
+  f.snes.Reset();
 
-  REQUIRE(f.cpu.GetRegs().PBR == 0);
-  REQUIRE(f.cpu.GetRegs().PC == 0x8000);
-  REQUIRE(f.cpu.GetRegs().SP == 0x01FF);
-  REQUIRE(f.cpu.GetRegs().P.E == true);
-  REQUIRE(f.cpu.GetRegs().P.M == true);
-  REQUIRE(f.cpu.GetRegs().P.X == true);
-  REQUIRE(f.cpu.GetRegs().P.I == true);
-  REQUIRE(f.cpu.GetMicroOpIndex() == 0);
-  REQUIRE(f.cpu.GetTime() == 0);
+  REQUIRE(f.snes.GetCpu().GetRegs().PBR == 0);
+  REQUIRE(f.snes.GetCpu().GetRegs().PC == 0x8000);
+  REQUIRE(f.snes.GetCpu().GetRegs().SP == 0x01FF);
+  REQUIRE(f.snes.GetCpu().GetRegs().P.E == true);
+  REQUIRE(f.snes.GetCpu().GetRegs().P.M == true);
+  REQUIRE(f.snes.GetCpu().GetRegs().P.X == true);
+  REQUIRE(f.snes.GetCpu().GetRegs().P.I == true);
+  REQUIRE(f.snes.GetCpu().GetMicroOpIndex() == 0);
+  REQUIRE(f.snes.GetCpu().GetTime() == 0);
 }
 
 TEST_CASE(
@@ -816,6 +820,9 @@ TEST_CASE(
     "[cpu]") {
   SNES snes;
   CPU cpu(&snes);
+  auto regs = cpu.GetRegs();
+  regs.PBR = 0x40;
+  cpu.SetRegs(regs);
 
   TickResult r = cpu.Tick(2);
   REQUIRE(r.completed_cycles == 1);
@@ -826,7 +833,7 @@ TEST_CASE(
   REQUIRE(fault.has_value());
   if (!fault) return;
   REQUIRE(fault->opcode == 0xFF);
-  REQUIRE(fault->opcode_address == 0x000000U);
+  REQUIRE(fault->opcode_address == 0x400000U);
 }
 
 TEST_CASE("Consecutive same-tick bus accesses use increasing absolute timestamps", "[cpu]") {

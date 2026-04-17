@@ -50,6 +50,31 @@ struct BusFollowResult {
   TokenIdT token;
 };
 
+enum class DebugAccessFailureKind : uint8_t {
+  kNone = 0,
+  kUnmapped = 1,
+  kDeviceUnavailable = 2,
+  kDeviceRefused = 3,
+};
+
+struct DebugReadResult {
+  bool ok = false;
+  uint8_t value = 0xFF;
+  DeviceIdT device_id = 0;
+  SnesAddrT address = 0;
+  uint32_t device_offset = 0;
+  DebugAccessFailureKind failure = DebugAccessFailureKind::kNone;
+};
+
+struct DebugWriteResult {
+  bool ok = false;
+  DeviceIdT device_id = 0;
+  SnesAddrT address = 0;
+  uint32_t device_offset = 0;
+  uint8_t value = 0;
+  DebugAccessFailureKind failure = DebugAccessFailureKind::kNone;
+};
+
 struct PageMapParams {
   uint8_t bank;
   uint8_t page;
@@ -69,6 +94,8 @@ class SystemBus {
 
   [[nodiscard]] BusPlan Plan(SnesAddrT address, BusAccessType type, uint8_t write_data = 0) const;
   BusFollowResult Follow(const BusPlan& plan, TimeMasterT current_time, DeviceIdT source_device);
+  [[nodiscard]] DebugReadResult DebugRead(SnesAddrT address) const;
+  [[nodiscard]] DebugWriteResult DebugWrite(SnesAddrT address, uint8_t value);
 
  private:
   SNES* snes_;  // Non-owning. SNES owns this SystemBus; pointer back to parent.
@@ -78,6 +105,8 @@ class SystemBus {
 
   BusFollowResult FollowInline(const BusPlan& plan, TimeMasterT current_time);
   BusFollowResult FollowScheduled(const BusPlan& plan, TimeMasterT current_time, DeviceIdT source_device);
+  [[nodiscard]] DebugReadResult MakeDebugReadResult(const BusPlan& plan) const;
+  [[nodiscard]] DebugWriteResult MakeDebugWriteResult(const BusPlan& plan, uint8_t value) const;
 
   friend struct SystemBusTestAccess;
 };

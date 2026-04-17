@@ -74,12 +74,12 @@ TEST_CASE("Opcode specs lower into expected execution and metadata entries", "[c
                 {B::kFetchPc, M::kLoadALow, 2, "fetch immediate low"},
                 {B::kFetchPc, M::kLoadAHighUpdateNz, 2, "fetch immediate high"}});
 
-  ExpectOpcode(0xA2, "LDX", "immediate", 3,
+  ExpectOpcode(0xA2, "LDX", "immediate index", 3,
                {{B::kFetchPc, M::kLoadX8UpdateNz, 1, "fetch immediate low"},
                 {B::kFetchPc, M::kLoadXLow, 2, "fetch immediate low"},
                 {B::kFetchPc, M::kLoadXHighUpdateNz, 2, "fetch immediate high"}});
 
-  ExpectOpcode(0xA0, "LDY", "immediate", 3,
+  ExpectOpcode(0xA0, "LDY", "immediate index", 3,
                {{B::kFetchPc, M::kLoadY8UpdateNz, 1, "fetch immediate low"},
                 {B::kFetchPc, M::kLoadYLow, 2, "fetch immediate low"},
                 {B::kFetchPc, M::kLoadYHighUpdateNz, 2, "fetch immediate high"}});

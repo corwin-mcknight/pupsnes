@@ -62,6 +62,8 @@ void CPU::Reset() {
   addr_ = 0;
   timing_context_ = TimingContext{};
   fault_.reset();
+  stop_at_instruction_boundary_ = false;
+  retired_instruction_count_ = 0;
   current_instr_ = nullptr;
   local_time_ = (snes_ != nullptr) ? snes_->GetMasterTime() : 0;
 
@@ -232,6 +234,7 @@ void CPU::ExecuteInternalOp(MicroInternalOp op) {
 }
 
 void CPU::FinishInstruction() {
+  retired_instruction_count_++;
   current_instr_ = nullptr;
   micro_op_index_ = 0;
   timing_context_ = TimingContext{};
@@ -439,6 +442,9 @@ TickResult CPU::Tick(TimeMasterDeltaT budget) {
     }
     if (step.consumed_cycle) {
       ++cycle_time;
+      if (stop_at_instruction_boundary_ && ShouldFetchInstruction()) {
+        return {cycle_time, TickStopReason::kReachedLocalBoundary, 0, local_time_ + cycle_time};
+      }
     }
   }
 
