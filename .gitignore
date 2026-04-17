@@ -67,3 +67,6 @@ Testing/
 
 # Logs
 *.log
+
+# Debugger UI state
+imgui.ini
