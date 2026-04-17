@@ -130,6 +130,14 @@ void Scheduler::ValidateTickResult(const Device& device,
         FailScheduler("NoWork cannot carry a blocked token");
       }
       break;
+    case TickStopReason::kFaulted:
+      if (result.blocked_token != 0) {
+        FailScheduler("Faulted cannot carry a blocked token");
+      }
+      if (result.next_wake_time.has_value()) {
+        FailScheduler("Faulted cannot carry a wake time");
+      }
+      break;
   }
 
   if (result.next_wake_time.has_value() &&
@@ -182,6 +190,10 @@ void Scheduler::HandleRunResult(Device* device, const TickResult& result) {
         return;
       }
       break;
+    case TickStopReason::kFaulted:
+      ClearPendingRun(state);
+      ResetZeroProgressGuard(state);
+      return;
     case TickStopReason::kBudgetExhausted:
     case TickStopReason::kReachedLocalBoundary:
       break;
@@ -389,6 +401,9 @@ void Scheduler::CatchUpDevice(DeviceIdT device_id, TimeMasterT target_time) {
         }
         HandleRunResult(device, result);
         break;
+      case TickStopReason::kFaulted:
+        HandleRunResult(device, result);
+        return;
     }
   }
 }

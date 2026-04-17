@@ -15,6 +15,7 @@ enum class TickStopReason : uint8_t {
   kReachedLocalBoundary = 1,
   kBlockedOnToken = 2,
   kNoWork = 3,
+  kFaulted = 4,
 };
 struct TickResult {
   TimeMasterDeltaT completed_cycles;

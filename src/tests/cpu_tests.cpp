@@ -197,8 +197,8 @@ TEST_CASE(
 
   auto regs = f.cpu.GetRegs();
   regs.A = 0x00FF;
-  regs.PC = 0x8123;
-  regs.PBR = 0x7E;
+  regs.PC = 0x8000;
+  regs.PBR = 0x00;
   regs.P.D = true;
   regs.P.C = true;
   f.cpu.SetRegs(regs);
@@ -261,6 +261,58 @@ TEST_CASE("BRA supports negative displacements for tight loops", "[cpu]") {
   REQUIRE(f.cpu.GetRegs().PC == 0x8000);
 }
 
+TEST_CASE("BNE not taken falls through without the guarded branch cycle",
+          "[cpu]") {
+  ResetFixture f;
+  f.SetRomByte(0x0000U, 0xD0);
+  f.SetRomByte(0x0001U, 0x02);
+  f.SetRomByte(0x0002U, 0xEA);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  auto regs = f.cpu.GetRegs();
+  regs.P.Z = true;
+  f.cpu.SetRegs(regs);
+
+  TickResult r = f.cpu.Tick(2);
+
+  REQUIRE(r.completed_cycles == 2);
+  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(f.cpu.GetRegs().PC == 0x8002);
+  REQUIRE(f.cpu.GetMicroOpIndex() == 0);
+}
+
+TEST_CASE("BNE taken executes the guarded branch cycle", "[cpu]") {
+  ResetFixture f;
+  f.SetRomByte(0x0000U, 0xD0);
+  f.SetRomByte(0x0001U, 0x02);
+  f.SetRomByte(0x0004U, 0xA9);
+  f.SetRomByte(0x0005U, 0x7F);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  TickResult r = f.cpu.Tick(5);
+
+  REQUIRE(r.completed_cycles == 5);
+  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(f.cpu.GetRegs().PC == 0x8006);
+  REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x7F);
+}
+
+TEST_CASE("BNE supports negative displacements for tight loops", "[cpu]") {
+  ResetFixture f;
+  f.SetRomByte(0x0000U, 0xD0);
+  f.SetRomByte(0x0001U, 0xFE);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  TickResult r = f.cpu.Tick(6);
+
+  REQUIRE(r.completed_cycles == 6);
+  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(f.cpu.GetRegs().PC == 0x8000);
+}
+
 TEST_CASE("STA long writes accumulator low byte to mapped WRAM", "[cpu]") {
   ResetFixture f;
   f.SetRomByte(0x0000U, 0xA9);
@@ -311,7 +363,7 @@ TEST_CASE("NOP tick slices still compose correctly without local_time mutation",
   REQUIRE(f.cpu.GetTime() == 0);
 
   (void)f.cpu.Tick(1);
-  REQUIRE(f.cpu.GetMicroOpIndex() == 2);
+  REQUIRE(f.cpu.GetMicroOpIndex() == 0);
   REQUIRE(f.cpu.GetRegs().PC == 0x8001);
   REQUIRE(f.cpu.GetTime() == 0);
 }
@@ -328,17 +380,33 @@ TEST_CASE("LDA immediate updates A and flags through direct tick", "[cpu]") {
   REQUIRE(f.cpu.GetTime() == 0);
 }
 
+TEST_CASE("LDX immediate updates X and flags through direct tick", "[cpu]") {
+  TestFixture f;
+  f.LoadAt(0, {0xA2, 0x80});
+
+  TickResult r = f.cpu.Tick(2);
+  REQUIRE(r.completed_cycles == 2);
+  REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().X) == 0x80);
+  REQUIRE(f.cpu.GetRegs().P.N == true);
+  REQUIRE(f.cpu.GetRegs().P.Z == false);
+  REQUIRE(f.cpu.GetTime() == 0);
+}
+
 TEST_CASE(
-    "Fetch from unmapped address returns open-bus value and does not mutate "
-    "committed time",
+    "Fetch from unmapped address returns open-bus value and faults on the "
+    "unimplemented opcode",
     "[cpu]") {
   SNES snes;
   CPU cpu(&snes);
 
   TickResult r = cpu.Tick(2);
-  REQUIRE(r.completed_cycles == 2);
+  REQUIRE(r.completed_cycles == 1);
+  REQUIRE(r.reason == TickStopReason::kFaulted);
   REQUIRE(cpu.GetRegs().PC == 0x0001);
   REQUIRE(cpu.GetTime() == 0);
+  REQUIRE(cpu.GetFault().has_value());
+  REQUIRE(cpu.GetFault()->opcode == 0xFF);
+  REQUIRE(cpu.GetFault()->opcode_address == 0x000000U);
 }
 
 TEST_CASE(
@@ -385,6 +453,36 @@ TEST_CASE(
   REQUIRE(f.cpu.GetTime() == 4);
   REQUIRE(SchedulerTestAccess::PendingRunTime(*f.snes.scheduler,
                                               f.cpu.GetDeviceId()) == 4);
+}
+
+TEST_CASE("Direct CPU tick faults on unimplemented opcode fetch", "[cpu]") {
+  TestFixture f;
+  f.LoadAt(0, {0x00});
+
+  TickResult r = f.cpu.Tick(2);
+
+  REQUIRE(r.completed_cycles == 1);
+  REQUIRE(r.reason == TickStopReason::kFaulted);
+  REQUIRE(f.cpu.GetRegs().PC == 0x8001);
+  REQUIRE(f.cpu.GetTime() == 0);
+  REQUIRE(f.cpu.GetFault().has_value());
+  REQUIRE(f.cpu.GetFault()->opcode == 0x00);
+  REQUIRE(f.cpu.GetFault()->opcode_address == 0x008000U);
+}
+
+TEST_CASE("Scheduler-driven CPU faults are terminal and do not reschedule",
+          "[cpu]") {
+  TestFixture f;
+  f.LoadAt(0, {0x00});
+
+  f.snes.scheduler->ScheduleDeviceRun(&f.cpu, 0);
+  f.snes.scheduler->Step();
+
+  REQUIRE(f.cpu.GetTime() == 1);
+  REQUIRE(f.cpu.GetFault().has_value());
+  REQUIRE(f.cpu.GetFault()->opcode == 0x00);
+  REQUIRE_FALSE(SchedulerTestAccess::HasPendingRun(*f.snes.scheduler,
+                                                   f.cpu.GetDeviceId()));
 }
 
 TEST_CASE(

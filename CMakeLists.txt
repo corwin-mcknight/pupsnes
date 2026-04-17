@@ -4,6 +4,7 @@ project(pupsnes LANGUAGES CXX)
 
 set(PUPSNES_LIB_SOURCES
   src/pupsnes/5a22/cpu.cpp
+  src/pupsnes/5a22/cpu_opcodes.cpp
   src/pupsnes/cartridge.cpp
   src/pupsnes/scheduler.cpp
   src/pupsnes/snes.cpp
@@ -19,6 +20,7 @@ set(PUPSNES_CLI_SOURCES
 set(PUPSNES_TEST_SOURCES
   src/tests/unit/catch2_smoke_tests.cpp
   src/tests/cpu_tests.cpp
+  src/tests/cpu_opcode_defs_tests.cpp
   src/tests/rom_integration_tests.cpp
   src/tests/scheduler_tests.cpp
   src/tests/test_rom_builder_tests.cpp
@@ -33,6 +35,7 @@ set_property(CACHE PUPSNES_PROFILE PROPERTY STRINGS DEBUG CI PRODUCTION)
 add_library(pupsnes STATIC ${PUPSNES_LIB_SOURCES})
 target_compile_features(pupsnes PUBLIC cxx_std_20)
 target_include_directories(pupsnes PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/includes)
+target_include_directories(pupsnes PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_compile_definitions(pupsnes PUBLIC "PUPSNES_PROFILE_${PUPSNES_PROFILE}")
 
 if(PUPSNES_CLI_SOURCES)
@@ -160,6 +163,7 @@ if(BUILD_TESTING)
   add_executable(pupsnes_tests ${PUPSNES_TEST_SOURCES})
   target_compile_features(pupsnes_tests PRIVATE cxx_std_20)
   target_include_directories(pupsnes_tests PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/includes)
+  target_include_directories(pupsnes_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
   target_link_libraries(pupsnes_tests PRIVATE pupsnes Catch2::Catch2WithMain)
   target_compile_definitions(pupsnes_tests PRIVATE
     "PUPSNES_TEST_ROM_DIR=\"${PUPSNES_TEST_ROM_DIR}\""
