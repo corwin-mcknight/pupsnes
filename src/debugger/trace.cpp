@@ -1,19 +1,29 @@
 #include "pupsnes/debugger/trace.h"
 
-#include <utility>
-#include <vector>
+#include <algorithm>
 
 namespace pupsnes::debugger {
 
-void TraceLog::Push(TraceEntry entry) {
-  entries_.push_back(std::move(entry));
-  while (entries_.size() > capacity_) {
-    entries_.pop_front();
-  }
+TraceLog::TraceLog(std::size_t capacity) : capacity_(capacity == 0 ? 1 : capacity) { ring_.resize(capacity_); }
+
+void TraceLog::Push(const TraceEntry& entry) {
+  ring_[write_count_ % capacity_] = entry;
+  ++write_count_;
 }
 
-void TraceLog::Clear() { entries_.clear(); }
+void TraceLog::Clear() { write_count_ = 0; }
 
-std::vector<TraceEntry> TraceLog::Snapshot() const { return {entries_.begin(), entries_.end()}; }
+std::size_t TraceLog::Size() const { return std::min(write_count_, capacity_); }
+
+std::vector<TraceEntry> TraceLog::Snapshot() const {
+  const std::size_t size = Size();
+  std::vector<TraceEntry> out;
+  out.reserve(size);
+  const std::size_t start = (write_count_ >= capacity_) ? (write_count_ % capacity_) : 0;
+  for (std::size_t i = 0; i < size; ++i) {
+    out.push_back(ring_[(start + i) % capacity_]);
+  }
+  return out;
+}
 
 }  // namespace pupsnes::debugger

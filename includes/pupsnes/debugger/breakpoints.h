@@ -4,6 +4,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "pupsnes/hw/debugger_contract.h"
 #include "pupsnes/types.h"
 
 namespace pupsnes::debugger {
@@ -13,18 +14,18 @@ struct Breakpoint {
   bool enabled = true;
 };
 
-class BreakpointSet {
+class BreakpointSet : public BreakpointLookup {
  public:
   void Set(SnesAddrT address, bool enabled = true);
   void Remove(SnesAddrT address);
   void Toggle(SnesAddrT address);
   [[nodiscard]] bool Contains(SnesAddrT address) const;
-  [[nodiscard]] bool IsEnabled(SnesAddrT address) const {
+  [[nodiscard]] bool IsEnabled(SnesAddrT address) const override {
     if (enabled_addresses_.empty()) return false;
     return enabled_addresses_.find(address) != enabled_addresses_.end();
   }
   [[nodiscard]] bool Empty() const { return breakpoints_.empty(); }
-  [[nodiscard]] bool AnyEnabled() const { return !enabled_addresses_.empty(); }
+  [[nodiscard]] bool AnyEnabled() const override { return !enabled_addresses_.empty(); }
   [[nodiscard]] std::vector<Breakpoint> Snapshot() const;
   void Clear();
 

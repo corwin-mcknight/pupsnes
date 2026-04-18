@@ -1,33 +1,34 @@
 #pragma once
 
 #include <cstddef>
-#include <deque>
 #include <vector>
 
-#include "pupsnes/hw/5a22/cpu.h"
+#include "pupsnes/hw/debugger_contract.h"
 
 namespace pupsnes::debugger {
 
-// Lightweight per-instruction trace. Disassembly is deferred to the UI so
-// free-run does not pay for disassembling instructions the user will never see.
-struct TraceEntry {
-  TimeMasterT master_time = 0;
-  SnesAddrT pc = 0;
-  CPU::Regs regs{};
-};
+// Re-export the core TraceEntry so existing debugger code keeps compiling with
+// the shorter name.
+using pupsnes::TraceEntry;
 
-class TraceLog {
+// Fixed-capacity ring over std::vector. Push is amortized O(1) with no
+// per-call allocation — the backing storage is sized once at construction,
+// slots are overwritten in place, and a monotonic write counter drives the
+// head-tail math.
+class TraceLog : public TraceSink {
  public:
-  explicit TraceLog(std::size_t capacity = 256) : capacity_(capacity) {}
+  explicit TraceLog(std::size_t capacity = 256);
 
-  void Push(TraceEntry entry);
+  void Push(const TraceEntry& entry);
+  void Record(const TraceEntry& entry) override { Push(entry); }
   void Clear();
   [[nodiscard]] std::vector<TraceEntry> Snapshot() const;
-  [[nodiscard]] std::size_t Size() const { return entries_.size(); }
+  [[nodiscard]] std::size_t Size() const;
 
  private:
-  std::size_t capacity_ = 256;
-  std::deque<TraceEntry> entries_;
+  std::vector<TraceEntry> ring_;
+  std::size_t capacity_ = 0;
+  std::size_t write_count_ = 0;  // Total pushes; size = min(write_count_, capacity_).
 };
 
 }  // namespace pupsnes::debugger

@@ -17,6 +17,12 @@ enum class TickStopReason : uint8_t {
   kBlockedOnToken = 2,
   kNoWork = 3,
   kFaulted = 4,
+  // Debugger-driven stops. The CPU surfaces these directly from its Tick loop
+  // when the active DebuggerContract signals a breakpoint hit or a step-count
+  // boundary, respectively. Scheduler treats them like kFaulted (no wake, no
+  // token, no auto-reschedule) — RunControl owns what to do next.
+  kDebuggerBreakpoint = 5,
+  kDebuggerStepComplete = 6,
   // Sentinel used internally by device implementations to signal "no stop yet"
   // when returning TickResult from per-cycle helpers without wrapping in
   // std::optional. Never surfaced to the scheduler.

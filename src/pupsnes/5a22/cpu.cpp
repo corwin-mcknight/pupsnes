@@ -62,7 +62,7 @@ void CPU::Reset() {
   addr_ = 0;
   timing_context_ = TimingContext{};
   fault_.reset();
-  stop_at_instruction_boundary_ = false;
+  last_debugger_stop_.reset();
   retired_instruction_count_ = 0;
   current_instr_ = nullptr;
   local_time_ = (snes_ != nullptr) ? snes_->GetMasterTime() : 0;
@@ -333,6 +333,11 @@ void CPU::FinishInstruction() {
   if (micro_op_recorder_ != nullptr && current_instr_ != nullptr) {
     micro_op_recorder_->OnInstructionEnd(retired_instruction_count_ + 1);
   }
+  // Trace-push is success-only: callers that retire via a fault (RecordFault)
+  // skip the push so the faulted instruction is not logged as executed.
+  if (current_instr_ != nullptr && debugger_contract_.trace_sink != nullptr) {
+    debugger_contract_.trace_sink->Record(pending_trace_);
+  }
   retired_instruction_count_++;
   current_instr_ = nullptr;
   micro_op_index_ = 0;
@@ -427,6 +432,19 @@ SnesAddrT CPU::PcAddr() const { return (static_cast<uint32_t>(regs_.PBR) << 16U)
 
 CPU::StepResult CPU::FetchOpcode(TimeMasterDeltaT cycle_time) {
   const SnesAddrT opcode_address = PcAddr();
+
+  if (const auto* bp = debugger_contract_.breakpoints;
+      bp != nullptr && bp->AnyEnabled() && bp->IsEnabled(opcode_address)) {
+    if (debugger_contract_.suppressed_breakpoint_pc == opcode_address) {
+      debugger_contract_.suppressed_breakpoint_pc.reset();
+    } else {
+      last_debugger_stop_ = TickStopReason::kDebuggerBreakpoint;
+      return StepResult{false, TickResult{cycle_time, TickStopReason::kDebuggerBreakpoint}};
+    }
+  }
+
+  pending_trace_ = TraceEntry{local_time_ + cycle_time, opcode_address, regs_};
+
   TickResult blocked = BusRead(opcode_address, cycle_time);
   if (blocked.reason != TickStopReason::kContinue) {
     return StepResult{false, blocked};
@@ -553,8 +571,12 @@ TickResult CPU::Tick(TimeMasterDeltaT budget) {
     }
     if (step.consumed_cycle) {
       ++cycle_time;
-      if (stop_at_instruction_boundary_ && ShouldFetchInstruction()) {
-        return {cycle_time, TickStopReason::kReachedLocalBoundary, 0, local_time_ + cycle_time};
+      if (ShouldFetchInstruction() && debugger_contract_.step_target > 0) {
+        --debugger_contract_.step_target;
+        if (debugger_contract_.step_target == 0) {
+          last_debugger_stop_ = TickStopReason::kDebuggerStepComplete;
+          return {cycle_time, TickStopReason::kDebuggerStepComplete};
+        }
       }
     }
   }

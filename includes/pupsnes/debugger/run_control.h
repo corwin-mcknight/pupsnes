@@ -37,17 +37,19 @@ class RunControl {
 
   [[nodiscard]] RunState GetState() const { return state_; }
   [[nodiscard]] PauseReason GetPauseReason() const { return pause_reason_; }
-  [[nodiscard]] uint64_t GetRemainingSteps() const { return remaining_steps_; }
 
  private:
   [[nodiscard]] SnesAddrT GetCurrentPc() const;
   void PrimeCpuRun();
-  [[nodiscard]] bool ShouldPauseOnCurrentPc() const;
+  void InstallDebuggerContract();
+  void SuppressBreakpointAtCurrentPc();
   void PauseForBreakpoint();
   void PauseForError();
-  bool RunSingleInstructionBoundary();
-  void RecordInstructionTrace(SnesAddrT pc_before, const CPU::Regs& regs_before);
   void LogFaultIfPresent();
+  // Returns true to keep running; false to exit the TickFrame loop.
+  bool HandlePostStepState();
+  void DetachMicroOpRecorderForFreeRun();
+  void RestoreMicroOpRecorderForPause();
 
   SNES& snes_;
   BreakpointSet& breakpoints_;
@@ -55,13 +57,8 @@ class RunControl {
   ErrorLog& error_log_;
   RunState state_ = RunState::kPaused;
   PauseReason pause_reason_ = PauseReason::kUser;
-  uint64_t remaining_steps_ = 0;
-  std::optional<SnesAddrT> suppressed_breakpoint_ = std::nullopt;
   std::optional<SnesAddrT> logged_fault_pc_ = std::nullopt;
   MicroOpRecorder* saved_microop_recorder_ = nullptr;
-
-  void DetachMicroOpRecorderForFreeRun();
-  void RestoreMicroOpRecorderForPause();
 };
 
 }  // namespace pupsnes::debugger

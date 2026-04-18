@@ -21,20 +21,28 @@ RunControl::RunControl(SNES& snes, BreakpointSet& breakpoints, TraceLog& trace_l
   ResetMachineState();
 }
 
+void RunControl::InstallDebuggerContract() {
+  DebuggerContract contract;
+  contract.breakpoints = &breakpoints_;
+  contract.trace_sink = &trace_log_;
+  contract.step_target = 0;
+  contract.suppressed_breakpoint_pc = std::nullopt;
+  snes_.GetCpu().SetDebuggerContract(contract);
+  (void)snes_.GetCpu().TakeLastDebuggerStop();
+}
+
 void RunControl::ResetMachineState() {
   state_ = RunState::kPaused;
   pause_reason_ = PauseReason::kUser;
-  remaining_steps_ = 0;
-  suppressed_breakpoint_.reset();
   logged_fault_pc_.reset();
-  snes_.GetCpu().SetBoundaryStopEnabled(true);
+  InstallDebuggerContract();
   PrimeCpuRun();
 }
 
 void RunControl::Pause() {
   state_ = RunState::kPaused;
   pause_reason_ = PauseReason::kUser;
-  remaining_steps_ = 0;
+  snes_.GetCpu().MutableDebuggerContract().step_target = 0;
   RestoreMicroOpRecorderForPause();
 }
 
@@ -55,27 +63,41 @@ void RunControl::RestoreMicroOpRecorderForPause() {
   saved_microop_recorder_ = nullptr;
 }
 
-void RunControl::RequestStepOne() {
+void RunControl::SuppressBreakpointAtCurrentPc() {
   const SnesAddrT current_pc = GetCurrentPc();
+  DebuggerContract& contract = snes_.GetCpu().MutableDebuggerContract();
   if (breakpoints_.IsEnabled(current_pc)) {
-    suppressed_breakpoint_ = current_pc;
+    contract.suppressed_breakpoint_pc = current_pc;
+  } else {
+    contract.suppressed_breakpoint_pc.reset();
   }
-  remaining_steps_ = 1;
+}
+
+void RunControl::RequestStepOne() {
+  SuppressBreakpointAtCurrentPc();
+  snes_.GetCpu().MutableDebuggerContract().step_target = 1;
   state_ = RunState::kStepOne;
+  PrimeCpuRun();
 }
 
 void RunControl::RequestStepN(uint64_t count) {
-  const SnesAddrT current_pc = GetCurrentPc();
-  if (count > 0 && breakpoints_.IsEnabled(current_pc)) {
-    suppressed_breakpoint_ = current_pc;
+  if (count == 0) {
+    state_ = RunState::kPaused;
+    snes_.GetCpu().MutableDebuggerContract().step_target = 0;
+    return;
   }
-  remaining_steps_ = count;
-  state_ = (count == 0) ? RunState::kPaused : RunState::kStepN;
+  SuppressBreakpointAtCurrentPc();
+  snes_.GetCpu().MutableDebuggerContract().step_target = count;
+  state_ = RunState::kStepN;
+  PrimeCpuRun();
 }
 
 void RunControl::RequestRunUntilBreak() {
+  SuppressBreakpointAtCurrentPc();
+  snes_.GetCpu().MutableDebuggerContract().step_target = 0;
   state_ = RunState::kRunUntilBreak;
   DetachMicroOpRecorderForFreeRun();
+  PrimeCpuRun();
 }
 
 SnesAddrT RunControl::GetCurrentPc() const { return ComposePcAddress(snes_.GetCpu().GetRegs()); }
@@ -89,31 +111,18 @@ void RunControl::PrimeCpuRun() {
   snes_.GetScheduler().ScheduleDeviceRun(&cpu, next_time);
 }
 
-bool RunControl::ShouldPauseOnCurrentPc() const {
-  const SnesAddrT current_pc = GetCurrentPc();
-  return breakpoints_.IsEnabled(current_pc) && suppressed_breakpoint_ != current_pc;
-}
-
 void RunControl::PauseForBreakpoint() {
   state_ = RunState::kPaused;
   pause_reason_ = PauseReason::kBreakpoint;
-  remaining_steps_ = 0;
+  snes_.GetCpu().MutableDebuggerContract().step_target = 0;
   RestoreMicroOpRecorderForPause();
 }
 
 void RunControl::PauseForError() {
   state_ = RunState::kPaused;
   pause_reason_ = PauseReason::kError;
-  remaining_steps_ = 0;
+  snes_.GetCpu().MutableDebuggerContract().step_target = 0;
   RestoreMicroOpRecorderForPause();
-}
-
-void RunControl::RecordInstructionTrace(SnesAddrT pc_before, const CPU::Regs& regs_before) {
-  trace_log_.Push({
-      .master_time = snes_.GetMasterTime(),
-      .pc = pc_before,
-      .regs = regs_before,
-  });
 }
 
 void RunControl::LogFaultIfPresent() {
@@ -126,50 +135,26 @@ void RunControl::LogFaultIfPresent() {
   error_log_.PushCpuFault(snes_.GetMasterTime(), *fault);
 }
 
-bool RunControl::RunSingleInstructionBoundary() {
-  PrimeCpuRun();
-
-  if (ShouldPauseOnCurrentPc()) {
-    PauseForBreakpoint();
-    return false;
-  }
-
+bool RunControl::HandlePostStepState() {
   CPU& cpu = snes_.GetCpu();
-  const CPU::Regs regs_before = cpu.GetRegs();
-  const SnesAddrT pc_before = ComposePcAddress(regs_before);
-  const uint64_t retired_before = cpu.GetRetiredInstructionCount();
 
-  while (cpu.GetRetiredInstructionCount() == retired_before) {
-    try {
-      snes_.GetScheduler().Step();
-    } catch (const std::exception& ex) {
-      error_log_.PushSchedulerError(snes_.GetMasterTime(), ex.what(), cpu.GetRegs());
-      PauseForError();
-      return false;
-    }
-
-    if (cpu.GetFault().has_value()) {
-      LogFaultIfPresent();
-      PauseForError();
-      return false;
-    }
-
-    if (!snes_.GetScheduler().HasPendingEvents()) {
-      break;
-    }
-  }
-
-  if (cpu.GetRetiredInstructionCount() == retired_before) {
+  if (cpu.GetFault().has_value()) {
+    LogFaultIfPresent();
+    PauseForError();
     return false;
   }
 
-  suppressed_breakpoint_.reset();
-  RecordInstructionTrace(pc_before, regs_before);
-  logged_fault_pc_.reset();
-
-  if (breakpoints_.IsEnabled(GetCurrentPc())) {
-    PauseForBreakpoint();
-    return false;
+  if (const auto stop = cpu.TakeLastDebuggerStop(); stop.has_value()) {
+    switch (*stop) {
+      case TickStopReason::kDebuggerBreakpoint:
+        PauseForBreakpoint();
+        return false;
+      case TickStopReason::kDebuggerStepComplete:
+        Pause();
+        return false;
+      default:
+        break;
+    }
   }
 
   return true;
@@ -180,34 +165,25 @@ void RunControl::TickFrame(std::chrono::steady_clock::duration wall_clock_budget
     return;
   }
 
+  logged_fault_pc_.reset();
   const auto deadline = std::chrono::steady_clock::now() + wall_clock_budget;
-  while (state_ != RunState::kPaused && std::chrono::steady_clock::now() < deadline) {
-    const bool advanced = RunSingleInstructionBoundary();
 
-    if (state_ == RunState::kPaused) {
-      break;
-    }
-    if (!advanced) {
+  while (state_ != RunState::kPaused && std::chrono::steady_clock::now() < deadline) {
+    if (!snes_.GetScheduler().HasPendingEvents()) {
       Pause();
       break;
     }
 
-    switch (state_) {
-      case RunState::kPaused:
-        break;
-      case RunState::kStepOne:
-        Pause();
-        break;
-      case RunState::kStepN:
-        if (remaining_steps_ > 0) {
-          --remaining_steps_;
-        }
-        if (remaining_steps_ == 0) {
-          Pause();
-        }
-        break;
-      case RunState::kRunUntilBreak:
-        break;
+    try {
+      snes_.GetScheduler().Step();
+    } catch (const std::exception& ex) {
+      error_log_.PushSchedulerError(snes_.GetMasterTime(), ex.what(), snes_.GetCpu().GetRegs());
+      PauseForError();
+      break;
+    }
+
+    if (!HandlePostStepState()) {
+      break;
     }
   }
 }

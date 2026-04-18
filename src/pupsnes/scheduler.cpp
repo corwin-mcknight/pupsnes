@@ -6,6 +6,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "pupsnes/hw/device.h"
@@ -130,6 +131,15 @@ void Scheduler::ValidateTickResult(const Device& device, const TickResult& resul
         FailScheduler("Faulted cannot carry a wake time");
       }
       break;
+    case TickStopReason::kDebuggerBreakpoint:
+    case TickStopReason::kDebuggerStepComplete:
+      if (result.blocked_token != 0) {
+        FailScheduler("Debugger stop cannot carry a blocked token");
+      }
+      if (result.next_wake_time != kNoWakeTime) {
+        FailScheduler("Debugger stop cannot carry a wake time");
+      }
+      break;
     case TickStopReason::kContinue:
       FailScheduler("kContinue is an internal sentinel and must not escape Tick()");
       break;
@@ -182,6 +192,8 @@ void Scheduler::HandleRunResult(Device* device, const TickResult& result) {
       }
       break;
     case TickStopReason::kFaulted:
+    case TickStopReason::kDebuggerBreakpoint:
+    case TickStopReason::kDebuggerStepComplete:
       ClearPendingRun(state);
       ResetZeroProgressGuard(state);
       return;
@@ -381,6 +393,8 @@ void Scheduler::CatchUpDevice(DeviceIdT device_id, TimeMasterT target_time) {
         HandleRunResult(device, result);
         break;
       case TickStopReason::kFaulted:
+      case TickStopReason::kDebuggerBreakpoint:
+      case TickStopReason::kDebuggerStepComplete:
         HandleRunResult(device, result);
         return;
       case TickStopReason::kContinue:

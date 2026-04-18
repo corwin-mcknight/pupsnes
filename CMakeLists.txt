@@ -250,8 +250,10 @@ set(PUPSNES_HEADERS
   ${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/app.h
   ${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/panels/panels.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/5a22/cpu.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/5a22/cpu_regs.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/5a22/micro_op_strings.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/cartridge.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/debugger_contract.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/device.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/scheduler.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/snes.h

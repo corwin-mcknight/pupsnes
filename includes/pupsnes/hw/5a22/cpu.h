@@ -4,6 +4,8 @@
 #include <cstdint>
 #include <optional>
 
+#include "pupsnes/hw/5a22/cpu_regs.h"
+#include "pupsnes/hw/debugger_contract.h"
 #include "pupsnes/hw/device.h"
 #include "pupsnes/hw/systembus.h"
 #include "pupsnes/types.h"
@@ -11,24 +13,6 @@
 namespace pupsnes {
 
 class SNES;
-
-// 65C816 processor status register.
-// E (emulation mode) is not stored in P but is tracked here alongside it.
-struct CpuFlags {
-  bool N = false;  // Negative
-  bool V = false;  // Overflow
-  bool M = true;   // Memory/accumulator select: 1=8-bit (always true in
-                   // emulation mode)
-  bool X = true;   // Index register select: 1=8-bit (always true in emulation mode)
-  bool D = false;  // Decimal mode
-  bool I = true;   // IRQ disable
-  bool Z = false;  // Zero
-  bool C = false;  // Carry
-  bool E = true;   // Emulation mode (toggled via XCE; not a P register bit)
-
-  [[nodiscard]] uint8_t ToByte() const;
-  void FromByte(uint8_t p, bool emulation_mode);
-};
 
 // Bus actions a micro-op can perform in a single master clock cycle.
 enum class MicroBusAction : uint8_t {
@@ -179,17 +163,9 @@ class MicroOpRecorder {
 // accesses use SystemBus plan/follow.
 class CPU : public Device {
  public:
-  struct Regs {
-    uint16_t A = 0;
-    uint16_t X = 0;
-    uint16_t Y = 0;
-    uint16_t SP = 0x01FF;  // Top of page 1 in emulation mode
-    uint16_t DP = 0;
-    uint8_t PBR = 0;
-    uint8_t DBR = 0;
-    uint16_t PC = 0;
-    CpuFlags P{};
-  };
+  // Alias so existing call sites can keep using CPU::Regs while the type lives
+  // in a standalone header for reuse without pulling in the full CPU class.
+  using Regs = CpuRegs;
 
   struct Fault {
     enum class Type : uint8_t {
@@ -210,16 +186,33 @@ class CPU : public Device {
   [[nodiscard]] TickResult Tick(TimeMasterDeltaT budget) override;
   void OnEvent(const SchedulerEvent& event) override;
 
-  [[nodiscard]] struct Regs GetRegs() const { return regs_; }
+  [[nodiscard]] Regs GetRegs() const { return regs_; }
   void SetRegs(const Regs& r) { regs_ = r; }
   [[nodiscard]] uint8_t GetMicroOpIndex() const { return micro_op_index_; }
   [[nodiscard]] const std::optional<Fault>& GetFault() const { return fault_; }
-  void SetBoundaryStopEnabled(bool enabled) { stop_at_instruction_boundary_ = enabled; }
-  [[nodiscard]] bool GetBoundaryStopEnabled() const { return stop_at_instruction_boundary_; }
   [[nodiscard]] uint64_t GetRetiredInstructionCount() const { return retired_instruction_count_; }
+
+  // Last debugger-driven stop reason (breakpoint or step-complete) emitted by
+  // Tick. RunControl consumes this via TakeLastDebuggerStop() after a
+  // Scheduler::Step to map the reason to a pause transition. Fault stops use
+  // GetFault() instead; ordinary stops (kBudgetExhausted / kBlockedOnToken /
+  // kReachedLocalBoundary / kNoWork) don't land here.
+  [[nodiscard]] std::optional<TickStopReason> TakeLastDebuggerStop() {
+    std::optional<TickStopReason> out = last_debugger_stop_;
+    last_debugger_stop_.reset();
+    return out;
+  }
 
   void SetMicroOpRecorder(MicroOpRecorder* recorder) { micro_op_recorder_ = recorder; }
   [[nodiscard]] MicroOpRecorder* GetMicroOpRecorder() const { return micro_op_recorder_; }
+
+  // The debugger (RunControl) owns the contract and mutates it between Tick
+  // calls to request step-N behavior or acknowledge a suppressed breakpoint.
+  // CPU reads it inside FetchOpcode / on instruction retire and writes back
+  // into suppressed_breakpoint_pc / step_target as it hits stop conditions.
+  void SetDebuggerContract(const DebuggerContract& contract) { debugger_contract_ = contract; }
+  [[nodiscard]] const DebuggerContract& GetDebuggerContract() const { return debugger_contract_; }
+  [[nodiscard]] DebuggerContract& MutableDebuggerContract() { return debugger_contract_; }
 
  private:
   struct TimingContext {
@@ -237,9 +230,13 @@ class CPU : public Device {
   uint32_t addr_ = 0;       // Effective address accumulator
   TimingContext timing_context_{};
   std::optional<Fault> fault_ = std::nullopt;
-  bool stop_at_instruction_boundary_ = false;
   uint64_t retired_instruction_count_ = 0;
   MicroOpRecorder* micro_op_recorder_ = nullptr;
+  DebuggerContract debugger_contract_{};
+  // Trace entry captured at instruction-begin (PC + pre-execute regs) and
+  // pushed to the trace sink when the instruction retires.
+  TraceEntry pending_trace_{};
+  std::optional<TickStopReason> last_debugger_stop_ = std::nullopt;
 
   const InstructionEntry* current_instr_ = nullptr;
 
