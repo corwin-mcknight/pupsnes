@@ -989,3 +989,196 @@ TEST_CASE("CpuFlags::FromByte in emulation mode ignores M and X bits", "[cpu]") 
   REQUIRE(f.M == true);
   REQUIRE(f.X == true);
 }
+
+TEST_CASE("INX 8-bit increments X low byte and updates N/Z", "[cpu][inc]") {
+  ResetFixture f;
+  f.SetRomByte(0x0000U, 0xE8);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  auto regs = f.cpu.GetRegs();
+  regs.X = 0x007F;
+  f.cpu.SetRegs(regs);
+
+  TickResult r = f.cpu.Tick(2);
+
+  REQUIRE(r.completed_cycles == 2);
+  REQUIRE(f.cpu.GetRegs().PC == 0x8001);
+  REQUIRE(f.cpu.GetRegs().X == 0x0080);
+  REQUIRE(f.cpu.GetRegs().P.N == true);
+  REQUIRE(f.cpu.GetRegs().P.Z == false);
+}
+
+TEST_CASE("INX 8-bit wraps to zero and sets Z", "[cpu][inc]") {
+  ResetFixture f;
+  f.SetRomByte(0x0000U, 0xE8);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  auto regs = f.cpu.GetRegs();
+  regs.X = 0x12FF;  // high byte preserved in 8-bit mode
+  f.cpu.SetRegs(regs);
+
+  (void)f.cpu.Tick(2);
+
+  REQUIRE(f.cpu.GetRegs().X == 0x1200);
+  REQUIRE(f.cpu.GetRegs().P.Z == true);
+  REQUIRE(f.cpu.GetRegs().P.N == false);
+}
+
+TEST_CASE("INX 16-bit increments full register across page", "[cpu][inc]") {
+  ResetFixture f;
+  f.SetRomByte(0x0000U, 0xE8);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  SetIndex16X(f.cpu, 0x7FFF);
+
+  (void)f.cpu.Tick(2);
+
+  REQUIRE(f.cpu.GetRegs().X == 0x8000);
+  REQUIRE(f.cpu.GetRegs().P.N == true);
+  REQUIRE(f.cpu.GetRegs().P.Z == false);
+}
+
+TEST_CASE("INY 8-bit increments Y and sets Z on wrap", "[cpu][inc]") {
+  ResetFixture f;
+  f.SetRomByte(0x0000U, 0xC8);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  auto regs = f.cpu.GetRegs();
+  regs.Y = 0x00FF;
+  f.cpu.SetRegs(regs);
+
+  (void)f.cpu.Tick(2);
+
+  REQUIRE(f.cpu.GetRegs().Y == 0x0000);
+  REQUIRE(f.cpu.GetRegs().P.Z == true);
+}
+
+TEST_CASE("INY 16-bit wraps at $FFFF to 0", "[cpu][inc]") {
+  ResetFixture f;
+  f.SetRomByte(0x0000U, 0xC8);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  SetIndex16Y(f.cpu, 0xFFFF);
+
+  (void)f.cpu.Tick(2);
+
+  REQUIRE(f.cpu.GetRegs().Y == 0x0000);
+  REQUIRE(f.cpu.GetRegs().P.Z == true);
+  REQUIRE(f.cpu.GetRegs().P.N == false);
+}
+
+TEST_CASE("DEX 8-bit wraps to $FF and sets N", "[cpu][dec]") {
+  ResetFixture f;
+  f.SetRomByte(0x0000U, 0xCA);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  auto regs = f.cpu.GetRegs();
+  regs.X = 0x0000;
+  f.cpu.SetRegs(regs);
+
+  (void)f.cpu.Tick(2);
+
+  REQUIRE(f.cpu.GetRegs().X == 0x00FF);
+  REQUIRE(f.cpu.GetRegs().P.N == true);
+  REQUIRE(f.cpu.GetRegs().P.Z == false);
+}
+
+TEST_CASE("DEX 16-bit decrements full register", "[cpu][dec]") {
+  ResetFixture f;
+  f.SetRomByte(0x0000U, 0xCA);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  SetIndex16X(f.cpu, 0x0001);
+
+  (void)f.cpu.Tick(2);
+
+  REQUIRE(f.cpu.GetRegs().X == 0x0000);
+  REQUIRE(f.cpu.GetRegs().P.Z == true);
+  REQUIRE(f.cpu.GetRegs().P.N == false);
+}
+
+TEST_CASE("DEY 8-bit decrements Y", "[cpu][dec]") {
+  ResetFixture f;
+  f.SetRomByte(0x0000U, 0x88);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  auto regs = f.cpu.GetRegs();
+  regs.Y = 0x0001;
+  f.cpu.SetRegs(regs);
+
+  (void)f.cpu.Tick(2);
+
+  REQUIRE(f.cpu.GetRegs().Y == 0x0000);
+  REQUIRE(f.cpu.GetRegs().P.Z == true);
+}
+
+TEST_CASE("INC A 8-bit increments accumulator low byte, preserves high", "[cpu][inc]") {
+  ResetFixture f;
+  f.SetRomByte(0x0000U, 0x1A);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  auto regs = f.cpu.GetRegs();
+  regs.A = 0xAB7F;  // high byte preserved in 8-bit mode
+  f.cpu.SetRegs(regs);
+
+  (void)f.cpu.Tick(2);
+
+  REQUIRE(f.cpu.GetRegs().A == 0xAB80);
+  REQUIRE(f.cpu.GetRegs().P.N == true);
+  REQUIRE(f.cpu.GetRegs().P.Z == false);
+}
+
+TEST_CASE("INC A 16-bit increments full accumulator", "[cpu][inc]") {
+  ResetFixture f;
+  f.SetRomByte(0x0000U, 0x1A);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  SetAccumulator16(f.cpu, 0xFFFF);
+
+  (void)f.cpu.Tick(2);
+
+  REQUIRE(f.cpu.GetRegs().A == 0x0000);
+  REQUIRE(f.cpu.GetRegs().P.Z == true);
+  REQUIRE(f.cpu.GetRegs().P.N == false);
+}
+
+TEST_CASE("DEC A 8-bit decrements accumulator low byte", "[cpu][dec]") {
+  ResetFixture f;
+  f.SetRomByte(0x0000U, 0x3A);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  auto regs = f.cpu.GetRegs();
+  regs.A = 0x1200;
+  f.cpu.SetRegs(regs);
+
+  (void)f.cpu.Tick(2);
+
+  REQUIRE(f.cpu.GetRegs().A == 0x12FF);
+  REQUIRE(f.cpu.GetRegs().P.N == true);
+  REQUIRE(f.cpu.GetRegs().P.Z == false);
+}
+
+TEST_CASE("DEC A 16-bit decrements full accumulator", "[cpu][dec]") {
+  ResetFixture f;
+  f.SetRomByte(0x0000U, 0x3A);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  SetAccumulator16(f.cpu, 0x0001);
+
+  (void)f.cpu.Tick(2);
+
+  REQUIRE(f.cpu.GetRegs().A == 0x0000);
+  REQUIRE(f.cpu.GetRegs().P.Z == true);
+}

@@ -152,6 +152,84 @@ void CPU::OpIncrementSp() {
   }
 }
 
+void CPU::OpIncA() {
+  if (IsAccumulator16Bit()) {
+    regs_.A = static_cast<uint16_t>(regs_.A + 1U);
+    regs_.P.Z = (regs_.A == 0U);
+    regs_.P.N = (regs_.A & 0x8000U) != 0U;
+  } else {
+    const uint8_t lo = static_cast<uint8_t>(static_cast<uint8_t>(regs_.A) + 1U);
+    regs_.A = static_cast<uint16_t>((regs_.A & 0xFF00U) | lo);
+    regs_.P.Z = (lo == 0U);
+    regs_.P.N = (lo & 0x80U) != 0U;
+  }
+}
+
+void CPU::OpDecA() {
+  if (IsAccumulator16Bit()) {
+    regs_.A = static_cast<uint16_t>(regs_.A - 1U);
+    regs_.P.Z = (regs_.A == 0U);
+    regs_.P.N = (regs_.A & 0x8000U) != 0U;
+  } else {
+    const uint8_t lo = static_cast<uint8_t>(static_cast<uint8_t>(regs_.A) - 1U);
+    regs_.A = static_cast<uint16_t>((regs_.A & 0xFF00U) | lo);
+    regs_.P.Z = (lo == 0U);
+    regs_.P.N = (lo & 0x80U) != 0U;
+  }
+}
+
+void CPU::OpIncX() {
+  if (IsIndex16Bit()) {
+    regs_.X = static_cast<uint16_t>(regs_.X + 1U);
+    regs_.P.Z = (regs_.X == 0U);
+    regs_.P.N = (regs_.X & 0x8000U) != 0U;
+  } else {
+    const uint8_t lo = static_cast<uint8_t>(static_cast<uint8_t>(regs_.X) + 1U);
+    regs_.X = static_cast<uint16_t>((regs_.X & 0xFF00U) | lo);
+    regs_.P.Z = (lo == 0U);
+    regs_.P.N = (lo & 0x80U) != 0U;
+  }
+}
+
+void CPU::OpDecX() {
+  if (IsIndex16Bit()) {
+    regs_.X = static_cast<uint16_t>(regs_.X - 1U);
+    regs_.P.Z = (regs_.X == 0U);
+    regs_.P.N = (regs_.X & 0x8000U) != 0U;
+  } else {
+    const uint8_t lo = static_cast<uint8_t>(static_cast<uint8_t>(regs_.X) - 1U);
+    regs_.X = static_cast<uint16_t>((regs_.X & 0xFF00U) | lo);
+    regs_.P.Z = (lo == 0U);
+    regs_.P.N = (lo & 0x80U) != 0U;
+  }
+}
+
+void CPU::OpIncY() {
+  if (IsIndex16Bit()) {
+    regs_.Y = static_cast<uint16_t>(regs_.Y + 1U);
+    regs_.P.Z = (regs_.Y == 0U);
+    regs_.P.N = (regs_.Y & 0x8000U) != 0U;
+  } else {
+    const uint8_t lo = static_cast<uint8_t>(static_cast<uint8_t>(regs_.Y) + 1U);
+    regs_.Y = static_cast<uint16_t>((regs_.Y & 0xFF00U) | lo);
+    regs_.P.Z = (lo == 0U);
+    regs_.P.N = (lo & 0x80U) != 0U;
+  }
+}
+
+void CPU::OpDecY() {
+  if (IsIndex16Bit()) {
+    regs_.Y = static_cast<uint16_t>(regs_.Y - 1U);
+    regs_.P.Z = (regs_.Y == 0U);
+    regs_.P.N = (regs_.Y & 0x8000U) != 0U;
+  } else {
+    const uint8_t lo = static_cast<uint8_t>(static_cast<uint8_t>(regs_.Y) - 1U);
+    regs_.Y = static_cast<uint16_t>((regs_.Y & 0xFF00U) | lo);
+    regs_.P.Z = (lo == 0U);
+    regs_.P.N = (lo & 0x80U) != 0U;
+  }
+}
+
 void CPU::OpLoadDbrUpdateNz() {
   regs_.DBR = fetch_data_;
   regs_.P.Z = (regs_.DBR == 0U);
@@ -230,10 +308,31 @@ void CPU::ExecuteInternalOp(MicroInternalOp op) {
     case MicroInternalOp::kLoadDbrUpdateNz:
       OpLoadDbrUpdateNz();
       break;
+    case MicroInternalOp::kIncA:
+      OpIncA();
+      break;
+    case MicroInternalOp::kDecA:
+      OpDecA();
+      break;
+    case MicroInternalOp::kIncX:
+      OpIncX();
+      break;
+    case MicroInternalOp::kDecX:
+      OpDecX();
+      break;
+    case MicroInternalOp::kIncY:
+      OpIncY();
+      break;
+    case MicroInternalOp::kDecY:
+      OpDecY();
+      break;
   }
 }
 
 void CPU::FinishInstruction() {
+  if (micro_op_recorder_ != nullptr && current_instr_ != nullptr) {
+    micro_op_recorder_->OnInstructionEnd(retired_instruction_count_ + 1);
+  }
   retired_instruction_count_++;
   current_instr_ = nullptr;
   micro_op_index_ = 0;
@@ -248,6 +347,17 @@ void CPU::DrainSkippedMicroOps() {
     const MicroOp& mop = current_instr_->ops[op_idx];
     if (ShouldExecuteMicroOp(mop)) {
       return;
+    }
+
+    if (micro_op_recorder_ != nullptr) {
+      MicroOpRecord rec;
+      rec.index = micro_op_index_;
+      rec.bus_action = mop.bus_action;
+      rec.internal_op = mop.internal_op;
+      rec.status = MicroOpStatus::kSkipped;
+      rec.fetch_data = fetch_data_;
+      rec.addr = addr_;
+      micro_op_recorder_->OnMicroOp(rec);
     }
 
     ++micro_op_index_;
@@ -362,6 +472,20 @@ CPU::StepResult CPU::FetchOpcode(TimeMasterDeltaT cycle_time) {
 
   current_instr_ = &entry;
   micro_op_index_ = 1;
+  if (micro_op_recorder_ != nullptr) {
+    micro_op_recorder_->OnInstructionBegin(fetch_data_, opcode_address);
+    MicroOpRecord rec;
+    rec.index = 0;
+    rec.bus_action = MicroBusAction::kFetchPc;
+    rec.internal_op = MicroInternalOp::kNone;
+    rec.status = MicroOpStatus::kExecuted;
+    rec.fetch_data = fetch_data_;
+    rec.addr = addr_;
+    rec.has_bus = true;
+    rec.bus_addr = opcode_address;
+    rec.bus_value = fetch_data_;
+    micro_op_recorder_->OnMicroOp(rec);
+  }
   DrainSkippedMicroOps();
   return StepResult{true, std::nullopt};
 }
@@ -414,10 +538,25 @@ CPU::StepResult CPU::ExecuteMicroOp(TimeMasterDeltaT cycle_time) {
   assert(op_idx < current_instr_->remaining_op_count);
 
   const MicroOp& mop = current_instr_->ops[op_idx];
+  const SnesAddrT pre_pc = PcAddr();
   if (auto blocked = PerformBusAction(mop.bus_action, cycle_time)) {
     return StepResult{false, blocked};
   }
   ExecuteInternalOp(mop.internal_op);
+
+  if (micro_op_recorder_ != nullptr) {
+    MicroOpRecord rec;
+    rec.index = micro_op_index_;
+    rec.bus_action = mop.bus_action;
+    rec.internal_op = mop.internal_op;
+    rec.status = MicroOpStatus::kExecuted;
+    rec.fetch_data = fetch_data_;
+    rec.addr = addr_;
+    rec.has_bus = (mop.bus_action != MicroBusAction::kNone);
+    rec.bus_addr = (mop.bus_action == MicroBusAction::kFetchPc) ? pre_pc : addr_;
+    rec.bus_value = fetch_data_;
+    micro_op_recorder_->OnMicroOp(rec);
+  }
 
   ++micro_op_index_;
   if (micro_op_index_ - 1U >= current_instr_->remaining_op_count) {

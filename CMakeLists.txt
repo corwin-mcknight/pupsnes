@@ -5,6 +5,7 @@ project(pupsnes LANGUAGES CXX)
 set(PUPSNES_LIB_SOURCES
   src/pupsnes/5a22/cpu.cpp
   src/pupsnes/5a22/cpu_opcodes.cpp
+  src/pupsnes/5a22/micro_op_strings.cpp
   src/pupsnes/cartridge.cpp
   src/pupsnes/scheduler.cpp
   src/pupsnes/snes.cpp
@@ -17,6 +18,7 @@ set(PUPSNES_DEBUGGER_CORE_SOURCES
   src/debugger/breakpoints.cpp
   src/debugger/disasm.cpp
   src/debugger/error_log.cpp
+  src/debugger/microop_trace.cpp
   src/debugger/run_control.cpp
   src/debugger/trace.cpp
 )
@@ -28,8 +30,11 @@ set(PUPSNES_DEBUGGER_SOURCES
   src/debugger/panels/disasm_panel.cpp
   src/debugger/panels/errors_panel.cpp
   src/debugger/panels/memory_panel.cpp
+  src/debugger/panels/microop_trace_panel.cpp
+  src/debugger/panels/ppu_panel.cpp
   src/debugger/panels/registers_panel.cpp
   src/debugger/panels/scheduler_panel.cpp
+  src/debugger/panels/stack_panel.cpp
   src/debugger/panels/trace_panel.cpp
   src/debugger/third_party/imgui_glfw_backend.cpp
   src/debugger/third_party/imgui_opengl3_backend.cpp
@@ -50,6 +55,7 @@ set(PUPSNES_TEST_SOURCES
   src/tests/disasm_tests.cpp
   src/tests/error_log_tests.cpp
   src/tests/run_control_tests.cpp
+  src/tests/microop_trace_tests.cpp
 )
 
 set(PUPSNES_PROFILE "PRODUCTION" CACHE STRING "Build profile: DEBUG, CI, or PRODUCTION")
@@ -177,6 +183,7 @@ if(BUILD_TESTING)
     ${CMAKE_CURRENT_SOURCE_DIR}/testroms/wram_signature/wram_signature.s
     ${CMAKE_CURRENT_SOURCE_DIR}/testroms/stack_push/stack_push.s
     ${CMAKE_CURRENT_SOURCE_DIR}/testroms/abs_store_smoke/abs_store_smoke.s
+    ${CMAKE_CURRENT_SOURCE_DIR}/testroms/inc_dec_smoke/inc_dec_smoke.s
   )
   set(PUPSNES_TEST_ROM_COMMON_INCLUDES
     ${CMAKE_CURRENT_SOURCE_DIR}/testroms/pupsnes.inc
@@ -237,11 +244,13 @@ set(PUPSNES_HEADERS
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/debugger/breakpoints.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/debugger/disasm.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/debugger/error_log.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/debugger/microop_trace.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/debugger/run_control.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/debugger/trace.h
   ${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/app.h
   ${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/panels/panels.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/5a22/cpu.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/5a22/micro_op_strings.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/cartridge.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/device.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/scheduler.h

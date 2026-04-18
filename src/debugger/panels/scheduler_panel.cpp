@@ -9,6 +9,8 @@ namespace pupsnes::debugger {
 
 void RenderSchedulerPanel(DebuggerApp& app) {
   ImGui::Begin("Scheduler");
+  ImGui::Text("Master Time: %" PRIu64, app.GetSnes().GetMasterTime());
+  ImGui::Separator();
   const auto snapshot = app.GetSnes().GetScheduler().SnapshotQueue();
   if (ImGui::BeginTable("scheduler_table", 4,
                         ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY)) {

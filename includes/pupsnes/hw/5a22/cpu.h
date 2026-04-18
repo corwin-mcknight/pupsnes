@@ -72,6 +72,12 @@ enum class MicroInternalOp : uint8_t {
   kDecrementSp,                         // Decrement SP (wraps in page 1 when E=1)
   kIncrementSp,                         // Increment SP (wraps in page 1 when E=1)
   kLoadDbrUpdateNz,                     // DBR = fetch_data_; update N/Z (8-bit)
+  kIncA,                                // A = A + 1 (width per M flag); update N/Z
+  kDecA,                                // A = A - 1 (width per M flag); update N/Z
+  kIncX,                                // X = X + 1 (width per X flag); update N/Z
+  kDecX,                                // X = X - 1 (width per X flag); update N/Z
+  kIncY,                                // Y = Y + 1 (width per X flag); update N/Z
+  kDecY,                                // Y = Y - 1 (width per X flag); update N/Z
 };
 
 enum class TimingCondition : uint8_t {
@@ -131,6 +137,32 @@ struct InstructionEntry {
   std::array<TimingRuleExpr, kMaxInstructionRules> rules{};
 };
 
+enum class MicroOpStatus : uint8_t {
+  kPending = 0,
+  kExecuted = 1,
+  kSkipped = 2,
+};
+
+struct MicroOpRecord {
+  uint8_t index = 0;  // 0 = opcode fetch, 1..N = remaining ops (1-based)
+  MicroBusAction bus_action = MicroBusAction::kNone;
+  MicroInternalOp internal_op = MicroInternalOp::kNone;
+  MicroOpStatus status = MicroOpStatus::kPending;
+  uint8_t fetch_data = 0;
+  uint32_t addr = 0;
+  bool has_bus = false;
+  uint32_t bus_addr = 0;
+  uint8_t bus_value = 0;
+};
+
+class MicroOpRecorder {
+ public:
+  virtual ~MicroOpRecorder() = default;
+  virtual void OnInstructionBegin(uint8_t opcode, SnesAddrT pc) = 0;
+  virtual void OnMicroOp(const MicroOpRecord& rec) = 0;
+  virtual void OnInstructionEnd(uint64_t retired_seq) = 0;
+};
+
 // 65C816 CPU device.
 //
 // tick() walks a micro-op table: cycle 0 always fetches the opcode via the
@@ -177,6 +209,9 @@ class CPU : public Device {
   [[nodiscard]] bool GetBoundaryStopEnabled() const { return stop_at_instruction_boundary_; }
   [[nodiscard]] uint64_t GetRetiredInstructionCount() const { return retired_instruction_count_; }
 
+  void SetMicroOpRecorder(MicroOpRecorder* recorder) { micro_op_recorder_ = recorder; }
+  [[nodiscard]] MicroOpRecorder* GetMicroOpRecorder() const { return micro_op_recorder_; }
+
  private:
   struct TimingContext {
     bool branch_taken = false;
@@ -195,6 +230,7 @@ class CPU : public Device {
   std::optional<Fault> fault_ = std::nullopt;
   bool stop_at_instruction_boundary_ = false;
   uint64_t retired_instruction_count_ = 0;
+  MicroOpRecorder* micro_op_recorder_ = nullptr;
 
   const InstructionEntry* current_instr_ = nullptr;
 
@@ -233,6 +269,12 @@ class CPU : public Device {
   void OpDecrementSp();
   void OpIncrementSp();
   void OpLoadDbrUpdateNz();
+  void OpIncA();
+  void OpDecA();
+  void OpIncX();
+  void OpDecX();
+  void OpIncY();
+  void OpDecY();
   [[nodiscard]] SnesAddrT StackAddr() const;
   // Replace byte [shift, shift+7] of addr_ with fetch_data_.
   void SetAddrByteFromFetch(unsigned shift);

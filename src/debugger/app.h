@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -9,6 +10,7 @@ struct GLFWwindow;
 
 #include "pupsnes/debugger/breakpoints.h"
 #include "pupsnes/debugger/error_log.h"
+#include "pupsnes/debugger/microop_trace.h"
 #include "pupsnes/debugger/run_control.h"
 #include "pupsnes/debugger/trace.h"
 #include "pupsnes/hw/snes.h"
@@ -18,6 +20,9 @@ namespace pupsnes::debugger {
 struct UiState {
   std::string rom_path_input;
   uint64_t step_count = 10;
+  bool open_load_rom_dialog = false;
+  std::string load_rom_dir = "build/dev/test-roms";
+  std::string load_rom_error;
   bool follow_pc = true;
   SnesAddrT disasm_address = 0x008000;
   SnesAddrT memory_address = 0x7E0000;
@@ -26,6 +31,7 @@ struct UiState {
   int memory_region = 0;
   int error_source_filter = -1;
   int error_severity_filter = -1;
+  size_t trace_last_seen_size = 0;
 };
 
 class DebuggerApp {
@@ -45,6 +51,8 @@ class DebuggerApp {
   [[nodiscard]] const BreakpointSet& GetBreakpoints() const { return breakpoints_; }
   [[nodiscard]] TraceLog& GetTraceLog() { return trace_log_; }
   [[nodiscard]] const TraceLog& GetTraceLog() const { return trace_log_; }
+  [[nodiscard]] MicroOpTrace& GetMicroOpTrace() { return microop_trace_; }
+  [[nodiscard]] const MicroOpTrace& GetMicroOpTrace() const { return microop_trace_; }
   [[nodiscard]] ErrorLog& GetErrorLog() { return error_log_; }
   [[nodiscard]] const ErrorLog& GetErrorLog() const { return error_log_; }
   [[nodiscard]] RunControl& GetRunControl() { return run_control_; }
@@ -63,6 +71,8 @@ class DebuggerApp {
   void ShutdownWindow();
   void TickEmulation();
   void Render();
+  void RenderMenuBar();
+  void RenderLoadRomDialog();
   void RenderFatalModal();
 
   static void GlfwErrorCallback(int code, const char* description);
@@ -76,6 +86,7 @@ class DebuggerApp {
   SNES snes_;
   BreakpointSet breakpoints_;
   TraceLog trace_log_;
+  MicroOpTrace microop_trace_;
   ErrorLog error_log_;
   RunControl run_control_;
   UiState ui_state_;

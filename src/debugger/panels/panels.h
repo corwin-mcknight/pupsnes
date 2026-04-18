@@ -8,7 +8,10 @@ void RenderControlsPanel(DebuggerApp& app);
 void RenderRegistersPanel(DebuggerApp& app);
 void RenderDisasmPanel(DebuggerApp& app);
 void RenderMemoryPanel(DebuggerApp& app);
+void RenderStackPanel(DebuggerApp& app);
+void RenderPpuPanel(DebuggerApp& app);
 void RenderTracePanel(DebuggerApp& app);
+void RenderMicroOpTracePanel(DebuggerApp& app);
 void RenderSchedulerPanel(DebuggerApp& app);
 void RenderErrorsPanel(DebuggerApp& app);
 

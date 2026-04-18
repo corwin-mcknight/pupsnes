@@ -1,0 +1,54 @@
+rom_name = "inc_dec_smoke"
+title = "INC/DEC/INX/INY/DEX/DEY Smoke"
+purpose = "Verify 8-bit INX/INY/DEX/DEY and INC A / DEC A land correct values (with wraparound) in WRAM via absolute stores."
+why_expected_to_fail = "This ROM previously failed before INC/DEC/INX/INY/DEX/DEY support existed."
+cycle_budget = 80
+expected_current_status = "pass"
+
+[goal]
+name = "parks-at-loop-label"
+description = "Program counter should settle at the BRA loop target after all arithmetic completes."
+kind = "cpu_pc"
+expected_value = 0x802C
+
+[goal]
+name = "inx-twice-from-10"
+description = "INX twice starting at $10 should store $12 at $7E:0000."
+kind = "wram_byte"
+address = 0x0000
+expected_value = 0x12
+
+[goal]
+name = "dey-from-20"
+description = "DEY from $20 should store $1F at $7E:0001."
+kind = "wram_byte"
+address = 0x0001
+expected_value = 0x1F
+
+[goal]
+name = "inc-inc-dec-accumulator"
+description = "INC A twice then DEC A once from $00 should store $01 at $7E:0002."
+kind = "wram_byte"
+address = 0x0002
+expected_value = 0x01
+
+[goal]
+name = "inx-wraps-to-zero"
+description = "INX from $FF should wrap to $00 at $7E:0003."
+kind = "wram_byte"
+address = 0x0003
+expected_value = 0x00
+
+[goal]
+name = "dex-wraps-to-ff"
+description = "DEX from $00 should wrap to $FF at $7E:0004."
+kind = "wram_byte"
+address = 0x0004
+expected_value = 0xFF
+
+[goal]
+name = "dey-wraps-to-ff"
+description = "DEY from $00 should wrap to $FF at $7E:0005."
+kind = "wram_byte"
+address = 0x0005
+expected_value = 0xFF

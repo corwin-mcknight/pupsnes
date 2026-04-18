@@ -2,12 +2,15 @@
 
 #include <GLFW/glfw3.h>
 
+#include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <exception>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <string>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -79,6 +82,8 @@ bool DebuggerApp::LoadRomFromPath(const std::string& path) {
     snes_.LoadLoRom(rom);
     snes_.Reset();
     trace_log_.Clear();
+    microop_trace_.Clear();
+    snes_.GetCpu().SetMicroOpRecorder(&microop_trace_);
     breakpoints_.Clear();
     run_control_.ResetMachineState();
     loaded_rom_ = true;
@@ -102,6 +107,7 @@ void DebuggerApp::ResetMachine() {
   }
   snes_.Reset();
   trace_log_.Clear();
+  microop_trace_.Clear();
   run_control_.ResetMachineState();
   JumpToAddress(GetCurrentPc());
 }
@@ -208,6 +214,91 @@ void DebuggerApp::TickEmulation() {
   }
 }
 
+void DebuggerApp::RenderMenuBar() {
+  if (ImGui::BeginMainMenuBar()) {
+    if (ImGui::BeginMenu("File")) {
+      if (ImGui::MenuItem("Load ROM...")) {
+        ui_state_.open_load_rom_dialog = true;
+        ui_state_.load_rom_error.clear();
+      }
+      ImGui::Separator();
+      if (ImGui::MenuItem("Exit")) {
+        glfwSetWindowShouldClose(window_, GLFW_TRUE);
+      }
+      ImGui::EndMenu();
+    }
+    ImGui::EndMainMenuBar();
+  }
+}
+
+void DebuggerApp::RenderLoadRomDialog() {
+  namespace fs = std::filesystem;
+
+  if (ui_state_.open_load_rom_dialog) {
+    ImGui::OpenPopup("Load ROM");
+    ui_state_.open_load_rom_dialog = false;
+  }
+
+  ImGui::SetNextWindowSize(ImVec2(520.0F, 360.0F), ImGuiCond_Appearing);
+  if (!ImGui::BeginPopupModal("Load ROM", nullptr, ImGuiWindowFlags_NoCollapse)) {
+    return;
+  }
+
+  ImGui::TextUnformatted("Directory:");
+  ImGui::SameLine();
+  ImGui::TextUnformatted(ui_state_.load_rom_dir.c_str());
+
+  ImGui::Separator();
+
+  std::error_code ec;
+  const fs::path dir(ui_state_.load_rom_dir);
+  if (!fs::exists(dir, ec) || !fs::is_directory(dir, ec)) {
+    ImGui::TextColored(ImVec4(0.95F, 0.5F, 0.25F, 1.0F), "Directory not found: %s", ui_state_.load_rom_dir.c_str());
+  } else {
+    std::vector<fs::path> entries;
+    for (const auto& entry : fs::directory_iterator(dir, ec)) {
+      if (!entry.is_regular_file(ec)) {
+        continue;
+      }
+      std::string ext = entry.path().extension().string();
+      for (char& c : ext) {
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+      }
+      if (ext == ".sfc" || ext == ".smc") {
+        entries.push_back(entry.path());
+      }
+    }
+    std::sort(entries.begin(), entries.end());
+
+    if (ImGui::BeginChild("rom_list", ImVec2(0.0F, 240.0F), ImGuiChildFlags_Borders)) {
+      if (entries.empty()) {
+        ImGui::TextDisabled("No .sfc or .smc files found.");
+      }
+      for (const fs::path& path : entries) {
+        const std::string name = path.filename().string();
+        if (ImGui::Selectable(name.c_str(), false, ImGuiSelectableFlags_AllowDoubleClick)) {
+          if (LoadRomFromPath(path.string())) {
+            ui_state_.load_rom_error.clear();
+            ImGui::CloseCurrentPopup();
+          } else {
+            ui_state_.load_rom_error = "Failed to load: " + name;
+          }
+        }
+      }
+    }
+    ImGui::EndChild();
+  }
+
+  if (!ui_state_.load_rom_error.empty()) {
+    ImGui::TextColored(ImVec4(0.95F, 0.25F, 0.25F, 1.0F), "%s", ui_state_.load_rom_error.c_str());
+  }
+
+  if (ImGui::Button("Cancel")) {
+    ImGui::CloseCurrentPopup();
+  }
+  ImGui::EndPopup();
+}
+
 void DebuggerApp::RenderFatalModal() {
   if (!fatal_error_.has_value()) {
     return;
@@ -228,15 +319,20 @@ void DebuggerApp::Render() {
   ImGui_ImplGlfw_NewFrame();
   ImGui::NewFrame();
 
+  RenderMenuBar();
   ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport());
 
   RenderControlsPanel(*this);
   RenderRegistersPanel(*this);
   RenderDisasmPanel(*this);
   RenderMemoryPanel(*this);
+  RenderStackPanel(*this);
+  RenderPpuPanel(*this);
   RenderTracePanel(*this);
+  RenderMicroOpTracePanel(*this);
   RenderSchedulerPanel(*this);
   RenderErrorsPanel(*this);
+  RenderLoadRomDialog();
   RenderFatalModal();
 
   ImGui::Render();
