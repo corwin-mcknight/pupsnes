@@ -11,9 +11,20 @@ class SNES;
 
 enum class PageDeviceKind : uint8_t {
   kUnmapped = 0,
+  // Pure backing storage: no device-side state, no catch-up, no arbitration.
+  // Access cost is fully captured by access_speed. Enables the fast-pointer
+  // read/write path that bypasses Device::ReadRegister / WriteRegister.
+  // Mappers MUST NOT use this kind for any region with side effects, banking
+  // registers, another bus master, or contended access — use kSameClockMmio,
+  // kCrossClockMmio, or kArbitrated instead.
   kMemory = 1,
   kSameClockMmio = 2,
   kCrossClockMmio = 3,
+  // Storage-backed region contended between multiple bus masters (e.g. SA-1 /
+  // SuperFX shared SRAM). Always routed through Follow so the scheduler can
+  // arbitrate ownership before the access completes. Reserved for future
+  // mappers; no users today.
+  kArbitrated = 4,
 };
 
 struct PageTableEntry {
@@ -21,6 +32,11 @@ struct PageTableEntry {
   uint32_t base_offset = 0;
   PageDeviceKind kind = PageDeviceKind::kUnmapped;
   uint8_t access_speed = 0;
+  // For kMemory pages, points at the 256-byte page window inside the device's
+  // backing store. Indexed by (address & 0xFF). Null disables the fast path
+  // (falls through to Device::ReadRegister / WriteRegister).
+  const uint8_t* fast_read_ptr = nullptr;
+  uint8_t* fast_write_ptr = nullptr;
 };
 
 enum class BusPlanOutcome : uint8_t {
@@ -82,6 +98,11 @@ struct PageMapParams {
   uint32_t base_offset;
   PageDeviceKind kind;
   uint8_t access_speed;
+  // Optional: for kMemory pages, hands the bus a direct pointer to the 256-byte
+  // page window in the device's backing store so reads/writes can skip virtual
+  // dispatch. Null means fall back to Device::ReadRegister / WriteRegister.
+  const uint8_t* fast_read_ptr = nullptr;
+  uint8_t* fast_write_ptr = nullptr;
 };
 
 class SystemBus {
@@ -96,6 +117,35 @@ class SystemBus {
   BusFollowResult Follow(const BusPlan& plan, TimeMasterT current_time, DeviceIdT source_device);
   [[nodiscard]] DebugReadResult DebugRead(SnesAddrT address) const;
   [[nodiscard]] DebugWriteResult DebugWrite(SnesAddrT address, uint8_t value);
+
+  // Hot-path shortcut for kMemory pages with a direct pointer. Returns true
+  // when handled inline (out_data is set, open-bus updated); false means the
+  // caller must fall back to Plan+Follow (unmapped page, MMIO, arbitrated, or
+  // test device with no fast pointer). Semantics match the kMemory branch of
+  // FollowInline exactly.
+  [[nodiscard]] bool TryFastRead(SnesAddrT address, uint8_t& out_data) {
+    const SnesAddrT addr = address & 0xFFFFFFU;
+    const PageTableEntry& entry =
+        page_table_[static_cast<uint8_t>(addr >> 16)][static_cast<uint8_t>((addr >> 8) & 0xFF)];
+    if (entry.kind != PageDeviceKind::kMemory || entry.fast_read_ptr == nullptr) {
+      return false;
+    }
+    const uint8_t data = entry.fast_read_ptr[addr & 0xFFU];
+    last_data_bus_value_ = data;
+    out_data = data;
+    return true;
+  }
+  [[nodiscard]] bool TryFastWrite(SnesAddrT address, uint8_t data) {
+    const SnesAddrT addr = address & 0xFFFFFFU;
+    const PageTableEntry& entry =
+        page_table_[static_cast<uint8_t>(addr >> 16)][static_cast<uint8_t>((addr >> 8) & 0xFF)];
+    if (entry.kind != PageDeviceKind::kMemory || entry.fast_write_ptr == nullptr) {
+      return false;
+    }
+    entry.fast_write_ptr[addr & 0xFFU] = data;
+    last_data_bus_value_ = data;
+    return true;
+  }
 
  private:
   SNES* snes_;  // Non-owning. SNES owns this SystemBus; pointer back to parent.

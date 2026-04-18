@@ -1,0 +1,65 @@
+rom_name = "all_instr_loop"
+title = "All Instructions + BNE Loop"
+purpose = "Exercise every currently-implemented 65C816 opcode (NOP, PHA, PHB, PLB, LDA imm, LDX imm, LDY imm, STA abs, STX abs, STY abs, STA long, INC A, DEC A, INX, INY, DEX, DEY, BRA, BNE) inside a BNE-driven inner loop, then BRA back to the top of the main work block so the ROM runs continuously."
+why_expected_to_fail = "This ROM previously failed before the full baseline opcode set and real branch looping were implemented."
+cycle_budget = 192
+expected_current_status = "pass"
+
+[goal]
+name = "parks-at-main-loop-top"
+description = "After 12 cycles of setup plus 3 full 60-cycle iterations of the main work block, PC should land back at the main_loop label (the NOP at $8005)."
+kind = "cpu_pc"
+expected_value = 0x8005
+
+[goal]
+name = "plb-sets-data-bank"
+description = "PLB should have pulled $7E off the stack into DBR."
+kind = "cpu_dbr"
+expected_value = 0x7E
+
+[goal]
+name = "stack-pointer-stable-after-phb"
+description = "PHA+PLB cancels out; PHB leaves SP at $01FE, and the main loop never touches the stack so SP stays there."
+kind = "cpu_sp"
+expected_value = 0x01FE
+
+[goal]
+name = "accumulator-final-value"
+description = "At the end of each iteration A low byte is $02 (3x INC A then DEC A)."
+kind = "cpu_a8"
+expected_value = 0x02
+
+[goal]
+name = "inc-loop-result-a"
+description = "STA absolute should write the loop-computed A=$02 to $7E:0000."
+kind = "wram_byte"
+address = 0x0000
+expected_value = 0x02
+
+[goal]
+name = "inc-loop-result-x"
+description = "STX absolute should write X=$01 (DEX loop result + INX) to $7E:0001."
+kind = "wram_byte"
+address = 0x0001
+expected_value = 0x01
+
+[goal]
+name = "inc-loop-result-y"
+description = "STY absolute should write Y=$12 (3x INY + DEY) to $7E:0002."
+kind = "wram_byte"
+address = 0x0002
+expected_value = 0x12
+
+[goal]
+name = "sta-long-writes-dbr-bank"
+description = "STA long should write A=$02 to $7E:0003 via the 24-bit address."
+kind = "wram_byte"
+address = 0x0003
+expected_value = 0x02
+
+[goal]
+name = "phb-wrote-dbr-to-stack"
+description = "PHB should have written DBR=$7E to $00:01FF (after PLB restored SP)."
+kind = "wram_byte"
+address = 0x01FF
+expected_value = 0x7E

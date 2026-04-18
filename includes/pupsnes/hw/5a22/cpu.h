@@ -239,6 +239,13 @@ class CPU : public Device {
   std::optional<TickStopReason> last_debugger_stop_ = std::nullopt;
 
   const InstructionEntry* current_instr_ = nullptr;
+  // Cached at FetchOpcode time from current_instr_->rule_count > 1. Lets the
+  // per-micro-op drain guard be a single-load/branch check instead of
+  // dereferencing current_instr_. Cleared in FinishInstruction / RecordFault.
+  bool needs_drain_ = false;
+  // Cached at Reset() from snes_->system_bus.get(). Lets the inline BusRead /
+  // BusWrite fast path skip the unique_ptr<> deref (non-trivial in debug).
+  SystemBus* system_bus_raw_ = nullptr;
 
   // Opcode → micro-op sequence table.  Defined in cpu_opcodes.cpp.
   static const std::array<InstructionEntry, 256> kOpcodeTable;
@@ -257,44 +264,257 @@ class CPU : public Device {
   [[nodiscard]] StepResult ExecuteMicroOp(TimeMasterDeltaT cycle_time);
   [[nodiscard]] TickResult PerformBusAction(MicroBusAction action, TimeMasterDeltaT cycle_time);
 
-  void ExecuteInternalOp(MicroInternalOp op);
-  [[nodiscard]] bool IsAccumulator16Bit() const;
-  [[nodiscard]] bool IsIndex16Bit() const;
+  // Mode helpers. Inlined so IsIndex16Bit / IsAccumulator16Bit checks inside
+  // the Op* helpers collapse into the surrounding switch.
+  [[nodiscard]] [[gnu::always_inline]] inline bool IsAccumulator16Bit() const { return !regs_.P.E && !regs_.P.M; }
+  [[nodiscard]] [[gnu::always_inline]] inline bool IsIndex16Bit() const { return !regs_.P.E && !regs_.P.X; }
 
-  void OpLoadA8UpdateNz();
-  void OpLoadALow();
-  void OpLoadAHighUpdateNz();
-  void OpLoadX8UpdateNz();
-  void OpLoadXLow();
-  void OpLoadXHighUpdateNz();
-  void OpLoadY8UpdateNz();
-  void OpLoadYLow();
-  void OpLoadYHighUpdateNz();
-  void OpSetBranchTaken(bool taken);
-  void OpSetBranchTakenIfNotZero();
-  void OpBranchRelative8();
-  void OpDecrementSp();
-  void OpIncrementSp();
-  void OpLoadDbrUpdateNz();
-  void OpIncA();
-  void OpDecA();
-  void OpIncX();
-  void OpDecX();
-  void OpIncY();
-  void OpDecY();
-  [[nodiscard]] SnesAddrT StackAddr() const;
+  // Per-MicroInternalOp helpers. All marked always_inline so ExecuteInternalOp
+  // (also always_inline) collapses its entire switch into ExecuteMicroOp.
+  [[gnu::always_inline]] inline void OpLoadA8UpdateNz() {
+    regs_.A = static_cast<uint16_t>((regs_.A & 0xFF00U) | fetch_data_);
+    regs_.P.Z = (static_cast<uint8_t>(regs_.A) == 0U);
+    regs_.P.N = (regs_.A & 0x0080U) != 0U;
+  }
+  [[gnu::always_inline]] inline void OpLoadALow() {
+    regs_.A = static_cast<uint16_t>((regs_.A & 0xFF00U) | fetch_data_);
+  }
+  [[gnu::always_inline]] inline void OpLoadAHighUpdateNz() {
+    const uint16_t high = static_cast<uint16_t>(static_cast<uint16_t>(fetch_data_) << 8U);
+    regs_.A = static_cast<uint16_t>(high | (regs_.A & 0x00FFU));
+    regs_.P.Z = (regs_.A == 0U);
+    regs_.P.N = (regs_.A & 0x8000U) != 0U;
+  }
+  [[gnu::always_inline]] inline void OpLoadX8UpdateNz() {
+    regs_.X = static_cast<uint16_t>((regs_.X & 0xFF00U) | fetch_data_);
+    regs_.P.Z = (static_cast<uint8_t>(regs_.X) == 0U);
+    regs_.P.N = (regs_.X & 0x0080U) != 0U;
+  }
+  [[gnu::always_inline]] inline void OpLoadXLow() {
+    regs_.X = static_cast<uint16_t>((regs_.X & 0xFF00U) | fetch_data_);
+  }
+  [[gnu::always_inline]] inline void OpLoadXHighUpdateNz() {
+    const uint16_t high = static_cast<uint16_t>(static_cast<uint16_t>(fetch_data_) << 8U);
+    regs_.X = static_cast<uint16_t>(high | (regs_.X & 0x00FFU));
+    regs_.P.Z = (regs_.X == 0U);
+    regs_.P.N = (regs_.X & 0x8000U) != 0U;
+  }
+  [[gnu::always_inline]] inline void OpLoadY8UpdateNz() {
+    regs_.Y = static_cast<uint16_t>((regs_.Y & 0xFF00U) | fetch_data_);
+    regs_.P.Z = (static_cast<uint8_t>(regs_.Y) == 0U);
+    regs_.P.N = (regs_.Y & 0x0080U) != 0U;
+  }
+  [[gnu::always_inline]] inline void OpLoadYLow() {
+    regs_.Y = static_cast<uint16_t>((regs_.Y & 0xFF00U) | fetch_data_);
+  }
+  [[gnu::always_inline]] inline void OpLoadYHighUpdateNz() {
+    const uint16_t high = static_cast<uint16_t>(static_cast<uint16_t>(fetch_data_) << 8U);
+    regs_.Y = static_cast<uint16_t>(high | (regs_.Y & 0x00FFU));
+    regs_.P.Z = (regs_.Y == 0U);
+    regs_.P.N = (regs_.Y & 0x8000U) != 0U;
+  }
+  [[gnu::always_inline]] inline void OpSetBranchTaken(bool taken) { timing_context_.branch_taken = taken; }
+  [[gnu::always_inline]] inline void OpSetBranchTakenIfNotZero() { OpSetBranchTaken(!regs_.P.Z); }
+  [[gnu::always_inline]] inline void OpBranchRelative8() {
+    const int8_t displacement = static_cast<int8_t>(fetch_data_);
+    const uint16_t old_pc = regs_.PC;
+    regs_.PC = static_cast<uint16_t>(regs_.PC + displacement);
+    timing_context_.branch_page_crossed = ((old_pc ^ regs_.PC) & 0xFF00U) != 0U;
+  }
+  [[gnu::always_inline]] inline void OpDecrementSp() {
+    if (regs_.P.E) {
+      const uint8_t sp_lo = static_cast<uint8_t>(static_cast<uint8_t>(regs_.SP) - 1U);
+      regs_.SP = static_cast<uint16_t>(0x0100U | sp_lo);
+    } else {
+      regs_.SP = static_cast<uint16_t>(regs_.SP - 1U);
+    }
+  }
+  [[gnu::always_inline]] inline void OpIncrementSp() {
+    if (regs_.P.E) {
+      const uint8_t sp_lo = static_cast<uint8_t>(static_cast<uint8_t>(regs_.SP) + 1U);
+      regs_.SP = static_cast<uint16_t>(0x0100U | sp_lo);
+    } else {
+      regs_.SP = static_cast<uint16_t>(regs_.SP + 1U);
+    }
+  }
+  [[gnu::always_inline]] inline void OpLoadDbrUpdateNz() {
+    regs_.DBR = fetch_data_;
+    regs_.P.Z = (regs_.DBR == 0U);
+    regs_.P.N = (regs_.DBR & 0x80U) != 0U;
+  }
+  [[gnu::always_inline]] inline void OpIncA() {
+    if (IsAccumulator16Bit()) {
+      regs_.A = static_cast<uint16_t>(regs_.A + 1U);
+      regs_.P.Z = (regs_.A == 0U);
+      regs_.P.N = (regs_.A & 0x8000U) != 0U;
+    } else {
+      const uint8_t lo = static_cast<uint8_t>(static_cast<uint8_t>(regs_.A) + 1U);
+      regs_.A = static_cast<uint16_t>((regs_.A & 0xFF00U) | lo);
+      regs_.P.Z = (lo == 0U);
+      regs_.P.N = (lo & 0x80U) != 0U;
+    }
+  }
+  [[gnu::always_inline]] inline void OpDecA() {
+    if (IsAccumulator16Bit()) {
+      regs_.A = static_cast<uint16_t>(regs_.A - 1U);
+      regs_.P.Z = (regs_.A == 0U);
+      regs_.P.N = (regs_.A & 0x8000U) != 0U;
+    } else {
+      const uint8_t lo = static_cast<uint8_t>(static_cast<uint8_t>(regs_.A) - 1U);
+      regs_.A = static_cast<uint16_t>((regs_.A & 0xFF00U) | lo);
+      regs_.P.Z = (lo == 0U);
+      regs_.P.N = (lo & 0x80U) != 0U;
+    }
+  }
+  [[gnu::always_inline]] inline void OpIncX() {
+    if (IsIndex16Bit()) {
+      regs_.X = static_cast<uint16_t>(regs_.X + 1U);
+      regs_.P.Z = (regs_.X == 0U);
+      regs_.P.N = (regs_.X & 0x8000U) != 0U;
+    } else {
+      const uint8_t lo = static_cast<uint8_t>(static_cast<uint8_t>(regs_.X) + 1U);
+      regs_.X = static_cast<uint16_t>((regs_.X & 0xFF00U) | lo);
+      regs_.P.Z = (lo == 0U);
+      regs_.P.N = (lo & 0x80U) != 0U;
+    }
+  }
+  [[gnu::always_inline]] inline void OpDecX() {
+    if (IsIndex16Bit()) {
+      regs_.X = static_cast<uint16_t>(regs_.X - 1U);
+      regs_.P.Z = (regs_.X == 0U);
+      regs_.P.N = (regs_.X & 0x8000U) != 0U;
+    } else {
+      const uint8_t lo = static_cast<uint8_t>(static_cast<uint8_t>(regs_.X) - 1U);
+      regs_.X = static_cast<uint16_t>((regs_.X & 0xFF00U) | lo);
+      regs_.P.Z = (lo == 0U);
+      regs_.P.N = (lo & 0x80U) != 0U;
+    }
+  }
+  [[gnu::always_inline]] inline void OpIncY() {
+    if (IsIndex16Bit()) {
+      regs_.Y = static_cast<uint16_t>(regs_.Y + 1U);
+      regs_.P.Z = (regs_.Y == 0U);
+      regs_.P.N = (regs_.Y & 0x8000U) != 0U;
+    } else {
+      const uint8_t lo = static_cast<uint8_t>(static_cast<uint8_t>(regs_.Y) + 1U);
+      regs_.Y = static_cast<uint16_t>((regs_.Y & 0xFF00U) | lo);
+      regs_.P.Z = (lo == 0U);
+      regs_.P.N = (lo & 0x80U) != 0U;
+    }
+  }
+  [[gnu::always_inline]] inline void OpDecY() {
+    if (IsIndex16Bit()) {
+      regs_.Y = static_cast<uint16_t>(regs_.Y - 1U);
+      regs_.P.Z = (regs_.Y == 0U);
+      regs_.P.N = (regs_.Y & 0x8000U) != 0U;
+    } else {
+      const uint8_t lo = static_cast<uint8_t>(static_cast<uint8_t>(regs_.Y) - 1U);
+      regs_.Y = static_cast<uint16_t>((regs_.Y & 0xFF00U) | lo);
+      regs_.P.Z = (lo == 0U);
+      regs_.P.N = (lo & 0x80U) != 0U;
+    }
+  }
+  [[nodiscard]] [[gnu::always_inline]] inline SnesAddrT StackAddr() const { return static_cast<SnesAddrT>(regs_.SP); }
   // Replace byte [shift, shift+7] of addr_ with fetch_data_.
-  void SetAddrByteFromFetch(unsigned shift);
+  [[gnu::always_inline]] inline void SetAddrByteFromFetch(unsigned shift) {
+    const uint32_t mask = ~(uint32_t{0xFFU} << shift) & 0xFFFFFFU;
+    addr_ = (addr_ & mask) | (static_cast<uint32_t>(fetch_data_) << shift);
+  }
+
+  // Central dispatch for the per-cycle internal register op. Always inlined
+  // so the switch collapses into ExecuteMicroOp's loop body.
+  [[gnu::always_inline]] inline void ExecuteInternalOp(MicroInternalOp op) {
+    switch (op) {
+      case MicroInternalOp::kNone:
+        break;
+      case MicroInternalOp::kLoadA8UpdateNz:
+        OpLoadA8UpdateNz();
+        break;
+      case MicroInternalOp::kLoadALow:
+        OpLoadALow();
+        break;
+      case MicroInternalOp::kLoadAHighUpdateNz:
+        OpLoadAHighUpdateNz();
+        break;
+      case MicroInternalOp::kLoadX8UpdateNz:
+        OpLoadX8UpdateNz();
+        break;
+      case MicroInternalOp::kLoadXLow:
+        OpLoadXLow();
+        break;
+      case MicroInternalOp::kLoadXHighUpdateNz:
+        OpLoadXHighUpdateNz();
+        break;
+      case MicroInternalOp::kLoadY8UpdateNz:
+        OpLoadY8UpdateNz();
+        break;
+      case MicroInternalOp::kLoadYLow:
+        OpLoadYLow();
+        break;
+      case MicroInternalOp::kLoadYHighUpdateNz:
+        OpLoadYHighUpdateNz();
+        break;
+      case MicroInternalOp::kSetBranchTaken:
+        OpSetBranchTaken(true);
+        break;
+      case MicroInternalOp::kSetBranchTakenIfNotZero:
+        OpSetBranchTakenIfNotZero();
+        break;
+      case MicroInternalOp::kBranchRelative8:
+        OpBranchRelative8();
+        break;
+      case MicroInternalOp::kSetAddrLowFromFetch:
+        SetAddrByteFromFetch(0);
+        break;
+      case MicroInternalOp::kSetAddrHighFromFetch:
+        SetAddrByteFromFetch(8);
+        break;
+      case MicroInternalOp::kSetAddrBankFromFetch:
+        SetAddrByteFromFetch(16);
+        break;
+      case MicroInternalOp::kSetAddrHighFromFetchAndBankFromDbr:
+        SetAddrByteFromFetch(8);
+        addr_ = (addr_ & 0x00FFFFU) | (static_cast<uint32_t>(regs_.DBR) << 16U);
+        break;
+      case MicroInternalOp::kIncrementAddr:
+        addr_ = (addr_ + 1U) & 0xFFFFFFU;
+        break;
+      case MicroInternalOp::kDecrementSp:
+        OpDecrementSp();
+        break;
+      case MicroInternalOp::kIncrementSp:
+        OpIncrementSp();
+        break;
+      case MicroInternalOp::kLoadDbrUpdateNz:
+        OpLoadDbrUpdateNz();
+        break;
+      case MicroInternalOp::kIncA:
+        OpIncA();
+        break;
+      case MicroInternalOp::kDecA:
+        OpDecA();
+        break;
+      case MicroInternalOp::kIncX:
+        OpIncX();
+        break;
+      case MicroInternalOp::kDecX:
+        OpDecX();
+        break;
+      case MicroInternalOp::kIncY:
+        OpIncY();
+        break;
+      case MicroInternalOp::kDecY:
+        OpDecY();
+        break;
+    }
+  }
   void FinishInstruction();
   void DrainSkippedMicroOpsSlow();
-  // Fast guard: instructions whose only rule is "Always" (rule_count == 1) have
-  // no conditional micro-ops, so the drain loop can be skipped entirely. Most
-  // 65C816 opcodes fall into this category, so inlining the guard eliminates
-  // both the call and the loop-entry overhead on the common path.
+  // Fast guard: needs_drain_ is set at instruction-entry time iff the
+  // instruction has any conditional rules (rule_count > 1). For the common
+  // case of unconditional instructions this is a single-load branch.
   void DrainSkippedMicroOps() {
-    if (current_instr_ == nullptr || current_instr_->rule_count <= 1) {
-      return;
-    }
+    if (!needs_drain_) return;
     DrainSkippedMicroOpsSlow();
   }
   void RecordFault(Fault::Type type, uint8_t opcode, SnesAddrT opcode_address);
@@ -302,21 +522,40 @@ class CPU : public Device {
 
   [[nodiscard]] uint8_t ReadResetVectorByte(SnesAddrT addr);
 
-  [[nodiscard]] SnesAddrT PcAddr() const;
+  [[nodiscard]] [[gnu::always_inline]] inline SnesAddrT PcAddr() const {
+    return (static_cast<uint32_t>(regs_.PBR) << 16U) | static_cast<uint32_t>(regs_.PC);
+  }
 
   // Issue a Plan/Follow pair against the system bus at local_time_+cycle_time.
   // Returns the follow result; caller interprets outcome.
   [[nodiscard]] BusFollowResult PlanAndFollow(SnesAddrT addr, BusAccessType type, uint8_t data,
                                               TimeMasterDeltaT cycle_time);
 
-  // Execute a bus read. Returns a TickResult whose reason is kContinue on
-  // inline completion (fetch_data_ updated) or a stop reason when the access
-  // blocks.
-  [[nodiscard]] TickResult BusRead(SnesAddrT addr, TimeMasterDeltaT cycle_time);
+  // Slow path for BusRead/BusWrite — handles unmapped pages, MMIO, scheduled
+  // accesses, and devices without a fast pointer (e.g. test mocks). Defined
+  // out-of-line in cpu.cpp.
+  [[nodiscard]] TickResult BusReadSlow(SnesAddrT addr, TimeMasterDeltaT cycle_time);
+  [[nodiscard]] TickResult BusWriteSlow(SnesAddrT addr, uint8_t data, TimeMasterDeltaT cycle_time);
+
+  // Execute a bus read. Reason is kContinue on inline completion
+  // (fetch_data_ updated); a stop reason when the access blocks.
+  [[nodiscard]] TickResult BusRead(SnesAddrT addr, TimeMasterDeltaT cycle_time) {
+    uint8_t data;
+    if (system_bus_raw_ != nullptr && system_bus_raw_->TryFastRead(addr, data)) {
+      fetch_data_ = data;
+      return TickResult{0, TickStopReason::kContinue};
+    }
+    return BusReadSlow(addr, cycle_time);
+  }
 
   // Execute a bus write. Reason is kContinue on inline completion, or a stop
   // reason when the access blocks.
-  [[nodiscard]] TickResult BusWrite(SnesAddrT addr, uint8_t data, TimeMasterDeltaT cycle_time);
+  [[nodiscard]] TickResult BusWrite(SnesAddrT addr, uint8_t data, TimeMasterDeltaT cycle_time) {
+    if (system_bus_raw_ != nullptr && system_bus_raw_->TryFastWrite(addr, data)) {
+      return TickResult{0, TickStopReason::kContinue};
+    }
+    return BusWriteSlow(addr, data, cycle_time);
+  }
 };
 
 }  // namespace pupsnes

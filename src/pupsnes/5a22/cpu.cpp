@@ -65,6 +65,8 @@ void CPU::Reset() {
   last_debugger_stop_.reset();
   retired_instruction_count_ = 0;
   current_instr_ = nullptr;
+  needs_drain_ = false;
+  system_bus_raw_ = (snes_ != nullptr) ? snes_->system_bus.get() : nullptr;
   local_time_ = (snes_ != nullptr) ? snes_->GetMasterTime() : 0;
 
   const uint8_t vector_lo = ReadResetVectorByte(0x00FFFCU);
@@ -72,261 +74,6 @@ void CPU::Reset() {
 
   regs_.PBR = 0;
   regs_.PC = static_cast<uint16_t>(static_cast<uint16_t>(vector_hi) << 8U) | vector_lo;
-}
-
-bool CPU::IsAccumulator16Bit() const { return !regs_.P.E && !regs_.P.M; }
-
-bool CPU::IsIndex16Bit() const { return !regs_.P.E && !regs_.P.X; }
-
-void CPU::OpLoadA8UpdateNz() {
-  regs_.A = static_cast<uint16_t>((regs_.A & 0xFF00U) | fetch_data_);
-  regs_.P.Z = (static_cast<uint8_t>(regs_.A) == 0U);
-  regs_.P.N = (regs_.A & 0x0080U) != 0U;
-}
-
-void CPU::OpLoadALow() { regs_.A = static_cast<uint16_t>((regs_.A & 0xFF00U) | fetch_data_); }
-
-void CPU::OpLoadAHighUpdateNz() {
-  const uint16_t high = static_cast<uint16_t>(static_cast<uint16_t>(fetch_data_) << 8U);
-  regs_.A = static_cast<uint16_t>(high | (regs_.A & 0x00FFU));
-  regs_.P.Z = (regs_.A == 0U);
-  regs_.P.N = (regs_.A & 0x8000U) != 0U;
-}
-
-void CPU::OpLoadX8UpdateNz() {
-  regs_.X = static_cast<uint16_t>((regs_.X & 0xFF00U) | fetch_data_);
-  regs_.P.Z = (static_cast<uint8_t>(regs_.X) == 0U);
-  regs_.P.N = (regs_.X & 0x0080U) != 0U;
-}
-
-void CPU::OpLoadXLow() { regs_.X = static_cast<uint16_t>((regs_.X & 0xFF00U) | fetch_data_); }
-
-void CPU::OpLoadXHighUpdateNz() {
-  const uint16_t high = static_cast<uint16_t>(static_cast<uint16_t>(fetch_data_) << 8U);
-  regs_.X = static_cast<uint16_t>(high | (regs_.X & 0x00FFU));
-  regs_.P.Z = (regs_.X == 0U);
-  regs_.P.N = (regs_.X & 0x8000U) != 0U;
-}
-
-void CPU::OpLoadY8UpdateNz() {
-  regs_.Y = static_cast<uint16_t>((regs_.Y & 0xFF00U) | fetch_data_);
-  regs_.P.Z = (static_cast<uint8_t>(regs_.Y) == 0U);
-  regs_.P.N = (regs_.Y & 0x0080U) != 0U;
-}
-
-void CPU::OpLoadYLow() { regs_.Y = static_cast<uint16_t>((regs_.Y & 0xFF00U) | fetch_data_); }
-
-void CPU::OpLoadYHighUpdateNz() {
-  const uint16_t high = static_cast<uint16_t>(static_cast<uint16_t>(fetch_data_) << 8U);
-  regs_.Y = static_cast<uint16_t>(high | (regs_.Y & 0x00FFU));
-  regs_.P.Z = (regs_.Y == 0U);
-  regs_.P.N = (regs_.Y & 0x8000U) != 0U;
-}
-
-void CPU::OpSetBranchTaken(bool taken) { timing_context_.branch_taken = taken; }
-
-void CPU::OpSetBranchTakenIfNotZero() { OpSetBranchTaken(!regs_.P.Z); }
-
-void CPU::OpBranchRelative8() {
-  const int8_t displacement = static_cast<int8_t>(fetch_data_);
-  const uint16_t old_pc = regs_.PC;
-  regs_.PC = static_cast<uint16_t>(regs_.PC + displacement);
-  timing_context_.branch_page_crossed = ((old_pc ^ regs_.PC) & 0xFF00U) != 0U;
-}
-
-void CPU::OpDecrementSp() {
-  if (regs_.P.E) {
-    const uint8_t sp_lo = static_cast<uint8_t>(static_cast<uint8_t>(regs_.SP) - 1U);
-    regs_.SP = static_cast<uint16_t>(0x0100U | sp_lo);
-  } else {
-    regs_.SP = static_cast<uint16_t>(regs_.SP - 1U);
-  }
-}
-
-void CPU::OpIncrementSp() {
-  if (regs_.P.E) {
-    const uint8_t sp_lo = static_cast<uint8_t>(static_cast<uint8_t>(regs_.SP) + 1U);
-    regs_.SP = static_cast<uint16_t>(0x0100U | sp_lo);
-  } else {
-    regs_.SP = static_cast<uint16_t>(regs_.SP + 1U);
-  }
-}
-
-void CPU::OpIncA() {
-  if (IsAccumulator16Bit()) {
-    regs_.A = static_cast<uint16_t>(regs_.A + 1U);
-    regs_.P.Z = (regs_.A == 0U);
-    regs_.P.N = (regs_.A & 0x8000U) != 0U;
-  } else {
-    const uint8_t lo = static_cast<uint8_t>(static_cast<uint8_t>(regs_.A) + 1U);
-    regs_.A = static_cast<uint16_t>((regs_.A & 0xFF00U) | lo);
-    regs_.P.Z = (lo == 0U);
-    regs_.P.N = (lo & 0x80U) != 0U;
-  }
-}
-
-void CPU::OpDecA() {
-  if (IsAccumulator16Bit()) {
-    regs_.A = static_cast<uint16_t>(regs_.A - 1U);
-    regs_.P.Z = (regs_.A == 0U);
-    regs_.P.N = (regs_.A & 0x8000U) != 0U;
-  } else {
-    const uint8_t lo = static_cast<uint8_t>(static_cast<uint8_t>(regs_.A) - 1U);
-    regs_.A = static_cast<uint16_t>((regs_.A & 0xFF00U) | lo);
-    regs_.P.Z = (lo == 0U);
-    regs_.P.N = (lo & 0x80U) != 0U;
-  }
-}
-
-void CPU::OpIncX() {
-  if (IsIndex16Bit()) {
-    regs_.X = static_cast<uint16_t>(regs_.X + 1U);
-    regs_.P.Z = (regs_.X == 0U);
-    regs_.P.N = (regs_.X & 0x8000U) != 0U;
-  } else {
-    const uint8_t lo = static_cast<uint8_t>(static_cast<uint8_t>(regs_.X) + 1U);
-    regs_.X = static_cast<uint16_t>((regs_.X & 0xFF00U) | lo);
-    regs_.P.Z = (lo == 0U);
-    regs_.P.N = (lo & 0x80U) != 0U;
-  }
-}
-
-void CPU::OpDecX() {
-  if (IsIndex16Bit()) {
-    regs_.X = static_cast<uint16_t>(regs_.X - 1U);
-    regs_.P.Z = (regs_.X == 0U);
-    regs_.P.N = (regs_.X & 0x8000U) != 0U;
-  } else {
-    const uint8_t lo = static_cast<uint8_t>(static_cast<uint8_t>(regs_.X) - 1U);
-    regs_.X = static_cast<uint16_t>((regs_.X & 0xFF00U) | lo);
-    regs_.P.Z = (lo == 0U);
-    regs_.P.N = (lo & 0x80U) != 0U;
-  }
-}
-
-void CPU::OpIncY() {
-  if (IsIndex16Bit()) {
-    regs_.Y = static_cast<uint16_t>(regs_.Y + 1U);
-    regs_.P.Z = (regs_.Y == 0U);
-    regs_.P.N = (regs_.Y & 0x8000U) != 0U;
-  } else {
-    const uint8_t lo = static_cast<uint8_t>(static_cast<uint8_t>(regs_.Y) + 1U);
-    regs_.Y = static_cast<uint16_t>((regs_.Y & 0xFF00U) | lo);
-    regs_.P.Z = (lo == 0U);
-    regs_.P.N = (lo & 0x80U) != 0U;
-  }
-}
-
-void CPU::OpDecY() {
-  if (IsIndex16Bit()) {
-    regs_.Y = static_cast<uint16_t>(regs_.Y - 1U);
-    regs_.P.Z = (regs_.Y == 0U);
-    regs_.P.N = (regs_.Y & 0x8000U) != 0U;
-  } else {
-    const uint8_t lo = static_cast<uint8_t>(static_cast<uint8_t>(regs_.Y) - 1U);
-    regs_.Y = static_cast<uint16_t>((regs_.Y & 0xFF00U) | lo);
-    regs_.P.Z = (lo == 0U);
-    regs_.P.N = (lo & 0x80U) != 0U;
-  }
-}
-
-void CPU::OpLoadDbrUpdateNz() {
-  regs_.DBR = fetch_data_;
-  regs_.P.Z = (regs_.DBR == 0U);
-  regs_.P.N = (regs_.DBR & 0x80U) != 0U;
-}
-
-SnesAddrT CPU::StackAddr() const { return static_cast<SnesAddrT>(regs_.SP); }
-
-void CPU::SetAddrByteFromFetch(unsigned shift) {
-  const uint32_t mask = ~(uint32_t{0xFFU} << shift) & 0xFFFFFFU;
-  addr_ = (addr_ & mask) | (static_cast<uint32_t>(fetch_data_) << shift);
-}
-
-void CPU::ExecuteInternalOp(MicroInternalOp op) {
-  switch (op) {
-    case MicroInternalOp::kNone:
-      break;
-    case MicroInternalOp::kLoadA8UpdateNz:
-      OpLoadA8UpdateNz();
-      break;
-    case MicroInternalOp::kLoadALow:
-      OpLoadALow();
-      break;
-    case MicroInternalOp::kLoadAHighUpdateNz:
-      OpLoadAHighUpdateNz();
-      break;
-    case MicroInternalOp::kLoadX8UpdateNz:
-      OpLoadX8UpdateNz();
-      break;
-    case MicroInternalOp::kLoadXLow:
-      OpLoadXLow();
-      break;
-    case MicroInternalOp::kLoadXHighUpdateNz:
-      OpLoadXHighUpdateNz();
-      break;
-    case MicroInternalOp::kLoadY8UpdateNz:
-      OpLoadY8UpdateNz();
-      break;
-    case MicroInternalOp::kLoadYLow:
-      OpLoadYLow();
-      break;
-    case MicroInternalOp::kLoadYHighUpdateNz:
-      OpLoadYHighUpdateNz();
-      break;
-    case MicroInternalOp::kSetBranchTaken:
-      OpSetBranchTaken(true);
-      break;
-    case MicroInternalOp::kSetBranchTakenIfNotZero:
-      OpSetBranchTakenIfNotZero();
-      break;
-    case MicroInternalOp::kBranchRelative8:
-      OpBranchRelative8();
-      break;
-    case MicroInternalOp::kSetAddrLowFromFetch:
-      SetAddrByteFromFetch(0);
-      break;
-    case MicroInternalOp::kSetAddrHighFromFetch:
-      SetAddrByteFromFetch(8);
-      break;
-    case MicroInternalOp::kSetAddrBankFromFetch:
-      SetAddrByteFromFetch(16);
-      break;
-    case MicroInternalOp::kSetAddrHighFromFetchAndBankFromDbr:
-      SetAddrByteFromFetch(8);
-      addr_ = (addr_ & 0x00FFFFU) | (static_cast<uint32_t>(regs_.DBR) << 16U);
-      break;
-    case MicroInternalOp::kIncrementAddr:
-      addr_ = (addr_ + 1U) & 0xFFFFFFU;
-      break;
-    case MicroInternalOp::kDecrementSp:
-      OpDecrementSp();
-      break;
-    case MicroInternalOp::kIncrementSp:
-      OpIncrementSp();
-      break;
-    case MicroInternalOp::kLoadDbrUpdateNz:
-      OpLoadDbrUpdateNz();
-      break;
-    case MicroInternalOp::kIncA:
-      OpIncA();
-      break;
-    case MicroInternalOp::kDecA:
-      OpDecA();
-      break;
-    case MicroInternalOp::kIncX:
-      OpIncX();
-      break;
-    case MicroInternalOp::kDecX:
-      OpDecX();
-      break;
-    case MicroInternalOp::kIncY:
-      OpIncY();
-      break;
-    case MicroInternalOp::kDecY:
-      OpDecY();
-      break;
-  }
 }
 
 void CPU::FinishInstruction() {
@@ -340,6 +87,7 @@ void CPU::FinishInstruction() {
   }
   retired_instruction_count_++;
   current_instr_ = nullptr;
+  needs_drain_ = false;
   micro_op_index_ = 0;
   timing_context_ = TimingContext{};
 }
@@ -411,7 +159,7 @@ uint8_t CPU::ReadResetVectorByte(SnesAddrT addr) {
   return result.data;
 }
 
-TickResult CPU::BusRead(SnesAddrT addr, TimeMasterDeltaT cycle_time) {
+TickResult CPU::BusReadSlow(SnesAddrT addr, TimeMasterDeltaT cycle_time) {
   auto result = PlanAndFollow(addr, BusAccessType::kRead, 0, cycle_time);
   if (result.outcome == BusPlanOutcome::kScheduledComplete) {
     return TickResult{cycle_time, TickStopReason::kBlockedOnToken, result.token};
@@ -420,15 +168,13 @@ TickResult CPU::BusRead(SnesAddrT addr, TimeMasterDeltaT cycle_time) {
   return TickResult{0, TickStopReason::kContinue};
 }
 
-TickResult CPU::BusWrite(SnesAddrT addr, uint8_t data, TimeMasterDeltaT cycle_time) {
+TickResult CPU::BusWriteSlow(SnesAddrT addr, uint8_t data, TimeMasterDeltaT cycle_time) {
   auto result = PlanAndFollow(addr, BusAccessType::kWrite, data, cycle_time);
   if (result.outcome == BusPlanOutcome::kScheduledComplete) {
     return TickResult{cycle_time, TickStopReason::kBlockedOnToken, result.token};
   }
   return TickResult{0, TickStopReason::kContinue};
 }
-
-SnesAddrT CPU::PcAddr() const { return (static_cast<uint32_t>(regs_.PBR) << 16U) | static_cast<uint32_t>(regs_.PC); }
 
 CPU::StepResult CPU::FetchOpcode(TimeMasterDeltaT cycle_time) {
   const SnesAddrT opcode_address = PcAddr();
@@ -459,6 +205,7 @@ CPU::StepResult CPU::FetchOpcode(TimeMasterDeltaT cycle_time) {
   }
 
   current_instr_ = &entry;
+  needs_drain_ = entry.rule_count > 1;
   micro_op_index_ = 1;
   if (micro_op_recorder_ != nullptr) {
     micro_op_recorder_->OnInstructionBegin(fetch_data_, opcode_address);

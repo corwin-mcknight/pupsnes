@@ -184,6 +184,7 @@ if(BUILD_TESTING)
     ${CMAKE_CURRENT_SOURCE_DIR}/testroms/stack_push/stack_push.s
     ${CMAKE_CURRENT_SOURCE_DIR}/testroms/abs_store_smoke/abs_store_smoke.s
     ${CMAKE_CURRENT_SOURCE_DIR}/testroms/inc_dec_smoke/inc_dec_smoke.s
+    ${CMAKE_CURRENT_SOURCE_DIR}/testroms/all_instr_loop/all_instr_loop.s
   )
   set(PUPSNES_TEST_ROM_COMMON_INCLUDES
     ${CMAKE_CURRENT_SOURCE_DIR}/testroms/pupsnes.inc

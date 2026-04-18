@@ -18,7 +18,7 @@ class WRAM : public Device {
   explicit WRAM(SNES* snes);
   ~WRAM() override = default;
 
-  void MapSystemBus(SystemBus& bus) const;
+  void MapSystemBus(SystemBus& bus);
 
   [[nodiscard]] TickResult Tick(TimeMasterDeltaT budget) override;
   void OnEvent(const SchedulerEvent& event) override;

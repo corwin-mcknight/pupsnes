@@ -24,6 +24,8 @@ void SystemBus::MapPage(const PageMapParams& params) {
   entry.base_offset = params.base_offset;
   entry.kind = params.kind;
   entry.access_speed = params.access_speed;
+  entry.fast_read_ptr = params.fast_read_ptr;
+  entry.fast_write_ptr = params.fast_write_ptr;
 }
 
 void SystemBus::UnmapPage(uint8_t bank, uint8_t page) { page_table_[bank][page] = PageTableEntry{}; }
@@ -150,17 +152,39 @@ DebugWriteResult SystemBus::DebugWrite(SnesAddrT address, uint8_t value) {
 }
 
 BusFollowResult SystemBus::FollowInline(const BusPlan& plan, TimeMasterT current_time) {
+  const PageTableEntry& entry = page_table_[static_cast<uint8_t>(plan.original_address >> 16)]
+                                           [static_cast<uint8_t>((plan.original_address >> 8) & 0xFF)];
+  const uint8_t offset_in_page = static_cast<uint8_t>(plan.original_address & 0xFF);
+
+  // Fast path: pure storage with a direct pointer — skip virtual dispatch.
+  // kMemory guarantees no side effects, no catch-up, no arbitration, so the
+  // only work is the byte load/store and the open-bus update.
+  if (entry.kind == PageDeviceKind::kMemory) {
+    if (plan.access_type == BusAccessType::kRead) {
+      if (entry.fast_read_ptr != nullptr) {
+        const uint8_t data = entry.fast_read_ptr[offset_in_page];
+        last_data_bus_value_ = data;
+        return {BusPlanOutcome::kInlineComplete, data, 0};
+      }
+    } else if (entry.fast_write_ptr != nullptr) {
+      entry.fast_write_ptr[offset_in_page] = plan.write_data;
+      last_data_bus_value_ = plan.write_data;
+      return {BusPlanOutcome::kInlineComplete, plan.write_data, 0};
+    }
+    // Fall through to device dispatch when no fast pointer was provided
+    // (e.g. test devices that want observable ReadRegister / WriteRegister).
+  }
+
   Device* device = snes_->GetDevice(plan.target_device);
   if (device == nullptr) {
     return {BusPlanOutcome::kRejected, 0, 0};
   }
 
-  const PageTableEntry& entry = page_table_[static_cast<uint8_t>(plan.original_address >> 16)]
-                                           [static_cast<uint8_t>((plan.original_address >> 8) & 0xFF)];
-
   if (entry.kind == PageDeviceKind::kSameClockMmio) {
     snes_->scheduler->CatchUpDevice(plan.target_device, current_time);
   }
+  // TODO: kArbitrated — when a contended mapper (SA-1 / SuperFX shared SRAM)
+  // lands, arbitrate bus ownership here before dispatching to the device.
 
   BusFollowResult result{};
   result.outcome = BusPlanOutcome::kInlineComplete;
