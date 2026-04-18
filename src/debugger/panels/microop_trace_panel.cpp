@@ -110,13 +110,10 @@ void RenderMicroOpTracePanel(DebuggerApp& app) {
   }
 
   auto& trace = app.GetMicroOpTrace();
-  static bool auto_scroll = true;
 
   if (ImGui::Button("Clear")) {
     trace.Clear();
   }
-  ImGui::SameLine();
-  ImGui::Checkbox("Auto-scroll", &auto_scroll);
   ImGui::SameLine();
   ImGui::Text("Retired: %zu", trace.RetiredSize());
 
@@ -132,38 +129,22 @@ void RenderMicroOpTracePanel(DebuggerApp& app) {
   }
 
   ImGui::Separator();
-  ImGui::Text("Retired");
-  static uint64_t last_newest_seq = 0;
-  const uint64_t newest_seq =
-      trace.RetiredSize() > 0 ? trace.RetiredAt(trace.RetiredSize() - 1)->retired_seq : 0;
-  const bool newest_changed = (newest_seq != last_newest_seq);
-  last_newest_seq = newest_seq;
-  if (ImGui::BeginChild("retired", ImVec2(0, 0), true)) {
-    for (std::size_t i = 0; i < trace.RetiredSize(); ++i) {
-      const auto* t = trace.RetiredAt(i);
-      if (t == nullptr) {
-        continue;
-      }
-      char hdr[96];
-      std::snprintf(hdr, sizeof(hdr), "#%" PRIu64 "  $%06X  %02X  %.*s  (%u cycles)", t->retired_seq,
-                    static_cast<unsigned>(t->opcode_address), static_cast<unsigned>(t->opcode),
-                    static_cast<int>(t->mnemonic.size()), t->mnemonic.data(), static_cast<unsigned>(t->op_count));
-      ImGui::PushID(static_cast<int>(i));
-      const bool is_newest = (i + 1 == trace.RetiredSize());
-      if (newest_changed) {
-        ImGui::SetNextItemOpen(is_newest, ImGuiCond_Always);
-      }
-      if (ImGui::TreeNode(hdr)) {
-        RenderTrace(*t, std::nullopt);
-        ImGui::TreePop();
-      }
-      ImGui::PopID();
+  ImGui::Text("Retired (last 2)");
+  const std::size_t retired_size = trace.RetiredSize();
+  const std::size_t shown = retired_size < 2 ? retired_size : 2;
+  for (std::size_t k = 0; k < shown; ++k) {
+    const std::size_t i = retired_size - shown + k;
+    const auto* t = trace.RetiredAt(i);
+    if (t == nullptr) {
+      continue;
     }
-    if (auto_scroll && ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 1.0F) {
-      ImGui::SetScrollHereY(1.0F);
-    }
+    ImGui::PushID(static_cast<int>(i));
+    ImGui::Text("#%" PRIu64 "  $%06X  %02X  %.*s  (%u cycles)", t->retired_seq,
+                static_cast<unsigned>(t->opcode_address), static_cast<unsigned>(t->opcode),
+                static_cast<int>(t->mnemonic.size()), t->mnemonic.data(), static_cast<unsigned>(t->op_count));
+    RenderTrace(*t, std::nullopt);
+    ImGui::PopID();
   }
-  ImGui::EndChild();
 
   ImGui::End();
 }

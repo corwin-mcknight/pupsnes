@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <cstdio>
 #include <exception>
 #include <filesystem>
 #include <fstream>
@@ -166,6 +167,79 @@ bool DebuggerApp::InitWindow() {
   io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
   io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
   ImGui::StyleColorsDark();
+  ImGuiStyle& style = ImGui::GetStyle();
+  style.WindowPadding = ImVec2(0.0F, 0.0F);
+  style.CellPadding = ImVec2(2.0F, 0.0F);
+  style.ItemSpacing = ImVec2(4.0F, 2.0F);
+  style.FramePadding = ImVec2(2.0F, 2.0F);
+  style.FrameRounding = 10.0F;
+  style.TabRounding = 0.0F;
+  style.WindowBorderSize = 0.0F;
+  style.DockingSeparatorSize = 1.0F;
+
+  // Palette:
+  //   lavender #B6B1E2 (0.714, 0.694, 0.886) — highlight
+  //   purple   #8968B8 (0.537, 0.408, 0.722) — accent
+  //   light    #C1C1C2 (0.757, 0.757, 0.761) — text
+  //   dark     #3B3B3B (0.231, 0.231, 0.231) — base surface
+  //   mid      #9794A0 (0.592, 0.580, 0.627) — muted
+  const ImVec4 lavender = ImVec4(0.714F, 0.694F, 0.886F, 1.00F);
+  const ImVec4 purple = ImVec4(0.537F, 0.408F, 0.722F, 1.00F);
+  const ImVec4 light = ImVec4(0.757F, 0.757F, 0.761F, 1.00F);
+  const ImVec4 dark = ImVec4(0.231F, 0.231F, 0.231F, 1.00F);
+  const ImVec4 mid = ImVec4(0.592F, 0.580F, 0.627F, 1.00F);
+
+  ImVec4* colors = style.Colors;
+  colors[ImGuiCol_Text] = light;
+  colors[ImGuiCol_TextDisabled] = ImVec4(mid.x, mid.y, mid.z, 0.70F);
+  colors[ImGuiCol_WindowBg] = ImVec4(0.15F, 0.15F, 0.15F, 1.00F);
+  colors[ImGuiCol_ChildBg] = ImVec4(0.12F, 0.12F, 0.12F, 1.00F);
+  colors[ImGuiCol_PopupBg] = ImVec4(0.18F, 0.18F, 0.18F, 1.00F);
+  colors[ImGuiCol_Border] = ImVec4(mid.x, mid.y, mid.z, 0.35F);
+  colors[ImGuiCol_FrameBg] = dark;
+  colors[ImGuiCol_FrameBgHovered] = ImVec4(0.32F, 0.28F, 0.40F, 1.00F);
+  colors[ImGuiCol_FrameBgActive] = ImVec4(purple.x, purple.y, purple.z, 0.75F);
+  colors[ImGuiCol_TitleBg] = ImVec4(0.18F, 0.18F, 0.18F, 1.00F);
+  colors[ImGuiCol_TitleBgActive] = purple;
+  colors[ImGuiCol_TitleBgCollapsed] = ImVec4(0.12F, 0.12F, 0.12F, 0.80F);
+  colors[ImGuiCol_MenuBarBg] = ImVec4(0.18F, 0.18F, 0.18F, 1.00F);
+  colors[ImGuiCol_ScrollbarBg] = ImVec4(0.12F, 0.12F, 0.12F, 1.00F);
+  colors[ImGuiCol_ScrollbarGrab] = ImVec4(mid.x, mid.y, mid.z, 0.50F);
+  colors[ImGuiCol_ScrollbarGrabHovered] = ImVec4(purple.x, purple.y, purple.z, 0.80F);
+  colors[ImGuiCol_ScrollbarGrabActive] = purple;
+  colors[ImGuiCol_CheckMark] = lavender;
+  colors[ImGuiCol_SliderGrab] = purple;
+  colors[ImGuiCol_SliderGrabActive] = lavender;
+  colors[ImGuiCol_Button] = dark;
+  colors[ImGuiCol_ButtonHovered] = ImVec4(purple.x, purple.y, purple.z, 0.75F);
+  colors[ImGuiCol_ButtonActive] = purple;
+  colors[ImGuiCol_Header] = ImVec4(purple.x, purple.y, purple.z, 0.55F);
+  colors[ImGuiCol_HeaderHovered] = ImVec4(purple.x, purple.y, purple.z, 0.80F);
+  colors[ImGuiCol_HeaderActive] = purple;
+  colors[ImGuiCol_Separator] = ImVec4(mid.x, mid.y, mid.z, 0.40F);
+  colors[ImGuiCol_SeparatorHovered] = purple;
+  colors[ImGuiCol_SeparatorActive] = lavender;
+  colors[ImGuiCol_ResizeGrip] = ImVec4(mid.x, mid.y, mid.z, 0.40F);
+  colors[ImGuiCol_ResizeGripHovered] = ImVec4(purple.x, purple.y, purple.z, 0.80F);
+  colors[ImGuiCol_ResizeGripActive] = lavender;
+  colors[ImGuiCol_Tab] = ImVec4(0.20F, 0.20F, 0.20F, 1.00F);
+  colors[ImGuiCol_TabHovered] = ImVec4(purple.x, purple.y, purple.z, 0.85F);
+  colors[ImGuiCol_TabActive] = purple;
+  colors[ImGuiCol_TabUnfocused] = ImVec4(0.15F, 0.15F, 0.15F, 1.00F);
+  colors[ImGuiCol_TabUnfocusedActive] = ImVec4(purple.x, purple.y, purple.z, 0.60F);
+  colors[ImGuiCol_DockingPreview] = ImVec4(lavender.x, lavender.y, lavender.z, 0.70F);
+  colors[ImGuiCol_TextSelectedBg] = ImVec4(purple.x, purple.y, purple.z, 0.45F);
+  colors[ImGuiCol_NavHighlight] = lavender;
+  colors[ImGuiCol_PlotLines] = lavender;
+  colors[ImGuiCol_PlotLinesHovered] = light;
+  colors[ImGuiCol_PlotHistogram] = purple;
+  colors[ImGuiCol_PlotHistogramHovered] = lavender;
+  colors[ImGuiCol_DragDropTarget] = lavender;
+  colors[ImGuiCol_ModalWindowDimBg] = ImVec4(0.00F, 0.00F, 0.00F, 0.55F);
+  colors[ImGuiCol_TableHeaderBg] = dark;
+  colors[ImGuiCol_TableBorderStrong] = ImVec4(mid.x, mid.y, mid.z, 0.60F);
+  colors[ImGuiCol_TableBorderLight] = ImVec4(mid.x, mid.y, mid.z, 0.30F);
+  colors[ImGuiCol_TableRowBgAlt] = ImVec4(1.00F, 1.00F, 1.00F, 0.04F);
 
   if (!ImGui_ImplGlfw_InitForOpenGL(window_, true)) {
     fatal_error_ = "ImGui GLFW backend initialization failed";
@@ -227,7 +301,65 @@ void DebuggerApp::RenderMenuBar() {
       }
       ImGui::EndMenu();
     }
+    if (ImGui::BeginMenu("Debug")) {
+      ImGui::MenuItem("Style Editor", nullptr, &ui_state_.show_style_editor);
+      ImGui::MenuItem("Metrics/Debugger", nullptr, &ui_state_.show_metrics_window);
+      ImGui::MenuItem("Debug Log", nullptr, &ui_state_.show_debug_log_window);
+      ImGui::MenuItem("ID Stack Tool", nullptr, &ui_state_.show_id_stack_tool);
+      ImGui::MenuItem("Demo Window", nullptr, &ui_state_.show_demo_window);
+      ImGui::Separator();
+      ImGui::MenuItem("About Dear ImGui", nullptr, &ui_state_.show_about_window);
+      ImGui::EndMenu();
+    }
+    {
+      const double now = glfwGetTime();
+      const TimeMasterT master_now = snes_.GetMasterTime();
+      const double dt = now - perf_last_time_;
+      if (perf_last_time_ == 0.0) {
+        perf_last_time_ = now;
+        perf_last_master_ = master_now;
+      } else if (dt >= 0.25) {
+        constexpr double kMasterClockHz = 21477272.0;
+        const auto master_delta = static_cast<double>(master_now - perf_last_master_);
+        perf_fps_ = ImGui::GetIO().Framerate;
+        perf_realtime_pct_ = static_cast<float>((master_delta / kMasterClockHz) / dt * 100.0);
+        perf_last_time_ = now;
+        perf_last_master_ = master_now;
+      }
+
+      const float region_width = ImGui::GetContentRegionAvail().x;
+      char overlay[64];
+      std::snprintf(overlay, sizeof(overlay), "FPS: %5.1f  |  Speed: %6.1f%%", static_cast<double>(perf_fps_),
+                    static_cast<double>(perf_realtime_pct_));
+      const float text_width = ImGui::CalcTextSize(overlay).x;
+      if (text_width < region_width) {
+        ImGui::SameLine(0.0F, region_width - text_width - ImGui::GetStyle().ItemSpacing.x);
+      }
+      ImGui::TextUnformatted(overlay);
+    }
     ImGui::EndMainMenuBar();
+  }
+
+  if (ui_state_.show_style_editor) {
+    if (ImGui::Begin("Dear ImGui Style Editor", &ui_state_.show_style_editor)) {
+      ImGui::ShowStyleEditor();
+    }
+    ImGui::End();
+  }
+  if (ui_state_.show_demo_window) {
+    ImGui::ShowDemoWindow(&ui_state_.show_demo_window);
+  }
+  if (ui_state_.show_metrics_window) {
+    ImGui::ShowMetricsWindow(&ui_state_.show_metrics_window);
+  }
+  if (ui_state_.show_debug_log_window) {
+    ImGui::ShowDebugLogWindow(&ui_state_.show_debug_log_window);
+  }
+  if (ui_state_.show_id_stack_tool) {
+    ImGui::ShowIDStackToolWindow(&ui_state_.show_id_stack_tool);
+  }
+  if (ui_state_.show_about_window) {
+    ImGui::ShowAboutWindow(&ui_state_.show_about_window);
   }
 }
 

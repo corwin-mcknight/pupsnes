@@ -82,12 +82,15 @@ void RunControl::PauseForError() {
 }
 
 void RunControl::RecordInstructionTrace(SnesAddrT pc_before, const CpuFlags& flags_before) {
-  const DisassembledInstruction line = DisassembleInstruction(snes_, pc_before, flags_before);
+  const DisassembledInstruction line = DisassembleInstructionRaw(snes_, pc_before, flags_before);
   trace_log_.Push({
       .master_time = snes_.GetMasterTime(),
       .pc = pc_before,
       .opcode = line.opcode,
-      .text = line.text,
+      .length = line.length,
+      .byte_count = line.byte_count,
+      .bytes = line.bytes,
+      .complete = line.complete,
       .regs = snes_.GetCpu().GetRegs(),
   });
 }

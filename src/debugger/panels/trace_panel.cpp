@@ -1,8 +1,10 @@
 #include <cinttypes>
+#include <string>
 
 #include "debugger/app.h"
 #include "imgui.h"
 #include "panels.h"
+#include "pupsnes/debugger/disasm.h"
 
 namespace pupsnes::debugger {
 
@@ -29,7 +31,15 @@ void RenderTracePanel(DebuggerApp& app) {
       ImGui::TableSetColumnIndex(2);
       ImGui::Text("%02X", entry.opcode);
       ImGui::TableSetColumnIndex(3);
-      ImGui::TextUnformatted(entry.text.c_str());
+      DisassembledInstruction view{};
+      view.pc = entry.pc;
+      view.opcode = entry.opcode;
+      view.length = entry.length;
+      view.byte_count = entry.byte_count;
+      view.bytes = entry.bytes;
+      view.complete = entry.complete;
+      const std::string text = FormatDisassembly(view);
+      ImGui::TextUnformatted(text.c_str());
     }
 
     if (grew) {

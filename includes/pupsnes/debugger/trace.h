@@ -1,8 +1,9 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
+#include <cstdint>
 #include <deque>
-#include <string>
 #include <vector>
 
 #include "pupsnes/hw/5a22/cpu.h"
@@ -13,7 +14,10 @@ struct TraceEntry {
   TimeMasterT master_time = 0;
   SnesAddrT pc = 0;
   uint8_t opcode = 0;
-  std::string text;
+  uint8_t length = 1;
+  std::size_t byte_count = 0;
+  std::array<uint8_t, 4> bytes{};
+  bool complete = true;
   CPU::Regs regs{};
 };
 

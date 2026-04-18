@@ -19,6 +19,8 @@ struct DisassembledInstruction {
   bool complete = true;
 };
 
+[[nodiscard]] DisassembledInstruction DisassembleInstructionRaw(const SNES& snes, SnesAddrT pc, const CpuFlags& flags);
+[[nodiscard]] std::string FormatDisassembly(const DisassembledInstruction& raw);
 [[nodiscard]] DisassembledInstruction DisassembleInstruction(const SNES& snes, SnesAddrT pc, const CpuFlags& flags);
 
 }  // namespace pupsnes::debugger

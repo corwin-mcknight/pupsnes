@@ -2,7 +2,6 @@
 
 #include <format>
 #include <string>
-#include <utility>
 
 namespace pupsnes::debugger {
 
@@ -43,7 +42,7 @@ std::string FormatOperand(const OpcodeMetadataView& metadata, SnesAddrT pc, uint
 
 }  // namespace
 
-DisassembledInstruction DisassembleInstruction(const SNES& snes, SnesAddrT pc, const CpuFlags& flags) {
+DisassembledInstruction DisassembleInstructionRaw(const SNES& snes, SnesAddrT pc, const CpuFlags& flags) {
   DisassembledInstruction out{};
   out.pc = WrapAddress(pc);
 
@@ -66,6 +65,15 @@ DisassembledInstruction DisassembleInstruction(const SNES& snes, SnesAddrT pc, c
     out.byte_count = i + 1U;
   }
 
+  return out;
+}
+
+std::string FormatDisassembly(const DisassembledInstruction& out) {
+  const OpcodeMetadataView& metadata = GetOpcodeMetadata(out.opcode);
+  if (metadata.implementation_status == OpcodeImplementationStatus::kUnimplemented) {
+    return std::format("??? ; {}", FormatAddress24(out.pc));
+  }
+
   std::string text(metadata.mnemonic);
   const std::string operand_text = FormatOperand(metadata, out.pc, out.length, out.bytes);
   if (!operand_text.empty()) {
@@ -75,10 +83,12 @@ DisassembledInstruction DisassembleInstruction(const SNES& snes, SnesAddrT pc, c
   if (!out.complete) {
     text += " ; debug-read-failed";
   }
-  if (metadata.implementation_status == OpcodeImplementationStatus::kUnimplemented) {
-    text = std::format("??? ; {}", FormatAddress24(out.pc));
-  }
-  out.text = std::move(text);
+  return text;
+}
+
+DisassembledInstruction DisassembleInstruction(const SNES& snes, SnesAddrT pc, const CpuFlags& flags) {
+  DisassembledInstruction out = DisassembleInstructionRaw(snes, pc, flags);
+  out.text = FormatDisassembly(out);
   return out;
 }
 
