@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <limits>
 #include <optional>
 
 #include "pupsnes/types.h"
@@ -16,7 +17,17 @@ enum class TickStopReason : uint8_t {
   kBlockedOnToken = 2,
   kNoWork = 3,
   kFaulted = 4,
+  // Sentinel used internally by device implementations to signal "no stop yet"
+  // when returning TickResult from per-cycle helpers without wrapping in
+  // std::optional. Never surfaced to the scheduler.
+  kContinue = 255,
 };
+
+// Sentinel for TickResult::next_wake_time meaning "no wake time provided".
+// Using a sentinel instead of std::optional avoids constructing an engaged-bit
+// flag on every TickResult returned from the CPU hot path.
+inline constexpr TimeMasterT kNoWakeTime = std::numeric_limits<TimeMasterT>::max();
+
 struct TickResult {
   TimeMasterDeltaT completed_cycles;
   TickStopReason reason;
@@ -28,9 +39,9 @@ struct TickResult {
   // - reason == TickStopReason::kReachedLocalBoundary
   // - reason == TickStopReason::kNoWork (optional)
   //
-  // Wake times earlier than the device's committed local_time are scheduler
-  // bugs.
-  std::optional<TimeMasterT> next_wake_time = std::nullopt;
+  // kNoWakeTime means "not provided". Wake times earlier than the device's
+  // committed local_time are scheduler bugs.
+  TimeMasterT next_wake_time = kNoWakeTime;
 };
 
 class Device {

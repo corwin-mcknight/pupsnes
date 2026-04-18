@@ -70,3 +70,7 @@ Testing/
 
 # Debugger UI state
 imgui.ini
+
+# Profiler artifacts (catchy / samply)
+profile*.json
+profile*.json.gz

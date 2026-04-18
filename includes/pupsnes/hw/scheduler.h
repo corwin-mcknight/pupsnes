@@ -3,7 +3,6 @@
 #include <cstdint>
 #include <optional>
 #include <queue>
-#include <tuple>
 #include <vector>
 
 #include "pupsnes/hw/token.h"
@@ -37,7 +36,10 @@ struct SchedulerEvent {
 
 struct SchedulerEventComparator {
   bool operator()(const SchedulerEvent& a, const SchedulerEvent& b) const {
-    return std::tie(a.time, a.subphase, a.type, a.seq) > std::tie(b.time, b.subphase, b.type, b.seq);
+    if (a.time != b.time) return a.time > b.time;
+    if (a.subphase != b.subphase) return a.subphase > b.subphase;
+    if (a.type != b.type) return a.type > b.type;
+    return a.seq > b.seq;
   }
 };
 
@@ -69,11 +71,28 @@ class Scheduler {
   EventSeqT nextEventSeq_ = 0;
   TokenTable token_table_;
 
-  [[nodiscard]] DeviceRunState& EnsureRunState(DeviceIdT device_id);
-  [[nodiscard]] const DeviceRunState* FindRunState(DeviceIdT device_id) const;
+  DeviceRunState& EnsureRunState(DeviceIdT device_id) {
+    if (device_id >= device_run_states_.size()) {
+      device_run_states_.resize(static_cast<std::size_t>(device_id) + 1U);
+    }
+    return device_run_states_[device_id];
+  }
+  [[nodiscard]] const DeviceRunState* FindRunState(DeviceIdT device_id) const {
+    if (device_id >= device_run_states_.size()) {
+      return nullptr;
+    }
+    return &device_run_states_[device_id];
+  }
+  static void ClearPendingRun(DeviceRunState& state) {
+    state.has_pending_run = false;
+    state.pending_run_time = 0;
+    state.blocked_token = 0;
+  }
+  static void ResetZeroProgressGuard(DeviceRunState& state) {
+    state.zero_progress_time = 0;
+    state.zero_progress_count = 0;
+  }
   void AlignDeviceTime(Device* device, TimeMasterT time);
-  void ClearPendingRun(DeviceRunState& state);
-  void ResetZeroProgressGuard(DeviceRunState& state);
   void RecordZeroProgressRun(DeviceRunState& state, const Device& device);
   void ValidateTickResult(const Device& device, const TickResult& result, TimeMasterDeltaT budget) const;
   [[nodiscard]] bool IsStaleRunEvent(const SchedulerEvent& event) const;
@@ -83,14 +102,16 @@ class Scheduler {
   friend struct SchedulerTestAccess;
 
  public:
-  constexpr static TimeMasterT kMaxCyclesStep = 10;
-  constexpr static TimeMasterT kMaxSameStepIterations = 10;
+  constexpr static TimeMasterT kMaxCyclesStep = 4096;
+  constexpr static TimeMasterT kMaxSameStepIterations = 4096;
 
   explicit Scheduler(SNES* snes);
   ~Scheduler();
 
   void ScheduleEvent(TimeMasterT time, Device* source, SchedulerPhase subphase, EventType type,
-                     uint64_t run_generation = 0);
+                     uint64_t run_generation = 0) {
+    eventQueue_.push({time, source, nextEventSeq_++, subphase, type, run_generation});
+  }
   void ScheduleDeviceRun(Device* device, TimeMasterT time);
 
   void Step();
@@ -102,6 +123,8 @@ class Scheduler {
 
   void CatchUpDevice(DeviceIdT device_id, TimeMasterT target_time);
   void Reset();
+  [[nodiscard]] bool HasPendingEvents() const { return !eventQueue_.empty(); }
+  [[nodiscard]] bool HasPendingRunAtOrBefore(DeviceIdT device_id, TimeMasterT time) const;
   [[nodiscard]] std::vector<SchedulerEventView> SnapshotQueue() const;
 
   void DebugPrintNextEvent();

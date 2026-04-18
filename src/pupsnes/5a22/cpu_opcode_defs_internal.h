@@ -183,8 +183,8 @@ constexpr CycleSlotSpec PushDbr(MicroInternalOp internal_op = MicroInternalOp::k
   return CycleSlotSpec{MicroBusAction::kPushDbr, internal_op, rule, label};
 }
 
-constexpr CycleSlotSpec PullStack(MicroInternalOp internal_op = MicroInternalOp::kNone,
-                                  TimingRuleExpr rule = Always(), std::string_view label = {}) {
+constexpr CycleSlotSpec PullStack(MicroInternalOp internal_op = MicroInternalOp::kNone, TimingRuleExpr rule = Always(),
+                                  std::string_view label = {}) {
   return CycleSlotSpec{MicroBusAction::kPullStack, internal_op, rule, label};
 }
 
@@ -379,6 +379,50 @@ constexpr uint8_t FindRuleIndex(const InstructionEntry& entry, const TimingRuleE
   return entry.rule_count;
 }
 
+constexpr bool EvaluateRuleForBits(const TimingRuleExpr& rule, uint32_t bits) {
+  if (rule.node_count == 0) {
+    return true;
+  }
+  std::array<bool, kMaxTimingRuleNodes> values{};
+  for (uint8_t i = 0; i < rule.node_count; ++i) {
+    const TimingRuleNode& node = rule.nodes[i];
+    switch (node.op) {
+      case TimingRuleOp::kAlways:
+        values[i] = true;
+        break;
+      case TimingRuleOp::kCondition:
+        values[i] = ((bits >> static_cast<uint8_t>(node.condition)) & 1U) != 0U;
+        break;
+      case TimingRuleOp::kNot:
+        values[i] = !values[node.lhs];
+        break;
+      case TimingRuleOp::kAllOf:
+        values[i] = values[node.lhs] && values[node.rhs];
+        break;
+      case TimingRuleOp::kAnyOf:
+        values[i] = values[node.lhs] || values[node.rhs];
+        break;
+    }
+  }
+  return values[rule.root_index];
+}
+
+constexpr uint32_t ComputeTimingRuleTruthTable(const TimingRuleExpr& rule) {
+  uint32_t table = 0;
+  constexpr uint32_t kCombinations = 1U << kTimingConditionCount;
+  for (uint32_t bits = 0; bits < kCombinations; ++bits) {
+    if (EvaluateRuleForBits(rule, bits)) {
+      table |= (1U << bits);
+    }
+  }
+  return table;
+}
+
+constexpr TimingRuleExpr FinalizeRule(TimingRuleExpr rule) {
+  rule.truth_table = ComputeTimingRuleTruthTable(rule);
+  return rule;
+}
+
 constexpr InstructionEntry LowerOpcode(const OpcodeSpec& spec) {
   InstructionEntry entry{};
   if (spec.disposition != OpcodeSpecDisposition::kImplemented) {
@@ -388,13 +432,13 @@ constexpr InstructionEntry LowerOpcode(const OpcodeSpec& spec) {
   entry.disposition = InstructionDisposition::kImplemented;
   entry.remaining_op_count = spec.cycle_count;
   entry.rule_count = 1;
-  entry.rules[0] = Always();
+  entry.rules[0] = FinalizeRule(Always());
 
   for (uint8_t i = 0; i < spec.cycle_count; ++i) {
     const CycleSlotSpec& slot = spec.cycles[i];
     uint8_t rule_index = FindRuleIndex(entry, slot.rule);
     if (rule_index == entry.rule_count) {
-      entry.rules[entry.rule_count++] = slot.rule;
+      entry.rules[entry.rule_count++] = FinalizeRule(slot.rule);
     }
     entry.ops[i] = MicroOp{slot.bus_action, slot.internal_op, rule_index};
   }

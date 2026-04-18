@@ -339,13 +339,19 @@ void CPU::FinishInstruction() {
   timing_context_ = TimingContext{};
 }
 
-void CPU::DrainSkippedMicroOps() {
+void CPU::DrainSkippedMicroOpsSlow() {
   while (current_instr_ != nullptr) {
-    const uint8_t op_idx = static_cast<uint8_t>(micro_op_index_ - 1U);
-    assert(op_idx < current_instr_->remaining_op_count);
+    const InstructionEntry* instr = current_instr_;
+    const MicroOp* const ops = instr->ops.data();
+    const TimingRuleExpr* const rules = instr->rules.data();
+    const uint8_t remaining = instr->remaining_op_count;
 
-    const MicroOp& mop = current_instr_->ops[op_idx];
-    if (ShouldExecuteMicroOp(mop)) {
+    const uint8_t op_idx = static_cast<uint8_t>(micro_op_index_ - 1U);
+    assert(op_idx < remaining);
+
+    const MicroOp& mop = ops[op_idx];
+    assert(mop.rule_index < instr->rule_count);
+    if (EvaluateTimingRule(rules[mop.rule_index])) {
       return;
     }
 
@@ -361,7 +367,7 @@ void CPU::DrainSkippedMicroOps() {
     }
 
     ++micro_op_index_;
-    if (micro_op_index_ - 1U >= current_instr_->remaining_op_count) {
+    if (micro_op_index_ - 1U >= remaining) {
       FinishInstruction();
     }
   }
@@ -372,52 +378,15 @@ void CPU::RecordFault(Fault::Type type, uint8_t opcode, SnesAddrT opcode_address
   FinishInstruction();
 }
 
-bool CPU::EvaluateTimingCondition(TimingCondition condition) const {
-  switch (condition) {
-    case TimingCondition::kBranchTaken:
-      return timing_context_.branch_taken;
-    case TimingCondition::kAccumulator16:
-      return IsAccumulator16Bit();
-    case TimingCondition::kIndex16:
-      return IsIndex16Bit();
-    case TimingCondition::kEmulationMode:
-      return regs_.P.E;
-    case TimingCondition::kBranchPageCrossed:
-      return timing_context_.branch_page_crossed;
-  }
-  return false;
-}
-
 bool CPU::EvaluateTimingRule(const TimingRuleExpr& rule) const {
-  if (rule.node_count == 0) {
-    return true;
-  }
-
-  const auto eval_node = [&](const auto& self, uint8_t index) -> bool {
-    assert(index < rule.node_count);
-    const TimingRuleNode& node = rule.nodes[index];
-    switch (node.op) {
-      case TimingRuleOp::kAlways:
-        return true;
-      case TimingRuleOp::kCondition:
-        return EvaluateTimingCondition(node.condition);
-      case TimingRuleOp::kNot:
-        return !self(self, node.lhs);
-      case TimingRuleOp::kAllOf:
-        return self(self, node.lhs) && self(self, node.rhs);
-      case TimingRuleOp::kAnyOf:
-        return self(self, node.lhs) || self(self, node.rhs);
-    }
-    return false;
-  };
-
-  return eval_node(eval_node, rule.root_index);
-}
-
-bool CPU::ShouldExecuteMicroOp(const MicroOp& op) const {
-  assert(current_instr_ != nullptr);
-  assert(op.rule_index < current_instr_->rule_count);
-  return EvaluateTimingRule(current_instr_->rules[op.rule_index]);
+  const uint32_t bits =
+      (static_cast<uint32_t>(timing_context_.branch_taken) << static_cast<uint8_t>(TimingCondition::kBranchTaken)) |
+      (static_cast<uint32_t>(IsAccumulator16Bit()) << static_cast<uint8_t>(TimingCondition::kAccumulator16)) |
+      (static_cast<uint32_t>(IsIndex16Bit()) << static_cast<uint8_t>(TimingCondition::kIndex16)) |
+      (static_cast<uint32_t>(regs_.P.E) << static_cast<uint8_t>(TimingCondition::kEmulationMode)) |
+      (static_cast<uint32_t>(timing_context_.branch_page_crossed)
+       << static_cast<uint8_t>(TimingCondition::kBranchPageCrossed));
+  return ((rule.truth_table >> bits) & 1U) != 0U;
 }
 
 BusFollowResult CPU::PlanAndFollow(SnesAddrT addr, BusAccessType type, uint8_t data, TimeMasterDeltaT cycle_time) {
@@ -437,28 +406,29 @@ uint8_t CPU::ReadResetVectorByte(SnesAddrT addr) {
   return result.data;
 }
 
-std::optional<TickResult> CPU::BusRead(SnesAddrT addr, TimeMasterDeltaT cycle_time) {
+TickResult CPU::BusRead(SnesAddrT addr, TimeMasterDeltaT cycle_time) {
   auto result = PlanAndFollow(addr, BusAccessType::kRead, 0, cycle_time);
   if (result.outcome == BusPlanOutcome::kScheduledComplete) {
     return TickResult{cycle_time, TickStopReason::kBlockedOnToken, result.token};
   }
   fetch_data_ = result.data;
-  return std::nullopt;
+  return TickResult{0, TickStopReason::kContinue};
 }
 
-std::optional<TickResult> CPU::BusWrite(SnesAddrT addr, uint8_t data, TimeMasterDeltaT cycle_time) {
+TickResult CPU::BusWrite(SnesAddrT addr, uint8_t data, TimeMasterDeltaT cycle_time) {
   auto result = PlanAndFollow(addr, BusAccessType::kWrite, data, cycle_time);
   if (result.outcome == BusPlanOutcome::kScheduledComplete) {
     return TickResult{cycle_time, TickStopReason::kBlockedOnToken, result.token};
   }
-  return std::nullopt;
+  return TickResult{0, TickStopReason::kContinue};
 }
 
 SnesAddrT CPU::PcAddr() const { return (static_cast<uint32_t>(regs_.PBR) << 16U) | static_cast<uint32_t>(regs_.PC); }
 
 CPU::StepResult CPU::FetchOpcode(TimeMasterDeltaT cycle_time) {
   const SnesAddrT opcode_address = PcAddr();
-  if (auto blocked = BusRead(opcode_address, cycle_time)) {
+  TickResult blocked = BusRead(opcode_address, cycle_time);
+  if (blocked.reason != TickStopReason::kContinue) {
     return StepResult{false, blocked};
   }
   regs_.PC = static_cast<uint16_t>(regs_.PC + 1U);
@@ -487,17 +457,18 @@ CPU::StepResult CPU::FetchOpcode(TimeMasterDeltaT cycle_time) {
     micro_op_recorder_->OnMicroOp(rec);
   }
   DrainSkippedMicroOps();
-  return StepResult{true, std::nullopt};
+  return StepResult{true, TickResult{0, TickStopReason::kContinue}};
 }
 
-std::optional<TickResult> CPU::PerformBusAction(MicroBusAction action, TimeMasterDeltaT cycle_time) {
+TickResult CPU::PerformBusAction(MicroBusAction action, TimeMasterDeltaT cycle_time) {
   switch (action) {
     case MicroBusAction::kNone:
-      return std::nullopt;
+      return TickResult{0, TickStopReason::kContinue};
     case MicroBusAction::kFetchPc: {
-      if (auto blocked = BusRead(PcAddr(), cycle_time)) return blocked;
+      TickResult blocked = BusRead(PcAddr(), cycle_time);
+      if (blocked.reason != TickStopReason::kContinue) return blocked;
       regs_.PC = static_cast<uint16_t>(regs_.PC + 1U);
-      return std::nullopt;
+      return TickResult{0, TickStopReason::kContinue};
     }
     case MicroBusAction::kReadAddr:
       return BusRead(addr_, cycle_time);
@@ -524,22 +495,23 @@ std::optional<TickResult> CPU::PerformBusAction(MicroBusAction action, TimeMaste
     case MicroBusAction::kPullStack:
       return BusRead(StackAddr(), cycle_time);
   }
-  return std::nullopt;
+  return TickResult{0, TickStopReason::kContinue};
 }
 
 CPU::StepResult CPU::ExecuteMicroOp(TimeMasterDeltaT cycle_time) {
   assert(current_instr_ != nullptr);
-  DrainSkippedMicroOps();
-  if (current_instr_ == nullptr) {
-    return StepResult{false, std::nullopt};
-  }
-
+  // Rules have already been drained by the previous FetchOpcode /
+  // ExecuteMicroOp call that transitioned us here; draining again would
+  // re-evaluate them for no benefit.
+  const InstructionEntry* instr = current_instr_;
   const uint8_t op_idx = static_cast<uint8_t>(micro_op_index_ - 1U);
-  assert(op_idx < current_instr_->remaining_op_count);
+  assert(op_idx < instr->remaining_op_count);
 
-  const MicroOp& mop = current_instr_->ops[op_idx];
+  const MicroOp* const ops = instr->ops.data();
+  const MicroOp& mop = ops[op_idx];
   const SnesAddrT pre_pc = PcAddr();
-  if (auto blocked = PerformBusAction(mop.bus_action, cycle_time)) {
+  TickResult blocked = PerformBusAction(mop.bus_action, cycle_time);
+  if (blocked.reason != TickStopReason::kContinue) {
     return StepResult{false, blocked};
   }
   ExecuteInternalOp(mop.internal_op);
@@ -559,12 +531,12 @@ CPU::StepResult CPU::ExecuteMicroOp(TimeMasterDeltaT cycle_time) {
   }
 
   ++micro_op_index_;
-  if (micro_op_index_ - 1U >= current_instr_->remaining_op_count) {
+  if (micro_op_index_ - 1U >= instr->remaining_op_count) {
     FinishInstruction();
   } else {
     DrainSkippedMicroOps();
   }
-  return StepResult{true, std::nullopt};
+  return StepResult{true, TickResult{0, TickStopReason::kContinue}};
 }
 
 TickResult CPU::Tick(TimeMasterDeltaT budget) {
@@ -576,8 +548,8 @@ TickResult CPU::Tick(TimeMasterDeltaT budget) {
 
   while (cycle_time < budget) {
     StepResult step = ShouldFetchInstruction() ? FetchOpcode(cycle_time) : ExecuteMicroOp(cycle_time);
-    if (step.stop.has_value()) {
-      return *step.stop;
+    if (step.stop.reason != TickStopReason::kContinue) {
+      return step.stop;
     }
     if (step.consumed_cycle) {
       ++cycle_time;

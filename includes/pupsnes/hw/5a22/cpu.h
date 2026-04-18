@@ -88,6 +88,10 @@ enum class TimingCondition : uint8_t {
   kBranchPageCrossed = 4,
 };
 
+// Bit index of each TimingCondition within the packed-condition word used to
+// index a rule's precomputed 32-entry truth table.
+inline constexpr uint8_t kTimingConditionCount = 5;
+
 enum class TimingRuleOp : uint8_t {
   kAlways = 0,
   kCondition = 1,
@@ -109,6 +113,11 @@ struct TimingRuleExpr {
   uint8_t node_count = 0;
   uint8_t root_index = 0;
   std::array<TimingRuleNode, kMaxTimingRuleNodes> nodes{};
+  // Precomputed truth table: bit k is set iff the rule evaluates true when
+  // packed-condition bits == k. Filled by LowerOpcode for rules baked into
+  // InstructionEntry; left zero (meaning "no precomputation") for transient
+  // spec-time rules. EvaluateTimingRule reads this directly.
+  uint32_t truth_table = 0;
 };
 
 struct MicroOp {
@@ -241,14 +250,15 @@ class CPU : public Device {
 
   struct StepResult {
     bool consumed_cycle = false;
-    std::optional<TickResult> stop = std::nullopt;
+    TickResult stop{0, TickStopReason::kContinue};
   };
 
   // Tick helpers: one per branch of the fetch/execute loop. Each returns a
-  // TickResult if the access blocks (caller must return it).
+  // TickResult whose reason is kContinue when the cycle completes inline, or
+  // a real stop reason when the caller must return it.
   [[nodiscard]] StepResult FetchOpcode(TimeMasterDeltaT cycle_time);
   [[nodiscard]] StepResult ExecuteMicroOp(TimeMasterDeltaT cycle_time);
-  [[nodiscard]] std::optional<TickResult> PerformBusAction(MicroBusAction action, TimeMasterDeltaT cycle_time);
+  [[nodiscard]] TickResult PerformBusAction(MicroBusAction action, TimeMasterDeltaT cycle_time);
 
   void ExecuteInternalOp(MicroInternalOp op);
   [[nodiscard]] bool IsAccumulator16Bit() const;
@@ -279,11 +289,19 @@ class CPU : public Device {
   // Replace byte [shift, shift+7] of addr_ with fetch_data_.
   void SetAddrByteFromFetch(unsigned shift);
   void FinishInstruction();
-  void DrainSkippedMicroOps();
+  void DrainSkippedMicroOpsSlow();
+  // Fast guard: instructions whose only rule is "Always" (rule_count == 1) have
+  // no conditional micro-ops, so the drain loop can be skipped entirely. Most
+  // 65C816 opcodes fall into this category, so inlining the guard eliminates
+  // both the call and the loop-entry overhead on the common path.
+  void DrainSkippedMicroOps() {
+    if (current_instr_ == nullptr || current_instr_->rule_count <= 1) {
+      return;
+    }
+    DrainSkippedMicroOpsSlow();
+  }
   void RecordFault(Fault::Type type, uint8_t opcode, SnesAddrT opcode_address);
-  [[nodiscard]] bool EvaluateTimingCondition(TimingCondition condition) const;
   [[nodiscard]] bool EvaluateTimingRule(const TimingRuleExpr& rule) const;
-  [[nodiscard]] bool ShouldExecuteMicroOp(const MicroOp& op) const;
 
   [[nodiscard]] uint8_t ReadResetVectorByte(SnesAddrT addr);
 
@@ -294,15 +312,14 @@ class CPU : public Device {
   [[nodiscard]] BusFollowResult PlanAndFollow(SnesAddrT addr, BusAccessType type, uint8_t data,
                                               TimeMasterDeltaT cycle_time);
 
-  // Execute a bus read. Returns a TickResult if the access blocks (caller must
-  // return it). On inline completion, writes the read byte to fetch_data_ and
-  // returns nullopt. On rejected (unmapped), writes 0xFF to fetch_data_ and
-  // returns nullopt.
-  [[nodiscard]] std::optional<TickResult> BusRead(SnesAddrT addr, TimeMasterDeltaT cycle_time);
+  // Execute a bus read. Returns a TickResult whose reason is kContinue on
+  // inline completion (fetch_data_ updated) or a stop reason when the access
+  // blocks.
+  [[nodiscard]] TickResult BusRead(SnesAddrT addr, TimeMasterDeltaT cycle_time);
 
-  // Execute a bus write. Returns a TickResult if the access blocks, nullopt
-  // otherwise.
-  [[nodiscard]] std::optional<TickResult> BusWrite(SnesAddrT addr, uint8_t data, TimeMasterDeltaT cycle_time);
+  // Execute a bus write. Reason is kContinue on inline completion, or a stop
+  // reason when the access blocks.
+  [[nodiscard]] TickResult BusWrite(SnesAddrT addr, uint8_t data, TimeMasterDeltaT cycle_time);
 };
 
 }  // namespace pupsnes
