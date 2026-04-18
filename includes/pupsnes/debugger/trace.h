@@ -1,8 +1,6 @@
 #pragma once
 
-#include <array>
 #include <cstddef>
-#include <cstdint>
 #include <deque>
 #include <vector>
 
@@ -10,14 +8,11 @@
 
 namespace pupsnes::debugger {
 
+// Lightweight per-instruction trace. Disassembly is deferred to the UI so
+// free-run does not pay for disassembling instructions the user will never see.
 struct TraceEntry {
   TimeMasterT master_time = 0;
   SnesAddrT pc = 0;
-  uint8_t opcode = 0;
-  uint8_t length = 1;
-  std::size_t byte_count = 0;
-  std::array<uint8_t, 4> bytes{};
-  bool complete = true;
   CPU::Regs regs{};
 };
 

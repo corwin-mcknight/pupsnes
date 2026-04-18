@@ -22,24 +22,24 @@ void RenderTracePanel(DebuggerApp& app) {
     ImGui::TableSetupColumn("Text", ImGuiTableColumnFlags_WidthStretch);
     ImGui::TableHeadersRow();
 
-    for (const TraceEntry& entry : snapshot) {
-      ImGui::TableNextRow();
-      ImGui::TableSetColumnIndex(0);
-      ImGui::Text("%" PRIu64, entry.master_time);
-      ImGui::TableSetColumnIndex(1);
-      ImGui::Text("$%02X:%04X", static_cast<unsigned>(entry.pc >> 16), static_cast<unsigned>(entry.pc & 0xFFFFU));
-      ImGui::TableSetColumnIndex(2);
-      ImGui::Text("%02X", entry.opcode);
-      ImGui::TableSetColumnIndex(3);
-      DisassembledInstruction view{};
-      view.pc = entry.pc;
-      view.opcode = entry.opcode;
-      view.length = entry.length;
-      view.byte_count = entry.byte_count;
-      view.bytes = entry.bytes;
-      view.complete = entry.complete;
-      const std::string text = FormatDisassembly(view);
-      ImGui::TextUnformatted(text.c_str());
+    const SNES& snes = app.GetSnes();
+    ImGuiListClipper clipper;
+    clipper.Begin(static_cast<int>(snapshot.size()));
+    while (clipper.Step()) {
+      for (int row = clipper.DisplayStart; row < clipper.DisplayEnd; ++row) {
+        const TraceEntry& entry = snapshot[static_cast<std::size_t>(row)];
+        const DisassembledInstruction view = DisassembleInstructionRaw(snes, entry.pc, entry.regs.P);
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        ImGui::Text("%" PRIu64, entry.master_time);
+        ImGui::TableSetColumnIndex(1);
+        ImGui::Text("$%02X:%04X", static_cast<unsigned>(entry.pc >> 16), static_cast<unsigned>(entry.pc & 0xFFFFU));
+        ImGui::TableSetColumnIndex(2);
+        ImGui::Text("%02X", view.opcode);
+        ImGui::TableSetColumnIndex(3);
+        const std::string text = FormatDisassembly(view);
+        ImGui::TextUnformatted(text.c_str());
+      }
     }
 
     if (grew) {

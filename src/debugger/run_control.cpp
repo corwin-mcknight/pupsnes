@@ -35,6 +35,24 @@ void RunControl::Pause() {
   state_ = RunState::kPaused;
   pause_reason_ = PauseReason::kUser;
   remaining_steps_ = 0;
+  RestoreMicroOpRecorderForPause();
+}
+
+void RunControl::DetachMicroOpRecorderForFreeRun() {
+  MicroOpRecorder* current = snes_.GetCpu().GetMicroOpRecorder();
+  if (current == nullptr) {
+    return;
+  }
+  saved_microop_recorder_ = current;
+  snes_.GetCpu().SetMicroOpRecorder(nullptr);
+}
+
+void RunControl::RestoreMicroOpRecorderForPause() {
+  if (saved_microop_recorder_ == nullptr) {
+    return;
+  }
+  snes_.GetCpu().SetMicroOpRecorder(saved_microop_recorder_);
+  saved_microop_recorder_ = nullptr;
 }
 
 void RunControl::RequestStepOne() {
@@ -55,13 +73,20 @@ void RunControl::RequestStepN(uint64_t count) {
   state_ = (count == 0) ? RunState::kPaused : RunState::kStepN;
 }
 
-void RunControl::RequestRunUntilBreak() { state_ = RunState::kRunUntilBreak; }
+void RunControl::RequestRunUntilBreak() {
+  state_ = RunState::kRunUntilBreak;
+  DetachMicroOpRecorderForFreeRun();
+}
 
 SnesAddrT RunControl::GetCurrentPc() const { return ComposePcAddress(snes_.GetCpu().GetRegs()); }
 
 void RunControl::PrimeCpuRun() {
   const TimeMasterT next_time = std::max(snes_.GetMasterTime(), snes_.GetCpu().GetTime());
-  snes_.GetScheduler().ScheduleDeviceRun(&snes_.GetCpu(), next_time);
+  CPU& cpu = snes_.GetCpu();
+  if (snes_.GetScheduler().HasPendingRunAtOrBefore(cpu.GetDeviceId(), next_time)) {
+    return;
+  }
+  snes_.GetScheduler().ScheduleDeviceRun(&cpu, next_time);
 }
 
 bool RunControl::ShouldPauseOnCurrentPc() const {
@@ -73,25 +98,21 @@ void RunControl::PauseForBreakpoint() {
   state_ = RunState::kPaused;
   pause_reason_ = PauseReason::kBreakpoint;
   remaining_steps_ = 0;
+  RestoreMicroOpRecorderForPause();
 }
 
 void RunControl::PauseForError() {
   state_ = RunState::kPaused;
   pause_reason_ = PauseReason::kError;
   remaining_steps_ = 0;
+  RestoreMicroOpRecorderForPause();
 }
 
-void RunControl::RecordInstructionTrace(SnesAddrT pc_before, const CpuFlags& flags_before) {
-  const DisassembledInstruction line = DisassembleInstructionRaw(snes_, pc_before, flags_before);
+void RunControl::RecordInstructionTrace(SnesAddrT pc_before, const CPU::Regs& regs_before) {
   trace_log_.Push({
       .master_time = snes_.GetMasterTime(),
       .pc = pc_before,
-      .opcode = line.opcode,
-      .length = line.length,
-      .byte_count = line.byte_count,
-      .bytes = line.bytes,
-      .complete = line.complete,
-      .regs = snes_.GetCpu().GetRegs(),
+      .regs = regs_before,
   });
 }
 
@@ -133,7 +154,7 @@ bool RunControl::RunSingleInstructionBoundary() {
       return false;
     }
 
-    if (snes_.GetScheduler().SnapshotQueue().empty()) {
+    if (!snes_.GetScheduler().HasPendingEvents()) {
       break;
     }
   }
@@ -143,7 +164,7 @@ bool RunControl::RunSingleInstructionBoundary() {
   }
 
   suppressed_breakpoint_.reset();
-  RecordInstructionTrace(pc_before, regs_before.P);
+  RecordInstructionTrace(pc_before, regs_before);
   logged_fault_pc_.reset();
 
   if (breakpoints_.IsEnabled(GetCurrentPc())) {

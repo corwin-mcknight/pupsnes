@@ -4,9 +4,19 @@
 
 namespace pupsnes::debugger {
 
-void BreakpointSet::Set(SnesAddrT address, bool enabled) { breakpoints_[address] = Breakpoint{address, enabled}; }
+void BreakpointSet::Set(SnesAddrT address, bool enabled) {
+  breakpoints_[address] = Breakpoint{address, enabled};
+  if (enabled) {
+    enabled_addresses_.insert(address);
+  } else {
+    enabled_addresses_.erase(address);
+  }
+}
 
-void BreakpointSet::Remove(SnesAddrT address) { breakpoints_.erase(address); }
+void BreakpointSet::Remove(SnesAddrT address) {
+  breakpoints_.erase(address);
+  enabled_addresses_.erase(address);
+}
 
 void BreakpointSet::Toggle(SnesAddrT address) {
   auto it = breakpoints_.find(address);
@@ -15,14 +25,10 @@ void BreakpointSet::Toggle(SnesAddrT address) {
     return;
   }
   breakpoints_.erase(it);
+  enabled_addresses_.erase(address);
 }
 
 bool BreakpointSet::Contains(SnesAddrT address) const { return breakpoints_.contains(address); }
-
-bool BreakpointSet::IsEnabled(SnesAddrT address) const {
-  const auto it = breakpoints_.find(address);
-  return it != breakpoints_.end() && it->second.enabled;
-}
 
 std::vector<Breakpoint> BreakpointSet::Snapshot() const {
   std::vector<Breakpoint> snapshot;
@@ -33,6 +39,9 @@ std::vector<Breakpoint> BreakpointSet::Snapshot() const {
   return snapshot;
 }
 
-void BreakpointSet::Clear() { breakpoints_.clear(); }
+void BreakpointSet::Clear() {
+  breakpoints_.clear();
+  enabled_addresses_.clear();
+}
 
 }  // namespace pupsnes::debugger

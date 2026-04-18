@@ -5,7 +5,6 @@
 #include <optional>
 
 #include "pupsnes/debugger/breakpoints.h"
-#include "pupsnes/debugger/disasm.h"
 #include "pupsnes/debugger/error_log.h"
 #include "pupsnes/debugger/trace.h"
 #include "pupsnes/hw/snes.h"
@@ -47,7 +46,7 @@ class RunControl {
   void PauseForBreakpoint();
   void PauseForError();
   bool RunSingleInstructionBoundary();
-  void RecordInstructionTrace(SnesAddrT pc_before, const CpuFlags& flags_before);
+  void RecordInstructionTrace(SnesAddrT pc_before, const CPU::Regs& regs_before);
   void LogFaultIfPresent();
 
   SNES& snes_;
@@ -59,6 +58,10 @@ class RunControl {
   uint64_t remaining_steps_ = 0;
   std::optional<SnesAddrT> suppressed_breakpoint_ = std::nullopt;
   std::optional<SnesAddrT> logged_fault_pc_ = std::nullopt;
+  MicroOpRecorder* saved_microop_recorder_ = nullptr;
+
+  void DetachMicroOpRecorderForFreeRun();
+  void RestoreMicroOpRecorderForPause();
 };
 
 }  // namespace pupsnes::debugger

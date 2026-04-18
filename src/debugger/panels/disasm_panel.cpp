@@ -1,6 +1,7 @@
 #include "debugger/app.h"
 #include "imgui.h"
 #include "panels.h"
+#include "pupsnes/debugger/disasm.h"
 
 namespace pupsnes::debugger {
 
