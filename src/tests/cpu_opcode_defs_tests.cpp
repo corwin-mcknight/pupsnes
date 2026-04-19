@@ -119,24 +119,21 @@ TEST_CASE("Opcode specs lower into expected execution and metadata entries", "[c
                 {B::kNone, M::kBranchRelative8, 1, "apply branch"},
                 {B::kNone, M::kNone, 2, "emulation page-cross penalty"}});
 
-  const auto& bne_branch_rule = kOpcodeArtifacts.execution_table[0xD0].rules[1];
-  REQUIRE(bne_branch_rule.node_count == 1);
-  REQUIRE(bne_branch_rule.nodes[0].op == TimingRuleOp::kCondition);
-  REQUIRE(bne_branch_rule.nodes[0].condition == TimingCondition::kBranchTaken);
+  const uint32_t bne_branch_rule = kOpcodeArtifacts.execution_table[0xD0].rules[1];
+  REQUIRE(bne_branch_rule == ComputeTimingRuleTruthTable(Condition(TimingCondition::kBranchTaken)));
 
-  const auto& bne_penalty_rule = kOpcodeArtifacts.execution_table[0xD0].rules[2];
-  REQUIRE(bne_penalty_rule.node_count == 3);
-  REQUIRE(bne_penalty_rule.nodes[bne_penalty_rule.root_index].op == TimingRuleOp::kAllOf);
+  const uint32_t bne_penalty_rule = kOpcodeArtifacts.execution_table[0xD0].rules[2];
+  REQUIRE(bne_penalty_rule ==
+          ComputeTimingRuleTruthTable(
+              AllOf(Condition(TimingCondition::kEmulationMode), Condition(TimingCondition::kBranchPageCrossed))));
 
   ExpectOpcode(0x48, "PHA", "implied", 2,
                {{B::kNone, M::kNone, 0, "internal"},
                 {B::kPushAHigh, M::kDecrementSp, 1, "push A high"},
                 {B::kPushA8, M::kDecrementSp, 0, "push A low"}});
 
-  const auto& pha_high_rule = kOpcodeArtifacts.execution_table[0x48].rules[1];
-  REQUIRE(pha_high_rule.node_count == 1);
-  REQUIRE(pha_high_rule.nodes[0].op == TimingRuleOp::kCondition);
-  REQUIRE(pha_high_rule.nodes[0].condition == TimingCondition::kAccumulator16);
+  const uint32_t pha_high_rule = kOpcodeArtifacts.execution_table[0x48].rules[1];
+  REQUIRE(pha_high_rule == ComputeTimingRuleTruthTable(Condition(TimingCondition::kAccumulator16)));
 
   ExpectOpcode(0x8B, "PHB", "implied", 1,
                {{B::kNone, M::kNone, 0, "internal"}, {B::kPushDbr, M::kDecrementSp, 0, "push DBR"}});

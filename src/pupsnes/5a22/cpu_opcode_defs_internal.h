@@ -256,22 +256,6 @@ constexpr auto ConcatArrays(const std::array<T, N>& lhs, const std::array<T, M>&
   return out;
 }
 
-constexpr bool TimingRuleNodesEqual(const TimingRuleNode& lhs, const TimingRuleNode& rhs) {
-  return lhs.op == rhs.op && lhs.condition == rhs.condition && lhs.lhs == rhs.lhs && lhs.rhs == rhs.rhs;
-}
-
-constexpr bool TimingRulesEqual(const TimingRuleExpr& lhs, const TimingRuleExpr& rhs) {
-  if (lhs.node_count != rhs.node_count || lhs.root_index != rhs.root_index) {
-    return false;
-  }
-  for (uint8_t i = 0; i < lhs.node_count; ++i) {
-    if (!TimingRuleNodesEqual(lhs.nodes[i], rhs.nodes[i])) {
-      return false;
-    }
-  }
-  return true;
-}
-
 constexpr bool ValidateTimingRule(const TimingRuleExpr& rule) {
   if (rule.node_count == 0) {
     return true;
@@ -329,56 +313,6 @@ constexpr bool ValidateUniqueOpcodes(const std::array<OpcodeSpec, N>& specs) {
   return true;
 }
 
-constexpr uint8_t CountUniqueRules(const OpcodeSpec& spec) {
-  std::array<TimingRuleExpr, kMaxInstructionRules> unique_rules{};
-  uint8_t count = 1;
-  unique_rules[0] = Always();
-
-  for (uint8_t i = 0; i < spec.cycle_count; ++i) {
-    bool found = false;
-    for (uint8_t j = 0; j < count; ++j) {
-      if (TimingRulesEqual(unique_rules[j], spec.cycles[i].rule)) {
-        found = true;
-        break;
-      }
-    }
-    if (found) {
-      continue;
-    }
-    if (count >= kMaxInstructionRules) {
-      return static_cast<uint8_t>(kMaxInstructionRules + 1U);
-    }
-    unique_rules[count++] = spec.cycles[i].rule;
-  }
-
-  return count;
-}
-
-template <std::size_t N>
-constexpr bool ValidateOpcodeSpecs(const std::array<OpcodeSpec, N>& specs) {
-  if (!ValidateUniqueOpcodes(specs)) {
-    return false;
-  }
-  for (const OpcodeSpec& spec : specs) {
-    if (!ValidateOpcodeSpec(spec)) {
-      return false;
-    }
-    if (CountUniqueRules(spec) > kMaxInstructionRules) {
-      return false;
-    }
-  }
-  return true;
-}
-
-constexpr uint8_t FindRuleIndex(const InstructionEntry& entry, const TimingRuleExpr& rule) {
-  for (uint8_t i = 0; i < entry.rule_count; ++i) {
-    if (TimingRulesEqual(entry.rules[i], rule)) {
-      return i;
-    }
-  }
-  return entry.rule_count;
-}
-
 constexpr bool EvaluateRuleForBits(const TimingRuleExpr& rule, uint32_t bits) {
   if (rule.node_count == 0) {
     return true;
@@ -418,9 +352,55 @@ constexpr uint32_t ComputeTimingRuleTruthTable(const TimingRuleExpr& rule) {
   return table;
 }
 
-constexpr TimingRuleExpr FinalizeRule(TimingRuleExpr rule) {
-  rule.truth_table = ComputeTimingRuleTruthTable(rule);
-  return rule;
+constexpr uint8_t CountUniqueRules(const OpcodeSpec& spec) {
+  std::array<uint32_t, kMaxInstructionRules> unique_tables{};
+  uint8_t count = 1;
+  unique_tables[0] = ComputeTimingRuleTruthTable(Always());
+
+  for (uint8_t i = 0; i < spec.cycle_count; ++i) {
+    const uint32_t table = ComputeTimingRuleTruthTable(spec.cycles[i].rule);
+    bool found = false;
+    for (uint8_t j = 0; j < count; ++j) {
+      if (unique_tables[j] == table) {
+        found = true;
+        break;
+      }
+    }
+    if (found) {
+      continue;
+    }
+    if (count >= kMaxInstructionRules) {
+      return static_cast<uint8_t>(kMaxInstructionRules + 1U);
+    }
+    unique_tables[count++] = table;
+  }
+
+  return count;
+}
+
+template <std::size_t N>
+constexpr bool ValidateOpcodeSpecs(const std::array<OpcodeSpec, N>& specs) {
+  if (!ValidateUniqueOpcodes(specs)) {
+    return false;
+  }
+  for (const OpcodeSpec& spec : specs) {
+    if (!ValidateOpcodeSpec(spec)) {
+      return false;
+    }
+    if (CountUniqueRules(spec) > kMaxInstructionRules) {
+      return false;
+    }
+  }
+  return true;
+}
+
+constexpr uint8_t FindRuleIndex(const InstructionEntry& entry, uint32_t truth_table) {
+  for (uint8_t i = 0; i < entry.rule_count; ++i) {
+    if (entry.rules[i] == truth_table) {
+      return i;
+    }
+  }
+  return entry.rule_count;
 }
 
 constexpr InstructionEntry LowerOpcode(const OpcodeSpec& spec) {
@@ -432,13 +412,14 @@ constexpr InstructionEntry LowerOpcode(const OpcodeSpec& spec) {
   entry.disposition = InstructionDisposition::kImplemented;
   entry.remaining_op_count = spec.cycle_count;
   entry.rule_count = 1;
-  entry.rules[0] = FinalizeRule(Always());
+  entry.rules[0] = ComputeTimingRuleTruthTable(Always());
 
   for (uint8_t i = 0; i < spec.cycle_count; ++i) {
     const CycleSlotSpec& slot = spec.cycles[i];
-    uint8_t rule_index = FindRuleIndex(entry, slot.rule);
+    const uint32_t table = ComputeTimingRuleTruthTable(slot.rule);
+    uint8_t rule_index = FindRuleIndex(entry, table);
     if (rule_index == entry.rule_count) {
-      entry.rules[entry.rule_count++] = FinalizeRule(slot.rule);
+      entry.rules[entry.rule_count++] = table;
     }
     entry.ops[i] = MicroOp{slot.bus_action, slot.internal_op, rule_index};
   }

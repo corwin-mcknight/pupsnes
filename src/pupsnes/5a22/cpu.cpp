@@ -102,7 +102,7 @@ void CPU::DrainSkippedMicroOpsSlow() {
   while (current_instr_ != nullptr) {
     const InstructionEntry* instr = current_instr_;
     const MicroOp* const ops = instr->ops.data();
-    const TimingRuleExpr* const rules = instr->rules.data();
+    const uint32_t* const rules = instr->rules.data();
     const uint8_t remaining = instr->remaining_op_count;
 
     const uint8_t op_idx = static_cast<uint8_t>(micro_op_index_ - 1U);
@@ -135,17 +135,6 @@ void CPU::DrainSkippedMicroOpsSlow() {
 void CPU::RecordFault(Fault::Type type, uint8_t opcode, SnesAddrT opcode_address) {
   fault_ = Fault{type, opcode, opcode_address, regs_};
   FinishInstruction();
-}
-
-bool CPU::EvaluateTimingRule(const TimingRuleExpr& rule) const {
-  const uint32_t bits =
-      (static_cast<uint32_t>(timing_context_.branch_taken) << static_cast<uint8_t>(TimingCondition::kBranchTaken)) |
-      (static_cast<uint32_t>(IsAccumulator16Bit()) << static_cast<uint8_t>(TimingCondition::kAccumulator16)) |
-      (static_cast<uint32_t>(IsIndex16Bit()) << static_cast<uint8_t>(TimingCondition::kIndex16)) |
-      (static_cast<uint32_t>(regs_.P.E) << static_cast<uint8_t>(TimingCondition::kEmulationMode)) |
-      (static_cast<uint32_t>(timing_context_.branch_page_crossed)
-       << static_cast<uint8_t>(TimingCondition::kBranchPageCrossed));
-  return ((rule.truth_table >> bits) & 1U) != 0U;
 }
 
 BusFollowResult CPU::PlanAndFollow(SnesAddrT addr, BusAccessType type, uint8_t data, TimeMasterDeltaT cycle_time) {

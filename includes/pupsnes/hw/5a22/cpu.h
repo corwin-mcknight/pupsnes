@@ -180,15 +180,13 @@ struct TimingRuleNode {
 
 inline constexpr uint8_t kMaxTimingRuleNodes = 7;
 
+// Build-time rule AST. Lowered to a 32-entry truth table (one uint32_t)
+// before being stored in InstructionEntry; this struct is never loaded on
+// the CPU hot path.
 struct TimingRuleExpr {
   uint8_t node_count = 0;
   uint8_t root_index = 0;
   std::array<TimingRuleNode, kMaxTimingRuleNodes> nodes{};
-  // Precomputed truth table: bit k is set iff the rule evaluates true when
-  // packed-condition bits == k. Filled by LowerOpcode for rules baked into
-  // InstructionEntry; left zero (meaning "no precomputation") for transient
-  // spec-time rules. EvaluateTimingRule reads this directly.
-  uint32_t truth_table = 0;
 };
 
 struct MicroOp {
@@ -209,12 +207,17 @@ enum class InstructionDisposition : uint8_t {
 
 // Per-opcode micro-op sequence (the cycles that follow the initial opcode
 // fetch). Total instruction cycles = 1 (opcode fetch) + remaining_op_count.
+//
+// `rules` holds precomputed 32-entry truth tables: bit k of rules[i] is set
+// iff rule i evaluates true when the packed-condition bits == k. Hot-path
+// evaluation is a shift-mask-and-test over the truth table — the build-time
+// TimingRuleExpr AST is not carried here.
 struct InstructionEntry {
   InstructionDisposition disposition = InstructionDisposition::kFaultUnimplemented;
   uint8_t remaining_op_count = 0;
   uint8_t rule_count = 0;
   std::array<MicroOp, kMaxRemainingOps> ops{};
-  std::array<TimingRuleExpr, kMaxInstructionRules> rules{};
+  std::array<uint32_t, kMaxInstructionRules> rules{};
 };
 
 enum class MicroOpStatus : uint8_t {
@@ -1019,7 +1022,16 @@ class CPU : public Device {
     DrainSkippedMicroOpsSlow();
   }
   void RecordFault(Fault::Type type, uint8_t opcode, SnesAddrT opcode_address);
-  [[nodiscard]] bool EvaluateTimingRule(const TimingRuleExpr& rule) const;
+  [[nodiscard]] [[gnu::always_inline]] inline bool EvaluateTimingRule(uint32_t truth_table) const {
+    const uint32_t bits =
+        (static_cast<uint32_t>(timing_context_.branch_taken) << static_cast<uint8_t>(TimingCondition::kBranchTaken)) |
+        (static_cast<uint32_t>(IsAccumulator16Bit()) << static_cast<uint8_t>(TimingCondition::kAccumulator16)) |
+        (static_cast<uint32_t>(IsIndex16Bit()) << static_cast<uint8_t>(TimingCondition::kIndex16)) |
+        (static_cast<uint32_t>(regs_.P.E) << static_cast<uint8_t>(TimingCondition::kEmulationMode)) |
+        (static_cast<uint32_t>(timing_context_.branch_page_crossed)
+         << static_cast<uint8_t>(TimingCondition::kBranchPageCrossed));
+    return ((truth_table >> bits) & 1U) != 0U;
+  }
 
   [[nodiscard]] uint8_t ReadResetVectorByte(SnesAddrT addr);
 
