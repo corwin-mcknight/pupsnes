@@ -222,6 +222,8 @@ void RenderRegistersPanel(DebuggerApp& app) {
   ImGui::Text("Instr  %" PRIu64, static_cast<uint64_t>(retired));
   ImGui::Text("uOp    %u", static_cast<unsigned>(cpu.GetMicroOpIndex()));
   ImGui::Text("MCyc   %" PRIu64, static_cast<uint64_t>(app.GetSnes().GetMasterTime()));
+  ImGui::Text("DRAM   %" PRIu64 " win / %" PRIu64 " cyc  next@%" PRIu64, cpu.GetRefreshStallWindows(),
+              cpu.GetRefreshStallCycles(), static_cast<uint64_t>(cpu.GetNextRefreshTime()));
 
   if (const auto& fault = cpu.GetFault(); fault.has_value()) {
     ImGui::Separator();

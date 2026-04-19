@@ -14,5 +14,6 @@ void RenderTracePanel(DebuggerApp& app);
 void RenderMicroOpTracePanel(DebuggerApp& app);
 void RenderSchedulerPanel(DebuggerApp& app);
 void RenderErrorsPanel(DebuggerApp& app);
+void RenderBusEventPanel(DebuggerApp& app);
 
 }  // namespace pupsnes::debugger

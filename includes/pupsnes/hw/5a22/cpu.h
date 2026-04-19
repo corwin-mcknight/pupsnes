@@ -12,6 +12,16 @@
 
 namespace pupsnes {
 
+// SNES timing constants for CPU-owned DRAM refresh.
+//
+// The 5A22 stalls the bus for 40 master cycles every scanline to refresh DRAM.
+// The pause begins at roughly master-cycle offset 538 into each 1364-cycle
+// scanline. We model this as a CPU-internal stall: no bus ops are issued
+// during the window, and local_time advances normally.
+inline constexpr TimeMasterDeltaT kMasterCyclesPerScanline = 1364;
+inline constexpr TimeMasterDeltaT kDramRefreshStartCycle = 538;
+inline constexpr TimeMasterDeltaT kDramRefreshDurationCycles = 40;
+
 class SNES;
 
 // Bus actions a micro-op can perform in a single master clock cycle.
@@ -192,6 +202,16 @@ class CPU : public Device {
   [[nodiscard]] const std::optional<Fault>& GetFault() const { return fault_; }
   [[nodiscard]] uint64_t GetRetiredInstructionCount() const { return retired_instruction_count_; }
 
+  // DRAM-refresh telemetry. Windows counts the number of 40-cycle refresh
+  // pauses the CPU has served since reset; cycles is the cumulative stall
+  // total (normally windows * kDramRefreshDurationCycles unless a window was
+  // cut short by a budget boundary, in which case the remainder is counted
+  // on the next Tick). next-time is the absolute master time at which the
+  // next refresh window will begin.
+  [[nodiscard]] uint64_t GetRefreshStallWindows() const { return retired_refresh_windows_; }
+  [[nodiscard]] uint64_t GetRefreshStallCycles() const { return retired_refresh_cycles_; }
+  [[nodiscard]] TimeMasterT GetNextRefreshTime() const { return next_refresh_time_; }
+
   // Last debugger-driven stop reason (breakpoint or step-complete) emitted by
   // Tick. RunControl consumes this via TakeLastDebuggerStop() after a
   // Scheduler::Step to map the reason to a pause transition. Fault stops use
@@ -246,6 +266,15 @@ class CPU : public Device {
   // Cached at Reset() from snes_->system_bus.get(). Lets the inline BusRead /
   // BusWrite fast path skip the unique_ptr<> deref (non-trivial in debug).
   SystemBus* system_bus_raw_ = nullptr;
+
+  // DRAM refresh state. next_refresh_time_ is the absolute master time at
+  // which the next 40-cycle refresh window begins. refresh_cycles_remaining_
+  // is the number of stall cycles left in the current window (0 when no
+  // refresh is active).
+  TimeMasterT next_refresh_time_ = kDramRefreshStartCycle;
+  TimeMasterDeltaT refresh_cycles_remaining_ = 0;
+  uint64_t retired_refresh_windows_ = 0;
+  uint64_t retired_refresh_cycles_ = 0;
 
   // Opcode → micro-op sequence table.  Defined in cpu_opcodes.cpp.
   static const std::array<InstructionEntry, 256> kOpcodeTable;

@@ -3,6 +3,7 @@
 #include <array>
 #include <cstdint>
 
+#include "pupsnes/hw/bus_event.h"
 #include "pupsnes/types.h"
 
 namespace pupsnes {
@@ -115,6 +116,12 @@ class SystemBus {
 
   [[nodiscard]] BusPlan Plan(SnesAddrT address, BusAccessType type, uint8_t write_data = 0) const;
   BusFollowResult Follow(const BusPlan& plan, TimeMasterT current_time, DeviceIdT source_device);
+
+  // Attach an optional sink to receive a notification for every bus
+  // transaction (fast and slow path). Null disables recording and reduces the
+  // fast-path cost to one predicted-not-taken branch.
+  void SetEventSink(BusEventSink* sink) { event_sink_ = sink; }
+  [[nodiscard]] BusEventSink* GetEventSink() const { return event_sink_; }
   [[nodiscard]] DebugReadResult DebugRead(SnesAddrT address) const;
   [[nodiscard]] DebugWriteResult DebugWrite(SnesAddrT address, uint8_t value);
 
@@ -133,6 +140,9 @@ class SystemBus {
     const uint8_t data = entry.fast_read_ptr[addr & 0xFFU];
     last_data_bus_value_ = data;
     out_data = data;
+    if (event_sink_ != nullptr) {
+      NotifyEvent(BusEventKind::kFastRead, addr, data);
+    }
     return true;
   }
   [[nodiscard]] bool TryFastWrite(SnesAddrT address, uint8_t data) {
@@ -144,17 +154,24 @@ class SystemBus {
     }
     entry.fast_write_ptr[addr & 0xFFU] = data;
     last_data_bus_value_ = data;
+    if (event_sink_ != nullptr) {
+      NotifyEvent(BusEventKind::kFastWrite, addr, data);
+    }
     return true;
   }
 
  private:
   SNES* snes_;  // Non-owning. SNES owns this SystemBus; pointer back to parent.
   uint8_t last_data_bus_value_ = 0xFF;
+  BusEventSink* event_sink_ = nullptr;
   using PageRow = std::array<PageTableEntry, 256>;
   std::array<PageRow, 256> page_table_{};
 
   BusFollowResult FollowInline(const BusPlan& plan, TimeMasterT current_time);
   BusFollowResult FollowScheduled(const BusPlan& plan, TimeMasterT current_time, DeviceIdT source_device);
+  // Out-of-line helper so the fast-path TryFast* callers stay small. Caller
+  // must pre-check event_sink_ for null.
+  void NotifyEvent(BusEventKind kind, SnesAddrT address, uint8_t data);
   [[nodiscard]] DebugReadResult MakeDebugReadResult(const BusPlan& plan) const;
   [[nodiscard]] DebugWriteResult MakeDebugWriteResult(const BusPlan& plan, uint8_t value) const;
 

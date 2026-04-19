@@ -16,6 +16,7 @@ set(PUPSNES_LIB_SOURCES
 
 set(PUPSNES_DEBUGGER_CORE_SOURCES
   src/debugger/breakpoints.cpp
+  src/debugger/bus_event_log.cpp
   src/debugger/disasm.cpp
   src/debugger/error_log.cpp
   src/debugger/microop_trace.cpp
@@ -26,6 +27,7 @@ set(PUPSNES_DEBUGGER_CORE_SOURCES
 set(PUPSNES_DEBUGGER_SOURCES
   src/debugger/app.cpp
   src/debugger/main.cpp
+  src/debugger/panels/bus_event_panel.cpp
   src/debugger/panels/controls_panel.cpp
   src/debugger/panels/disasm_panel.cpp
   src/debugger/panels/errors_panel.cpp
@@ -52,6 +54,7 @@ set(PUPSNES_TEST_SOURCES
   src/tests/mem_tests.cpp
   src/tests/systembus_tests.cpp
   src/tests/breakpoints_tests.cpp
+  src/tests/bus_event_log_tests.cpp
   src/tests/disasm_tests.cpp
   src/tests/error_log_tests.cpp
   src/tests/run_control_tests.cpp
@@ -243,6 +246,7 @@ set(PUPSNES_HEADERS
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/mem.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/5a22/opcode_metadata.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/debugger/breakpoints.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/debugger/bus_event_log.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/debugger/disasm.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/debugger/error_log.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/debugger/microop_trace.h
@@ -253,6 +257,7 @@ set(PUPSNES_HEADERS
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/5a22/cpu.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/5a22/cpu_regs.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/5a22/micro_op_strings.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/bus_event.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/cartridge.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/debugger_contract.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/device.h

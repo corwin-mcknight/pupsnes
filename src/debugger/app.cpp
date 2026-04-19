@@ -26,7 +26,9 @@ namespace pupsnes::debugger {
 DebuggerApp* DebuggerApp::current_app_ = nullptr;
 
 DebuggerApp::DebuggerApp()
-    : trace_log_(512), error_log_(2048), run_control_(snes_, breakpoints_, trace_log_, error_log_) {}
+    : trace_log_(512), bus_event_log_(2048), error_log_(2048), run_control_(snes_, breakpoints_, trace_log_, error_log_) {
+  snes_.GetSystemBus().SetEventSink(&bus_event_log_);
+}
 
 DebuggerApp::~DebuggerApp() { ShutdownWindow(); }
 
@@ -83,6 +85,7 @@ bool DebuggerApp::LoadRomFromPath(const std::string& path) {
     snes_.LoadLoRom(rom);
     snes_.Reset();
     trace_log_.Clear();
+    bus_event_log_.Clear();
     microop_trace_.Clear();
     snes_.GetCpu().SetMicroOpRecorder(&microop_trace_);
     breakpoints_.Clear();
@@ -108,6 +111,7 @@ void DebuggerApp::ResetMachine() {
   }
   snes_.Reset();
   trace_log_.Clear();
+  bus_event_log_.Clear();
   microop_trace_.Clear();
   run_control_.ResetMachineState();
   JumpToAddress(GetCurrentPc());
@@ -464,6 +468,7 @@ void DebuggerApp::Render() {
   RenderMicroOpTracePanel(*this);
   RenderSchedulerPanel(*this);
   RenderErrorsPanel(*this);
+  RenderBusEventPanel(*this);
   RenderLoadRomDialog();
   RenderFatalModal();
 

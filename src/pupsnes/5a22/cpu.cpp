@@ -69,6 +69,12 @@ void CPU::Reset() {
   system_bus_raw_ = (snes_ != nullptr) ? snes_->system_bus.get() : nullptr;
   local_time_ = (snes_ != nullptr) ? snes_->GetMasterTime() : 0;
 
+  // First DRAM refresh fires kDramRefreshStartCycle master cycles after reset.
+  next_refresh_time_ = local_time_ + kDramRefreshStartCycle;
+  refresh_cycles_remaining_ = 0;
+  retired_refresh_windows_ = 0;
+  retired_refresh_cycles_ = 0;
+
   const uint8_t vector_lo = ReadResetVectorByte(0x00FFFCU);
   const uint8_t vector_hi = ReadResetVectorByte(0x00FFFDU);
 
@@ -312,6 +318,25 @@ TickResult CPU::Tick(TimeMasterDeltaT budget) {
   TimeMasterDeltaT cycle_time = 0;
 
   while (cycle_time < budget) {
+    // DRAM refresh stalls the CPU mid-scanline. When the refresh window is
+    // active, consume cycles without issuing any bus ops. When we cross the
+    // scheduled refresh start, arm the window and arrange the next one.
+    if (refresh_cycles_remaining_ > 0) {
+      const TimeMasterDeltaT available = budget - cycle_time;
+      const TimeMasterDeltaT take =
+          (refresh_cycles_remaining_ < available) ? refresh_cycles_remaining_ : available;
+      cycle_time += take;
+      refresh_cycles_remaining_ -= take;
+      retired_refresh_cycles_ += take;
+      continue;
+    }
+    if (local_time_ + cycle_time >= next_refresh_time_) {
+      refresh_cycles_remaining_ = kDramRefreshDurationCycles;
+      next_refresh_time_ += kMasterCyclesPerScanline;
+      ++retired_refresh_windows_;
+      continue;
+    }
+
     StepResult step = ShouldFetchInstruction() ? FetchOpcode(cycle_time) : ExecuteMicroOp(cycle_time);
     if (step.stop.reason != TickStopReason::kContinue) {
       return step.stop;

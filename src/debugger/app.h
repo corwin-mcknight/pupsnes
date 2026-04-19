@@ -9,6 +9,7 @@
 struct GLFWwindow;
 
 #include "pupsnes/debugger/breakpoints.h"
+#include "pupsnes/debugger/bus_event_log.h"
 #include "pupsnes/debugger/error_log.h"
 #include "pupsnes/debugger/microop_trace.h"
 #include "pupsnes/debugger/run_control.h"
@@ -76,6 +77,8 @@ class DebuggerApp {
   [[nodiscard]] const BreakpointSet& GetBreakpoints() const { return breakpoints_; }
   [[nodiscard]] TraceLog& GetTraceLog() { return trace_log_; }
   [[nodiscard]] const TraceLog& GetTraceLog() const { return trace_log_; }
+  [[nodiscard]] BusEventLog& GetBusEventLog() { return bus_event_log_; }
+  [[nodiscard]] const BusEventLog& GetBusEventLog() const { return bus_event_log_; }
   [[nodiscard]] MicroOpTrace& GetMicroOpTrace() { return microop_trace_; }
   [[nodiscard]] const MicroOpTrace& GetMicroOpTrace() const { return microop_trace_; }
   [[nodiscard]] ErrorLog& GetErrorLog() { return error_log_; }
@@ -115,6 +118,7 @@ class DebuggerApp {
   SNES snes_;
   BreakpointSet breakpoints_;
   TraceLog trace_log_;
+  BusEventLog bus_event_log_;
   MicroOpTrace microop_trace_;
   ErrorLog error_log_;
   RunControl run_control_;

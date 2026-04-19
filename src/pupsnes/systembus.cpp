@@ -63,10 +63,25 @@ BusPlan SystemBus::Plan(SnesAddrT address, BusAccessType type, uint8_t write_dat
 
 BusFollowResult SystemBus::Follow(const BusPlan& plan, TimeMasterT current_time, DeviceIdT source_device) {
   switch (plan.outcome) {
-    case BusPlanOutcome::kInlineComplete:
-      return FollowInline(plan, current_time);
-    case BusPlanOutcome::kScheduledComplete:
-      return FollowScheduled(plan, current_time, source_device);
+    case BusPlanOutcome::kInlineComplete: {
+      const BusFollowResult result = FollowInline(plan, current_time);
+      if (event_sink_ != nullptr) {
+        const BusEventKind kind =
+            (plan.access_type == BusAccessType::kRead) ? BusEventKind::kInlineRead : BusEventKind::kInlineWrite;
+        const uint8_t data = (plan.access_type == BusAccessType::kRead) ? result.data : plan.write_data;
+        event_sink_->OnBusEvent({current_time, plan.original_address, data, kind});
+      }
+      return result;
+    }
+    case BusPlanOutcome::kScheduledComplete: {
+      const BusFollowResult result = FollowScheduled(plan, current_time, source_device);
+      if (event_sink_ != nullptr) {
+        const BusEventKind kind =
+            (plan.access_type == BusAccessType::kRead) ? BusEventKind::kScheduledRead : BusEventKind::kScheduledWrite;
+        event_sink_->OnBusEvent({current_time, plan.original_address, plan.write_data, kind});
+      }
+      return result;
+    }
     case BusPlanOutcome::kRejected:
       if constexpr (config::kLogUnmappedBusAccess) {
         if (plan.access_type == BusAccessType::kRead) {
@@ -79,9 +94,24 @@ BusFollowResult SystemBus::Follow(const BusPlan& plan, TimeMasterT current_time,
                        static_cast<unsigned>(plan.original_address & 0xFFFF), plan.write_data);
         }
       }
+      if (event_sink_ != nullptr) {
+        const BusEventKind kind =
+            (plan.access_type == BusAccessType::kRead) ? BusEventKind::kRejectedRead : BusEventKind::kRejectedWrite;
+        const uint8_t data = (plan.access_type == BusAccessType::kRead) ? last_data_bus_value_ : plan.write_data;
+        event_sink_->OnBusEvent({current_time, plan.original_address, data, kind});
+      }
       return {BusPlanOutcome::kRejected, last_data_bus_value_, 0};
   }
   return {BusPlanOutcome::kRejected, last_data_bus_value_, 0};
+}
+
+void SystemBus::NotifyEvent(BusEventKind kind, SnesAddrT address, uint8_t data) {
+  // Called from the hot fast-path after the caller verified event_sink_ is
+  // non-null. Uses scheduler-committed master time, which lags the CPU's
+  // in-flight cycle_time by up to a Tick's worth of work — acceptable for a
+  // bus viewer (ordering is preserved; per-cycle precision is not).
+  const TimeMasterT time = (snes_ != nullptr) ? snes_->GetMasterTime() : 0;
+  event_sink_->OnBusEvent({time, address, data, kind});
 }
 
 DebugReadResult SystemBus::MakeDebugReadResult(const BusPlan& plan) const {

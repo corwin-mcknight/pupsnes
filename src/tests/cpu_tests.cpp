@@ -1182,3 +1182,64 @@ TEST_CASE("DEC A 16-bit decrements full accumulator", "[cpu][dec]") {
   REQUIRE(f.cpu.GetRegs().A == 0x0000);
   REQUIRE(f.cpu.GetRegs().P.Z == true);
 }
+
+TEST_CASE("DRAM refresh stalls the CPU for 40 cycles mid-scanline", "[cpu][refresh]") {
+  ResetFixture f;
+  // Fill the first scanline worth of program with NOPs (2 cycles each).
+  for (std::size_t i = 0; i < 800; ++i) {
+    f.SetRomByte(i, 0xEA);
+  }
+  f.SyncCartridge();
+  f.cpu.Reset();
+
+  const uint64_t retired_before = f.cpu.GetRetiredInstructionCount();
+
+  // Run exactly one full scanline's worth of master cycles. Without refresh
+  // the CPU would retire scanline/2 = 682 NOPs; refresh steals 40 of those
+  // cycles, so only (1364-40)/2 = 662 NOPs should retire.
+  TickResult r = f.cpu.Tick(kMasterCyclesPerScanline);
+  const uint64_t retired = f.cpu.GetRetiredInstructionCount() - retired_before;
+
+  REQUIRE(r.completed_cycles == kMasterCyclesPerScanline);
+  REQUIRE(retired == (kMasterCyclesPerScanline - kDramRefreshDurationCycles) / 2);
+  REQUIRE(f.cpu.GetRefreshStallWindows() == 1);
+  REQUIRE(f.cpu.GetRefreshStallCycles() == kDramRefreshDurationCycles);
+}
+
+TEST_CASE("DRAM refresh fires once per scanline", "[cpu][refresh]") {
+  ResetFixture f;
+  for (std::size_t i = 0; i < 2000; ++i) {
+    f.SetRomByte(i, 0xEA);
+  }
+  f.SyncCartridge();
+  f.cpu.Reset();
+
+  const uint64_t retired_before = f.cpu.GetRetiredInstructionCount();
+
+  // Three scanlines → three refresh windows → 120 stall cycles total.
+  TickResult r = f.cpu.Tick(3 * kMasterCyclesPerScanline);
+  const uint64_t retired = f.cpu.GetRetiredInstructionCount() - retired_before;
+
+  REQUIRE(r.completed_cycles == 3 * kMasterCyclesPerScanline);
+  REQUIRE(retired == (3 * kMasterCyclesPerScanline - 3 * kDramRefreshDurationCycles) / 2);
+  REQUIRE(f.cpu.GetRefreshStallWindows() == 3);
+  REQUIRE(f.cpu.GetRefreshStallCycles() == 3 * kDramRefreshDurationCycles);
+}
+
+TEST_CASE("DRAM refresh does not fire before kDramRefreshStartCycle", "[cpu][refresh]") {
+  ResetFixture f;
+  for (std::size_t i = 0; i < 600; ++i) {
+    f.SetRomByte(i, 0xEA);
+  }
+  f.SyncCartridge();
+  f.cpu.Reset();
+
+  const uint64_t retired_before = f.cpu.GetRetiredInstructionCount();
+
+  // Run up to just before the refresh window.
+  TickResult r = f.cpu.Tick(kDramRefreshStartCycle);
+  const uint64_t retired = f.cpu.GetRetiredInstructionCount() - retired_before;
+
+  REQUIRE(r.completed_cycles == kDramRefreshStartCycle);
+  REQUIRE(retired == kDramRefreshStartCycle / 2);
+}
