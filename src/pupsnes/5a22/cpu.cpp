@@ -237,6 +237,39 @@ namespace {
   }
 }
 
+// Dispatch a parameterized register inc/dec to the concrete per-register
+// helper above. The switch collapses at compile time when (reg, decrement) are
+// compile-time constants (true for all current MakeIncDecSpecs entries), so
+// the hot path remains a direct call — no runtime table lookup.
+[[gnu::always_inline]] inline void DispatchIncDecReg(CpuRegs& regs, Reg reg, bool decrement) {
+  switch (reg) {
+    case Reg::kA:
+      if (decrement) {
+        DecA(regs);
+      } else {
+        IncA(regs);
+      }
+      return;
+    case Reg::kX:
+      if (decrement) {
+        DecX(regs);
+      } else {
+        IncX(regs);
+      }
+      return;
+    case Reg::kY:
+      if (decrement) {
+        DecY(regs);
+      } else {
+        IncY(regs);
+      }
+      return;
+    default:
+      break;
+  }
+  __builtin_unreachable();
+}
+
 // When e=1 the m and x flags are forced to 1, XH/YH forced to $00, and the
 // stack is forced onto page 1 (SH = $01). Called after any op that can
 // change P or e.
@@ -723,23 +756,9 @@ void CPU::ExecuteInternalOp(MicroInternalOp op, [[maybe_unused]] uint8_t params)
     case MicroInternalOp::kLoadDbrUpdateNz:
       LoadDbrUpdateNz(regs_, fetch_data_);
       break;
-    case MicroInternalOp::kIncA:
-      IncA(regs_);
-      break;
-    case MicroInternalOp::kDecA:
-      DecA(regs_);
-      break;
-    case MicroInternalOp::kIncX:
-      IncX(regs_);
-      break;
-    case MicroInternalOp::kDecX:
-      DecX(regs_);
-      break;
-    case MicroInternalOp::kIncY:
-      IncY(regs_);
-      break;
-    case MicroInternalOp::kDecY:
-      DecY(regs_);
+    case MicroInternalOp::kIncDecReg:
+      DispatchIncDecReg(regs_, opcode_defs_internal::micro_op_params::UnpackIncDecReg(params),
+                        opcode_defs_internal::micro_op_params::UnpackIncDecDecrement(params));
       break;
     case MicroInternalOp::kClearCarry:
       regs_.P.C = false;

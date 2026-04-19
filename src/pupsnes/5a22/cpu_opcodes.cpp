@@ -273,12 +273,12 @@ constexpr auto MakeStoreSpecs() {
 
 constexpr auto MakeIncDecSpecs() {
   return std::array{
-      Opcode(0x1A, "INC", "implied").Then(Internal(MicroInternalOp::kIncA, Always(), "inc A")).Build(),
-      Opcode(0x3A, "DEC", "implied").Then(Internal(MicroInternalOp::kDecA, Always(), "dec A")).Build(),
-      Opcode(0xE8, "INX", "implied").Then(Internal(MicroInternalOp::kIncX, Always(), "inc X")).Build(),
-      Opcode(0xC8, "INY", "implied").Then(Internal(MicroInternalOp::kIncY, Always(), "inc Y")).Build(),
-      Opcode(0xCA, "DEX", "implied").Then(Internal(MicroInternalOp::kDecX, Always(), "dec X")).Build(),
-      Opcode(0x88, "DEY", "implied").Then(Internal(MicroInternalOp::kDecY, Always(), "dec Y")).Build(),
+      Opcode(0x1A, "INC", "implied").Then(IncDecReg(Reg::kA, false, Always(), "inc A")).Build(),
+      Opcode(0x3A, "DEC", "implied").Then(IncDecReg(Reg::kA, true, Always(), "dec A")).Build(),
+      Opcode(0xE8, "INX", "implied").Then(IncDecReg(Reg::kX, false, Always(), "inc X")).Build(),
+      Opcode(0xC8, "INY", "implied").Then(IncDecReg(Reg::kY, false, Always(), "inc Y")).Build(),
+      Opcode(0xCA, "DEX", "implied").Then(IncDecReg(Reg::kX, true, Always(), "dec X")).Build(),
+      Opcode(0x88, "DEY", "implied").Then(IncDecReg(Reg::kY, true, Always(), "dec Y")).Build(),
   };
 }
 

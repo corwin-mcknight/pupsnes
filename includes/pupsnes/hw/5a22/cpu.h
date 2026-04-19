@@ -78,12 +78,9 @@ enum class MicroInternalOp : uint8_t {
   kDecrementSp,                         // Decrement SP (wraps in page 1 when E=1)
   kIncrementSp,                         // Increment SP (wraps in page 1 when E=1)
   kLoadDbrUpdateNz,                     // DBR = fetch_data_; update N/Z (8-bit)
-  kIncA,                                // A = A + 1 (width per M flag); update N/Z
-  kDecA,                                // A = A - 1 (width per M flag); update N/Z
-  kIncX,                                // X = X + 1 (width per X flag); update N/Z
-  kDecX,                                // X = X - 1 (width per X flag); update N/Z
-  kIncY,                                // Y = Y + 1 (width per X flag); update N/Z
-  kDecY,                                // Y = Y - 1 (width per X flag); update N/Z
+  kIncDecReg,                           // reg += 1 or reg -= 1; width/flag semantics per reg; params
+                                        // packs decrement flag in bit 0 and Reg (A/X/Y) in bits [4:1]
+                                        // (see micro_op_params::PackIncDec)
   kClearCarry,                          // P.C = 0
   kSetCarry,                            // P.C = 1
   kClearDecimal,                        // P.D = 0

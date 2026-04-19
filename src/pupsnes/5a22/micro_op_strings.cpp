@@ -106,18 +106,8 @@ std::string_view ToString(MicroInternalOp op) {
       return "IncrementSp";
     case MicroInternalOp::kLoadDbrUpdateNz:
       return "LoadDbrUpdateNz";
-    case MicroInternalOp::kIncA:
-      return "IncA";
-    case MicroInternalOp::kDecA:
-      return "DecA";
-    case MicroInternalOp::kIncX:
-      return "IncX";
-    case MicroInternalOp::kDecX:
-      return "DecX";
-    case MicroInternalOp::kIncY:
-      return "IncY";
-    case MicroInternalOp::kDecY:
-      return "DecY";
+    case MicroInternalOp::kIncDecReg:
+      return "IncDecReg";
     case MicroInternalOp::kClearCarry:
       return "ClearCarry";
     case MicroInternalOp::kSetCarry:

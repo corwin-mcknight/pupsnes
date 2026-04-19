@@ -24,6 +24,17 @@ inline constexpr Reg UnpackTransferSrc(uint8_t params) {
 inline constexpr Reg UnpackTransferDst(uint8_t params) {
   return static_cast<Reg>((params >> 4U) & 0x0FU);
 }
+
+// Inc/dec registers (kIncDecReg): bit 0 = decrement, bits [4:1] = Reg (A/X/Y only).
+inline constexpr uint8_t PackIncDec(Reg reg, bool decrement) {
+  return static_cast<uint8_t>((decrement ? 1U : 0U) | (static_cast<uint32_t>(reg) << 1U));
+}
+inline constexpr Reg UnpackIncDecReg(uint8_t params) {
+  return static_cast<Reg>((params >> 1U) & 0x0FU);
+}
+inline constexpr bool UnpackIncDecDecrement(uint8_t params) {
+  return (params & 0x01U) != 0U;
+}
 }  // namespace micro_op_params
 
 struct CycleSlotSpec {
@@ -223,6 +234,20 @@ constexpr CycleSlotSpec TransferReg(Reg src, Reg dst, TimingRuleExpr rule = Alwa
       rule,
       label,
       micro_op_params::PackTransfer(src, dst),
+  };
+}
+
+// Parameterized register inc/dec. Packs (reg, decrement) into
+// CycleSlotSpec::params for the unified kIncDecReg internal op. Width and flag
+// semantics for each register live in DispatchIncDecReg in cpu.cpp.
+constexpr CycleSlotSpec IncDecReg(Reg reg, bool decrement, TimingRuleExpr rule = Always(),
+                                  std::string_view label = {}) {
+  return CycleSlotSpec{
+      MicroBusAction::kNone,
+      MicroInternalOp::kIncDecReg,
+      rule,
+      label,
+      micro_op_params::PackIncDec(reg, decrement),
   };
 }
 
