@@ -138,30 +138,8 @@ std::string_view ToString(MicroInternalOp op) {
       return "SepFromFetch";
     case MicroInternalOp::kExchangeCarryEmulation:
       return "ExchangeCarryEmulation";
-    case MicroInternalOp::kTransferAToX:
-      return "TransferAToX";
-    case MicroInternalOp::kTransferAToY:
-      return "TransferAToY";
-    case MicroInternalOp::kTransferSToX:
-      return "TransferSToX";
-    case MicroInternalOp::kTransferXToA:
-      return "TransferXToA";
-    case MicroInternalOp::kTransferXToS:
-      return "TransferXToS";
-    case MicroInternalOp::kTransferXToY:
-      return "TransferXToY";
-    case MicroInternalOp::kTransferYToA:
-      return "TransferYToA";
-    case MicroInternalOp::kTransferYToX:
-      return "TransferYToX";
-    case MicroInternalOp::kTransferAToD:
-      return "TransferAToD";
-    case MicroInternalOp::kTransferAToS:
-      return "TransferAToS";
-    case MicroInternalOp::kTransferDToA:
-      return "TransferDToA";
-    case MicroInternalOp::kTransferSToA:
-      return "TransferSToA";
+    case MicroInternalOp::kTransferReg:
+      return "TransferReg";
     case MicroInternalOp::kSetBranchTakenIfZero:
       return "SetBranchTakenIfZero";
     case MicroInternalOp::kSetBranchTakenIfCarry:

@@ -307,18 +307,18 @@ constexpr auto MakeFlagSpecs() {
 
 constexpr auto MakeTransferSpecs() {
   return std::array{
-      Opcode(0xAA, "TAX", "implied").Then(Internal(MicroInternalOp::kTransferAToX, Always(), "A -> X")).Build(),
-      Opcode(0xA8, "TAY", "implied").Then(Internal(MicroInternalOp::kTransferAToY, Always(), "A -> Y")).Build(),
-      Opcode(0xBA, "TSX", "implied").Then(Internal(MicroInternalOp::kTransferSToX, Always(), "S -> X")).Build(),
-      Opcode(0x8A, "TXA", "implied").Then(Internal(MicroInternalOp::kTransferXToA, Always(), "X -> A")).Build(),
-      Opcode(0x9A, "TXS", "implied").Then(Internal(MicroInternalOp::kTransferXToS, Always(), "X -> S")).Build(),
-      Opcode(0x9B, "TXY", "implied").Then(Internal(MicroInternalOp::kTransferXToY, Always(), "X -> Y")).Build(),
-      Opcode(0x98, "TYA", "implied").Then(Internal(MicroInternalOp::kTransferYToA, Always(), "Y -> A")).Build(),
-      Opcode(0xBB, "TYX", "implied").Then(Internal(MicroInternalOp::kTransferYToX, Always(), "Y -> X")).Build(),
-      Opcode(0x5B, "TCD", "implied").Then(Internal(MicroInternalOp::kTransferAToD, Always(), "C -> D")).Build(),
-      Opcode(0x1B, "TCS", "implied").Then(Internal(MicroInternalOp::kTransferAToS, Always(), "C -> S")).Build(),
-      Opcode(0x7B, "TDC", "implied").Then(Internal(MicroInternalOp::kTransferDToA, Always(), "D -> C")).Build(),
-      Opcode(0x3B, "TSC", "implied").Then(Internal(MicroInternalOp::kTransferSToA, Always(), "S -> C")).Build(),
+      Opcode(0xAA, "TAX", "implied").Then(TransferReg(Reg::kA, Reg::kX, Always(), "A -> X")).Build(),
+      Opcode(0xA8, "TAY", "implied").Then(TransferReg(Reg::kA, Reg::kY, Always(), "A -> Y")).Build(),
+      Opcode(0xBA, "TSX", "implied").Then(TransferReg(Reg::kSp, Reg::kX, Always(), "S -> X")).Build(),
+      Opcode(0x8A, "TXA", "implied").Then(TransferReg(Reg::kX, Reg::kA, Always(), "X -> A")).Build(),
+      Opcode(0x9A, "TXS", "implied").Then(TransferReg(Reg::kX, Reg::kSp, Always(), "X -> S")).Build(),
+      Opcode(0x9B, "TXY", "implied").Then(TransferReg(Reg::kX, Reg::kY, Always(), "X -> Y")).Build(),
+      Opcode(0x98, "TYA", "implied").Then(TransferReg(Reg::kY, Reg::kA, Always(), "Y -> A")).Build(),
+      Opcode(0xBB, "TYX", "implied").Then(TransferReg(Reg::kY, Reg::kX, Always(), "Y -> X")).Build(),
+      Opcode(0x5B, "TCD", "implied").Then(TransferReg(Reg::kA, Reg::kDp, Always(), "C -> D")).Build(),
+      Opcode(0x1B, "TCS", "implied").Then(TransferReg(Reg::kA, Reg::kSp, Always(), "C -> S")).Build(),
+      Opcode(0x7B, "TDC", "implied").Then(TransferReg(Reg::kDp, Reg::kA, Always(), "D -> C")).Build(),
+      Opcode(0x3B, "TSC", "implied").Then(TransferReg(Reg::kSp, Reg::kA, Always(), "S -> C")).Build(),
   };
 }
 

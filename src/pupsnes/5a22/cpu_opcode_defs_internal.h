@@ -12,6 +12,18 @@ namespace pupsnes::opcode_defs_internal {
 namespace micro_op_params {
 // Packing helpers for MicroOp::params. Populated in subsequent refactor
 // steps as each enum group collapses into a parameterized category.
+
+// Register-to-register transfers (kTransferReg): src in low nibble, dst in high
+// nibble. Both nibbles reference the Reg enum defined in cpu.h.
+inline constexpr uint8_t PackTransfer(Reg src, Reg dst) {
+  return static_cast<uint8_t>(static_cast<uint8_t>(src) | (static_cast<uint8_t>(dst) << 4U));
+}
+inline constexpr Reg UnpackTransferSrc(uint8_t params) {
+  return static_cast<Reg>(params & 0x0FU);
+}
+inline constexpr Reg UnpackTransferDst(uint8_t params) {
+  return static_cast<Reg>((params >> 4U) & 0x0FU);
+}
 }  // namespace micro_op_params
 
 struct CycleSlotSpec {
@@ -198,6 +210,20 @@ constexpr CycleSlotSpec PullStack(MicroInternalOp internal_op = MicroInternalOp:
 constexpr CycleSlotSpec Internal(MicroInternalOp internal_op = MicroInternalOp::kNone, TimingRuleExpr rule = Always(),
                                  std::string_view label = {}) {
   return CycleSlotSpec{MicroBusAction::kNone, internal_op, rule, label};
+}
+
+// Parameterized register-to-register transfer. Packs (src, dst) into
+// CycleSlotSpec::params for the unified kTransferReg internal op. Width and
+// flag semantics of each concrete pair live in DispatchTransferReg in cpu.cpp.
+constexpr CycleSlotSpec TransferReg(Reg src, Reg dst, TimingRuleExpr rule = Always(),
+                                    std::string_view label = {}) {
+  return CycleSlotSpec{
+      MicroBusAction::kNone,
+      MicroInternalOp::kTransferReg,
+      rule,
+      label,
+      micro_op_params::PackTransfer(src, dst),
+  };
 }
 
 struct CycleFragmentBuilder {

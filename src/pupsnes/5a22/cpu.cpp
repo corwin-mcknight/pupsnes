@@ -331,6 +331,81 @@ namespace {
   SetNzFromWidth(regs, regs.A, true);
 }
 
+// Dispatch a parameterized register-to-register transfer to the concrete
+// per-pair helper above. The switch collapses at compile time when the (src,
+// dst) pair is a known constant (true for all current MakeTransferSpecs
+// entries), so the hot path remains a direct call — no runtime table lookup.
+[[gnu::always_inline]] inline void DispatchTransferReg(CpuRegs& regs, Reg src, Reg dst) {
+  switch (src) {
+    case Reg::kA:
+      switch (dst) {
+        case Reg::kX:
+          TransferAToX(regs);
+          return;
+        case Reg::kY:
+          TransferAToY(regs);
+          return;
+        case Reg::kSp:
+          TransferAToS(regs);
+          return;
+        case Reg::kDp:
+          TransferAToD(regs);
+          return;
+        default:
+          break;
+      }
+      break;
+    case Reg::kX:
+      switch (dst) {
+        case Reg::kA:
+          TransferXToA(regs);
+          return;
+        case Reg::kY:
+          TransferXToY(regs);
+          return;
+        case Reg::kSp:
+          TransferXToS(regs);
+          return;
+        default:
+          break;
+      }
+      break;
+    case Reg::kY:
+      switch (dst) {
+        case Reg::kA:
+          TransferYToA(regs);
+          return;
+        case Reg::kX:
+          TransferYToX(regs);
+          return;
+        default:
+          break;
+      }
+      break;
+    case Reg::kSp:
+      switch (dst) {
+        case Reg::kA:
+          TransferSToA(regs);
+          return;
+        case Reg::kX:
+          TransferSToX(regs);
+          return;
+        default:
+          break;
+      }
+      break;
+    case Reg::kDp:
+      if (dst == Reg::kA) {
+        TransferDToA(regs);
+        return;
+      }
+      break;
+    default:
+      break;
+  }
+  __builtin_unreachable();
+}
+
 [[gnu::always_inline]] inline void BranchRelative16(CpuRegs& regs, uint32_t addr) {
   const int16_t displacement = static_cast<int16_t>(static_cast<uint16_t>(addr & 0xFFFFU));
   regs.PC = static_cast<uint16_t>(regs.PC + displacement);
@@ -696,41 +771,9 @@ void CPU::ExecuteInternalOp(MicroInternalOp op, [[maybe_unused]] uint8_t params)
     case MicroInternalOp::kExchangeCarryEmulation:
       ExchangeCarryEmulation(regs_);
       break;
-    case MicroInternalOp::kTransferAToX:
-      TransferAToX(regs_);
-      break;
-    case MicroInternalOp::kTransferAToY:
-      TransferAToY(regs_);
-      break;
-    case MicroInternalOp::kTransferSToX:
-      TransferSToX(regs_);
-      break;
-    case MicroInternalOp::kTransferXToA:
-      TransferXToA(regs_);
-      break;
-    case MicroInternalOp::kTransferXToS:
-      TransferXToS(regs_);
-      break;
-    case MicroInternalOp::kTransferXToY:
-      TransferXToY(regs_);
-      break;
-    case MicroInternalOp::kTransferYToA:
-      TransferYToA(regs_);
-      break;
-    case MicroInternalOp::kTransferYToX:
-      TransferYToX(regs_);
-      break;
-    case MicroInternalOp::kTransferAToD:
-      TransferAToD(regs_);
-      break;
-    case MicroInternalOp::kTransferAToS:
-      TransferAToS(regs_);
-      break;
-    case MicroInternalOp::kTransferDToA:
-      TransferDToA(regs_);
-      break;
-    case MicroInternalOp::kTransferSToA:
-      TransferSToA(regs_);
+    case MicroInternalOp::kTransferReg:
+      DispatchTransferReg(regs_, opcode_defs_internal::micro_op_params::UnpackTransferSrc(params),
+                          opcode_defs_internal::micro_op_params::UnpackTransferDst(params));
       break;
     case MicroInternalOp::kSetBranchTakenIfZero:
       timing_context_.branch_taken = regs_.P.Z;

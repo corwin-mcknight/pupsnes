@@ -94,18 +94,8 @@ enum class MicroInternalOp : uint8_t {
   kRepFromFetch,                        // P &= ~fetch_data_ (E=1 forces M,X back to 1)
   kSepFromFetch,                        // P |= fetch_data_ (E=1 forces M,X to 1)
   kExchangeCarryEmulation,              // swap C and E; on E=1 force M,X=1, XH/YH=0, SH=$01
-  kTransferAToX,                        // X = A (width per X flag); update N/Z
-  kTransferAToY,                        // Y = A (width per X flag); update N/Z
-  kTransferSToX,                        // X = SP (width per X flag); update N/Z
-  kTransferXToA,                        // A = X (width per M flag); update N/Z
-  kTransferXToS,                        // SP = X (16-bit native; SH forced to $01 when E=1)
-  kTransferXToY,                        // Y = X (width per X flag); update N/Z
-  kTransferYToA,                        // A = Y (width per M flag); update N/Z
-  kTransferYToX,                        // X = Y (width per X flag); update N/Z
-  kTransferAToD,                        // DP = C (16-bit); update N/Z
-  kTransferAToS,                        // SP = C (16-bit; E=1 forces SH=$01)
-  kTransferDToA,                        // C = DP (16-bit); update N/Z
-  kTransferSToA,                        // C = SP (16-bit); update N/Z
+  kTransferReg,                         // dst = src; width/flag semantics per (src,dst) pair; params
+                                        // packs src in [3:0] and dst in [7:4] (see micro_op_params::PackTransfer)
   kSetBranchTakenIfZero,                // branch_taken = Z (BEQ)
   kSetBranchTakenIfCarry,               // branch_taken = C (BCS)
   kSetBranchTakenIfNotCarry,            // branch_taken = !C (BCC)
