@@ -84,10 +84,8 @@ std::string_view ToString(MicroInternalOp op) {
       return "LoadYLow";
     case MicroInternalOp::kLoadYHighUpdateNz:
       return "LoadYHighUpdateNz";
-    case MicroInternalOp::kSetBranchTaken:
-      return "SetBranchTaken";
-    case MicroInternalOp::kSetBranchTakenIfNotZero:
-      return "SetBranchTakenIfNotZero";
+    case MicroInternalOp::kSetBranchTakenCond:
+      return "SetBranchTakenCond";
     case MicroInternalOp::kBranchRelative8:
       return "BranchRelative8";
     case MicroInternalOp::kSetAddrLowFromFetch:
@@ -118,20 +116,6 @@ std::string_view ToString(MicroInternalOp op) {
       return "ExchangeCarryEmulation";
     case MicroInternalOp::kTransferReg:
       return "TransferReg";
-    case MicroInternalOp::kSetBranchTakenIfZero:
-      return "SetBranchTakenIfZero";
-    case MicroInternalOp::kSetBranchTakenIfCarry:
-      return "SetBranchTakenIfCarry";
-    case MicroInternalOp::kSetBranchTakenIfNotCarry:
-      return "SetBranchTakenIfNotCarry";
-    case MicroInternalOp::kSetBranchTakenIfNegative:
-      return "SetBranchTakenIfNegative";
-    case MicroInternalOp::kSetBranchTakenIfNotNegative:
-      return "SetBranchTakenIfNotNegative";
-    case MicroInternalOp::kSetBranchTakenIfOverflow:
-      return "SetBranchTakenIfOverflow";
-    case MicroInternalOp::kSetBranchTakenIfNotOverflow:
-      return "SetBranchTakenIfNotOverflow";
     case MicroInternalOp::kBranchRelative16:
       return "BranchRelative16";
     case MicroInternalOp::kSetPcFromAddr:

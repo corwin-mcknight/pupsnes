@@ -47,6 +47,16 @@ inline constexpr Flag UnpackSetFlagFlag(uint8_t params) {
 inline constexpr bool UnpackSetFlagValue(uint8_t params) {
   return (params & 0x01U) != 0U;
 }
+
+// Branch-condition setter (kSetBranchTakenCond): bits [3:0] = BranchCond
+// (kAlways, kZ/kNotZ, kC/kNotC, kN/kNotN, kV/kNotV). Dispatch lives in
+// DispatchSetBranch in cpu.cpp.
+inline constexpr uint8_t PackBranchCond(BranchCond cond) {
+  return static_cast<uint8_t>(static_cast<uint32_t>(cond) & 0x0FU);
+}
+inline constexpr BranchCond UnpackBranchCond(uint8_t params) {
+  return static_cast<BranchCond>(params & 0x0FU);
+}
 }  // namespace micro_op_params
 
 struct CycleSlotSpec {
@@ -275,6 +285,23 @@ constexpr CycleSlotSpec SetFlag(Flag flag, bool value, TimingRuleExpr rule = Alw
       rule,
       label,
       micro_op_params::PackSetFlag(flag, value),
+  };
+}
+
+// Parameterized branch-displacement fetch. Reads the signed 8-bit displacement
+// from PBR:PC (advancing PC) and evaluates the branch condition in the same
+// cycle, setting timing_context_.branch_taken via DispatchSetBranch. Packs the
+// BranchCond into CycleSlotSpec::params for the unified kSetBranchTakenCond
+// internal op. Used by every conditional branch opcode via BranchSequence;
+// BRL has its own long-form sequence.
+constexpr CycleSlotSpec FetchPcBranchTest(BranchCond cond,
+                                          std::string_view label = "fetch displacement") {
+  return CycleSlotSpec{
+      MicroBusAction::kFetchPc,
+      MicroInternalOp::kSetBranchTakenCond,
+      Always(),
+      label,
+      micro_op_params::PackBranchCond(cond),
   };
 }
 

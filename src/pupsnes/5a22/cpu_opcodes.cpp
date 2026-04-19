@@ -64,9 +64,9 @@ constexpr CycleFragment LoadIndexYImmediate() {
       .Build();
 }
 
-constexpr CycleFragment BranchSequence(MicroInternalOp branch_test_op) {
+constexpr CycleFragment BranchSequence(BranchCond cond) {
   return Fragment()
-      .Then(FetchPc(branch_test_op, Always(), "fetch displacement"))
+      .Then(FetchPcBranchTest(cond))
       .Then(Internal(MicroInternalOp::kBranchRelative8, Condition(TimingCondition::kBranchTaken), "apply branch"))
       .Then(Internal(MicroInternalOp::kNone,
                      AllOf(Condition(TimingCondition::kEmulationMode), Condition(TimingCondition::kBranchPageCrossed)),
@@ -351,15 +351,15 @@ constexpr CycleFragment JumpAbsoluteLong() {
 
 constexpr auto MakeBranchSpecs() {
   return std::array{
-      Opcode(0x80, "BRA", "relative").Then(BranchSequence(MicroInternalOp::kSetBranchTaken)).Build(),
-      Opcode(0xD0, "BNE", "relative").Then(BranchSequence(MicroInternalOp::kSetBranchTakenIfNotZero)).Build(),
-      Opcode(0xF0, "BEQ", "relative").Then(BranchSequence(MicroInternalOp::kSetBranchTakenIfZero)).Build(),
-      Opcode(0x90, "BCC", "relative").Then(BranchSequence(MicroInternalOp::kSetBranchTakenIfNotCarry)).Build(),
-      Opcode(0xB0, "BCS", "relative").Then(BranchSequence(MicroInternalOp::kSetBranchTakenIfCarry)).Build(),
-      Opcode(0x10, "BPL", "relative").Then(BranchSequence(MicroInternalOp::kSetBranchTakenIfNotNegative)).Build(),
-      Opcode(0x30, "BMI", "relative").Then(BranchSequence(MicroInternalOp::kSetBranchTakenIfNegative)).Build(),
-      Opcode(0x50, "BVC", "relative").Then(BranchSequence(MicroInternalOp::kSetBranchTakenIfNotOverflow)).Build(),
-      Opcode(0x70, "BVS", "relative").Then(BranchSequence(MicroInternalOp::kSetBranchTakenIfOverflow)).Build(),
+      Opcode(0x80, "BRA", "relative").Then(BranchSequence(BranchCond::kAlways)).Build(),
+      Opcode(0xD0, "BNE", "relative").Then(BranchSequence(BranchCond::kNotZ)).Build(),
+      Opcode(0xF0, "BEQ", "relative").Then(BranchSequence(BranchCond::kZ)).Build(),
+      Opcode(0x90, "BCC", "relative").Then(BranchSequence(BranchCond::kNotC)).Build(),
+      Opcode(0xB0, "BCS", "relative").Then(BranchSequence(BranchCond::kC)).Build(),
+      Opcode(0x10, "BPL", "relative").Then(BranchSequence(BranchCond::kNotN)).Build(),
+      Opcode(0x30, "BMI", "relative").Then(BranchSequence(BranchCond::kN)).Build(),
+      Opcode(0x50, "BVC", "relative").Then(BranchSequence(BranchCond::kNotV)).Build(),
+      Opcode(0x70, "BVS", "relative").Then(BranchSequence(BranchCond::kV)).Build(),
       Opcode(0x82, "BRL", "relative long").Then(BranchLongSequence()).Build(),
   };
 }

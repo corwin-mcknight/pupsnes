@@ -66,8 +66,9 @@ enum class MicroInternalOp : uint8_t {
   kLoadY8UpdateNz,                      // Y_lo = fetch_data_; update N/Z using effective 8-bit index width
   kLoadYLow,                            // Y_lo = fetch_data_
   kLoadYHighUpdateNz,                   // Y_hi = fetch_data_; update N/Z using effective 16-bit index width
-  kSetBranchTaken,                      // branch_taken = true
-  kSetBranchTakenIfNotZero,             // branch_taken = !Z
+  kSetBranchTakenCond,                  // branch_taken = <BranchCond(params[3:0])>; params packs the
+                                        // BranchCond (kAlways/kZ/kNotZ/kC/kNotC/kN/kNotN/kV/kNotV)
+                                        // in bits [3:0] (see micro_op_params::PackBranchCond)
   kBranchRelative8,                     // Apply signed 8-bit branch offset stored in fetch_data_
                                         // to PC
   kSetAddrLowFromFetch,                 // addr_[7:0] = fetch_data_
@@ -88,13 +89,6 @@ enum class MicroInternalOp : uint8_t {
   kExchangeCarryEmulation,              // swap C and E; on E=1 force M,X=1, XH/YH=0, SH=$01
   kTransferReg,                         // dst = src; width/flag semantics per (src,dst) pair; params
                                         // packs src in [3:0] and dst in [7:4] (see micro_op_params::PackTransfer)
-  kSetBranchTakenIfZero,                // branch_taken = Z (BEQ)
-  kSetBranchTakenIfCarry,               // branch_taken = C (BCS)
-  kSetBranchTakenIfNotCarry,            // branch_taken = !C (BCC)
-  kSetBranchTakenIfNegative,            // branch_taken = N (BMI)
-  kSetBranchTakenIfNotNegative,         // branch_taken = !N (BPL)
-  kSetBranchTakenIfOverflow,            // branch_taken = V (BVS)
-  kSetBranchTakenIfNotOverflow,         // branch_taken = !V (BVC)
   kBranchRelative16,                    // PC += signed 16-bit from addr_[15:0]
   kSetPcFromAddr,                       // PC = addr_[15:0]
   kSetPcAndPbrFromAddr,                 // PC = addr_[15:0], PBR = addr_[23:16]

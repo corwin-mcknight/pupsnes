@@ -110,12 +110,12 @@ TEST_CASE("Opcode specs lower into expected execution and metadata entries", "[c
                 {B::kWriteAHighAddr, M::kNone, 1, "write A high"}});
 
   ExpectOpcode(0x80, "BRA", "relative", 3,
-               {{B::kFetchPc, M::kSetBranchTaken, 0, "fetch displacement"},
+               {{B::kFetchPc, M::kSetBranchTakenCond, 0, "fetch displacement"},
                 {B::kNone, M::kBranchRelative8, 1, "apply branch"},
                 {B::kNone, M::kNone, 2, "emulation page-cross penalty"}});
 
   ExpectOpcode(0xD0, "BNE", "relative", 3,
-               {{B::kFetchPc, M::kSetBranchTakenIfNotZero, 0, "fetch displacement"},
+               {{B::kFetchPc, M::kSetBranchTakenCond, 0, "fetch displacement"},
                 {B::kNone, M::kBranchRelative8, 1, "apply branch"},
                 {B::kNone, M::kNone, 2, "emulation page-cross penalty"}});
 

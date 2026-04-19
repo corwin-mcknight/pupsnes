@@ -295,6 +295,35 @@ namespace {
   __builtin_unreachable();
 }
 
+// Dispatch a parameterized branch condition to its concrete P-register test.
+// The switch collapses at compile time when the BranchCond is a compile-time
+// constant (true for every MakeBranchSpecs entry), so the hot path is a single
+// load-and-optional-negate — no runtime lookup. Returns whether the branch is
+// taken; caller assigns into timing_context_.branch_taken.
+[[gnu::always_inline]] inline bool DispatchSetBranch(const CpuRegs& regs, BranchCond cond) {
+  switch (cond) {
+    case BranchCond::kAlways:
+      return true;
+    case BranchCond::kZ:
+      return regs.P.Z;
+    case BranchCond::kNotZ:
+      return !regs.P.Z;
+    case BranchCond::kC:
+      return regs.P.C;
+    case BranchCond::kNotC:
+      return !regs.P.C;
+    case BranchCond::kN:
+      return regs.P.N;
+    case BranchCond::kNotN:
+      return !regs.P.N;
+    case BranchCond::kV:
+      return regs.P.V;
+    case BranchCond::kNotV:
+      return !regs.P.V;
+  }
+  __builtin_unreachable();
+}
+
 // When e=1 the m and x flags are forced to 1, XH/YH forced to $00, and the
 // stack is forced onto page 1 (SH = $01). Called after any op that can
 // change P or e.
@@ -747,11 +776,9 @@ void CPU::ExecuteInternalOp(MicroInternalOp op, [[maybe_unused]] uint8_t params)
     case MicroInternalOp::kLoadYHighUpdateNz:
       LoadYHighUpdateNz(regs_, fetch_data_);
       break;
-    case MicroInternalOp::kSetBranchTaken:
-      timing_context_.branch_taken = true;
-      break;
-    case MicroInternalOp::kSetBranchTakenIfNotZero:
-      timing_context_.branch_taken = !regs_.P.Z;
+    case MicroInternalOp::kSetBranchTakenCond:
+      timing_context_.branch_taken =
+          DispatchSetBranch(regs_, opcode_defs_internal::micro_op_params::UnpackBranchCond(params));
       break;
     case MicroInternalOp::kBranchRelative8:
       BranchRelative8(regs_, fetch_data_, timing_context_.branch_page_crossed);
@@ -801,27 +828,6 @@ void CPU::ExecuteInternalOp(MicroInternalOp op, [[maybe_unused]] uint8_t params)
     case MicroInternalOp::kTransferReg:
       DispatchTransferReg(regs_, opcode_defs_internal::micro_op_params::UnpackTransferSrc(params),
                           opcode_defs_internal::micro_op_params::UnpackTransferDst(params));
-      break;
-    case MicroInternalOp::kSetBranchTakenIfZero:
-      timing_context_.branch_taken = regs_.P.Z;
-      break;
-    case MicroInternalOp::kSetBranchTakenIfCarry:
-      timing_context_.branch_taken = regs_.P.C;
-      break;
-    case MicroInternalOp::kSetBranchTakenIfNotCarry:
-      timing_context_.branch_taken = !regs_.P.C;
-      break;
-    case MicroInternalOp::kSetBranchTakenIfNegative:
-      timing_context_.branch_taken = regs_.P.N;
-      break;
-    case MicroInternalOp::kSetBranchTakenIfNotNegative:
-      timing_context_.branch_taken = !regs_.P.N;
-      break;
-    case MicroInternalOp::kSetBranchTakenIfOverflow:
-      timing_context_.branch_taken = regs_.P.V;
-      break;
-    case MicroInternalOp::kSetBranchTakenIfNotOverflow:
-      timing_context_.branch_taken = !regs_.P.V;
       break;
     case MicroInternalOp::kBranchRelative16:
       BranchRelative16(regs_, addr_);

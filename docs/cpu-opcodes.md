@@ -103,7 +103,7 @@ Example: guarded branch timing reuses a shared branch fragment:
 
 ```cpp
 Opcode(0xD0, "BNE", "relative")
-    .Then(BranchSequence(MicroInternalOp::kSetBranchTakenIfNotZero))
+    .Then(BranchSequence(BranchCond::kNotZ))
     .Build(),
 ```
 
@@ -142,7 +142,7 @@ Examples:
 * `kLoadALowUpdateNz`
 * `kLoadXLowUpdateNz`
 * `kSetAddrLowFromFetch`
-* `kSetBranchTakenIfNotZero`
+* `kSetBranchTakenCond`
 * `kBranchRelative8`
 
 If a new instruction cannot be expressed with the existing internal ops, add one intentionally instead of hiding logic in ad hoc code.
