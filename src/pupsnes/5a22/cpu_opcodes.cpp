@@ -284,13 +284,13 @@ constexpr auto MakeIncDecSpecs() {
 
 constexpr auto MakeFlagSpecs() {
   return std::array{
-      Opcode(0x18, "CLC", "implied").Then(Internal(MicroInternalOp::kClearCarry, Always(), "clear C")).Build(),
-      Opcode(0x38, "SEC", "implied").Then(Internal(MicroInternalOp::kSetCarry, Always(), "set C")).Build(),
-      Opcode(0x58, "CLI", "implied").Then(Internal(MicroInternalOp::kClearInterrupt, Always(), "clear I")).Build(),
-      Opcode(0x78, "SEI", "implied").Then(Internal(MicroInternalOp::kSetInterrupt, Always(), "set I")).Build(),
-      Opcode(0xB8, "CLV", "implied").Then(Internal(MicroInternalOp::kClearOverflow, Always(), "clear V")).Build(),
-      Opcode(0xD8, "CLD", "implied").Then(Internal(MicroInternalOp::kClearDecimal, Always(), "clear D")).Build(),
-      Opcode(0xF8, "SED", "implied").Then(Internal(MicroInternalOp::kSetDecimal, Always(), "set D")).Build(),
+      Opcode(0x18, "CLC", "implied").Then(SetFlag(Flag::kC, false, Always(), "clear C")).Build(),
+      Opcode(0x38, "SEC", "implied").Then(SetFlag(Flag::kC, true, Always(), "set C")).Build(),
+      Opcode(0x58, "CLI", "implied").Then(SetFlag(Flag::kI, false, Always(), "clear I")).Build(),
+      Opcode(0x78, "SEI", "implied").Then(SetFlag(Flag::kI, true, Always(), "set I")).Build(),
+      Opcode(0xB8, "CLV", "implied").Then(SetFlag(Flag::kV, false, Always(), "clear V")).Build(),
+      Opcode(0xD8, "CLD", "implied").Then(SetFlag(Flag::kD, false, Always(), "clear D")).Build(),
+      Opcode(0xF8, "SED", "implied").Then(SetFlag(Flag::kD, true, Always(), "set D")).Build(),
       Opcode(0xFB, "XCE", "implied")
           .Then(Internal(MicroInternalOp::kExchangeCarryEmulation, Always(), "swap C and E"))
           .Build(),

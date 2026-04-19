@@ -35,6 +35,18 @@ inline constexpr Reg UnpackIncDecReg(uint8_t params) {
 inline constexpr bool UnpackIncDecDecrement(uint8_t params) {
   return (params & 0x01U) != 0U;
 }
+
+// Flag set/clear (kSetFlag): bit 0 = value (1 = set, 0 = clear), bits [4:1] = Flag.
+// Only C, D, I, V are used by flag-op opcodes; other Flag values are unused.
+inline constexpr uint8_t PackSetFlag(Flag flag, bool value) {
+  return static_cast<uint8_t>((value ? 1U : 0U) | (static_cast<uint32_t>(flag) << 1U));
+}
+inline constexpr Flag UnpackSetFlagFlag(uint8_t params) {
+  return static_cast<Flag>((params >> 1U) & 0x0FU);
+}
+inline constexpr bool UnpackSetFlagValue(uint8_t params) {
+  return (params & 0x01U) != 0U;
+}
 }  // namespace micro_op_params
 
 struct CycleSlotSpec {
@@ -248,6 +260,21 @@ constexpr CycleSlotSpec IncDecReg(Reg reg, bool decrement, TimingRuleExpr rule =
       rule,
       label,
       micro_op_params::PackIncDec(reg, decrement),
+  };
+}
+
+// Parameterized flag set/clear. Packs (flag, value) into CycleSlotSpec::params
+// for the unified kSetFlag internal op. Dispatch lives in DispatchSetFlag in
+// cpu.cpp. Only C, D, I, V are emitted by real opcodes (CLC/SEC/CLI/SEI/CLV/
+// CLD/SED).
+constexpr CycleSlotSpec SetFlag(Flag flag, bool value, TimingRuleExpr rule = Always(),
+                                std::string_view label = {}) {
+  return CycleSlotSpec{
+      MicroBusAction::kNone,
+      MicroInternalOp::kSetFlag,
+      rule,
+      label,
+      micro_op_params::PackSetFlag(flag, value),
   };
 }
 

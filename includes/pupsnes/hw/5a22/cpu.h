@@ -81,13 +81,8 @@ enum class MicroInternalOp : uint8_t {
   kIncDecReg,                           // reg += 1 or reg -= 1; width/flag semantics per reg; params
                                         // packs decrement flag in bit 0 and Reg (A/X/Y) in bits [4:1]
                                         // (see micro_op_params::PackIncDec)
-  kClearCarry,                          // P.C = 0
-  kSetCarry,                            // P.C = 1
-  kClearDecimal,                        // P.D = 0
-  kSetDecimal,                          // P.D = 1
-  kClearInterrupt,                      // P.I = 0
-  kSetInterrupt,                        // P.I = 1
-  kClearOverflow,                       // P.V = 0
+  kSetFlag,                             // P.<flag> = value; params packs value in bit 0 and Flag
+                                        // (C/D/I/V only) in bits [4:1] (see micro_op_params::PackSetFlag)
   kRepFromFetch,                        // P &= ~fetch_data_ (E=1 forces M,X back to 1)
   kSepFromFetch,                        // P |= fetch_data_ (E=1 forces M,X to 1)
   kExchangeCarryEmulation,              // swap C and E; on E=1 force M,X=1, XH/YH=0, SH=$01

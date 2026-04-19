@@ -108,20 +108,8 @@ std::string_view ToString(MicroInternalOp op) {
       return "LoadDbrUpdateNz";
     case MicroInternalOp::kIncDecReg:
       return "IncDecReg";
-    case MicroInternalOp::kClearCarry:
-      return "ClearCarry";
-    case MicroInternalOp::kSetCarry:
-      return "SetCarry";
-    case MicroInternalOp::kClearDecimal:
-      return "ClearDecimal";
-    case MicroInternalOp::kSetDecimal:
-      return "SetDecimal";
-    case MicroInternalOp::kClearInterrupt:
-      return "ClearInterrupt";
-    case MicroInternalOp::kSetInterrupt:
-      return "SetInterrupt";
-    case MicroInternalOp::kClearOverflow:
-      return "ClearOverflow";
+    case MicroInternalOp::kSetFlag:
+      return "SetFlag";
     case MicroInternalOp::kRepFromFetch:
       return "RepFromFetch";
     case MicroInternalOp::kSepFromFetch:

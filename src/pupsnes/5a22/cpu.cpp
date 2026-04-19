@@ -270,6 +270,31 @@ namespace {
   __builtin_unreachable();
 }
 
+// Dispatch a parameterized flag set/clear to the concrete P-register field.
+// The switch collapses at compile time when (flag, value) are compile-time
+// constants (true for every MakeFlagSpecs entry that emits kSetFlag), so the
+// hot path is a single store — no runtime lookup. Only C/D/I/V are reachable
+// via real opcodes; any other Flag value is a builder bug.
+[[gnu::always_inline]] inline void DispatchSetFlag(CpuRegs& regs, Flag flag, bool value) {
+  switch (flag) {
+    case Flag::kC:
+      regs.P.C = value;
+      return;
+    case Flag::kD:
+      regs.P.D = value;
+      return;
+    case Flag::kI:
+      regs.P.I = value;
+      return;
+    case Flag::kV:
+      regs.P.V = value;
+      return;
+    default:
+      break;
+  }
+  __builtin_unreachable();
+}
+
 // When e=1 the m and x flags are forced to 1, XH/YH forced to $00, and the
 // stack is forced onto page 1 (SH = $01). Called after any op that can
 // change P or e.
@@ -760,26 +785,9 @@ void CPU::ExecuteInternalOp(MicroInternalOp op, [[maybe_unused]] uint8_t params)
       DispatchIncDecReg(regs_, opcode_defs_internal::micro_op_params::UnpackIncDecReg(params),
                         opcode_defs_internal::micro_op_params::UnpackIncDecDecrement(params));
       break;
-    case MicroInternalOp::kClearCarry:
-      regs_.P.C = false;
-      break;
-    case MicroInternalOp::kSetCarry:
-      regs_.P.C = true;
-      break;
-    case MicroInternalOp::kClearDecimal:
-      regs_.P.D = false;
-      break;
-    case MicroInternalOp::kSetDecimal:
-      regs_.P.D = true;
-      break;
-    case MicroInternalOp::kClearInterrupt:
-      regs_.P.I = false;
-      break;
-    case MicroInternalOp::kSetInterrupt:
-      regs_.P.I = true;
-      break;
-    case MicroInternalOp::kClearOverflow:
-      regs_.P.V = false;
+    case MicroInternalOp::kSetFlag:
+      DispatchSetFlag(regs_, opcode_defs_internal::micro_op_params::UnpackSetFlagFlag(params),
+                      opcode_defs_internal::micro_op_params::UnpackSetFlagValue(params));
       break;
     case MicroInternalOp::kRepFromFetch:
       RepFromFetch(regs_, fetch_data_);
