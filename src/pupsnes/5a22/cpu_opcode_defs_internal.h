@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <string_view>
 
+#include "pupsnes/5a22/cpu_internal.h"
 #include "pupsnes/hw/5a22/cpu.h"
 
 namespace pupsnes::opcode_defs_internal {

@@ -565,8 +565,6 @@ std::array<OpcodeMetadataView, 256> BuildPublicMetadataTable() {
 
 }  // namespace
 
-const std::array<InstructionEntry, 256> CPU::kOpcodeTable = opcode_defs_internal::kOpcodeArtifacts.execution_table;
-
 const std::array<OpcodeMetadataView, 256>& GetOpcodeMetadataTable() {
   static const std::array<OpcodeMetadataView, 256> kPublicOpcodeMetadata = BuildPublicMetadataTable();
   return kPublicOpcodeMetadata;
