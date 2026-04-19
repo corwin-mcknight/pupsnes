@@ -1243,3 +1243,672 @@ TEST_CASE("DRAM refresh does not fire before kDramRefreshStartCycle", "[cpu][ref
   REQUIRE(r.completed_cycles == kDramRefreshStartCycle);
   REQUIRE(retired == kDramRefreshStartCycle / 2);
 }
+
+TEST_CASE("CLC clears the carry flag in two cycles", "[cpu][opcode]") {
+  TestFixture f;
+  f.LoadAt(0, {0x18});
+  auto regs = f.cpu.GetRegs();
+  regs.P.C = true;
+  f.cpu.SetRegs(regs);
+
+  TickResult r = f.cpu.Tick(2);
+
+  REQUIRE(r.completed_cycles == 2);
+  REQUIRE(f.cpu.GetRegs().P.C == false);
+  REQUIRE(f.cpu.GetRegs().PC == 0x8001);
+}
+
+TEST_CASE("SEC sets the carry flag", "[cpu][opcode]") {
+  TestFixture f;
+  f.LoadAt(0, {0x38});
+  auto regs = f.cpu.GetRegs();
+  regs.P.C = false;
+  f.cpu.SetRegs(regs);
+
+  TickResult r = f.cpu.Tick(2);
+
+  REQUIRE(r.completed_cycles == 2);
+  REQUIRE(f.cpu.GetRegs().P.C == true);
+}
+
+TEST_CASE("CLI / SEI toggle the interrupt-disable flag", "[cpu][opcode]") {
+  TestFixture f;
+  f.LoadAt(0, {0x58, 0x78});
+
+  REQUIRE(f.cpu.GetRegs().P.I == true);
+  TickResult r1 = f.cpu.Tick(2);
+  REQUIRE(r1.completed_cycles == 2);
+  REQUIRE(f.cpu.GetRegs().P.I == false);
+
+  TickResult r2 = f.cpu.Tick(2);
+  REQUIRE(r2.completed_cycles == 2);
+  REQUIRE(f.cpu.GetRegs().P.I == true);
+}
+
+TEST_CASE("CLD / SED toggle the decimal flag", "[cpu][opcode]") {
+  TestFixture f;
+  f.LoadAt(0, {0xF8, 0xD8});
+
+  TickResult r1 = f.cpu.Tick(2);
+  REQUIRE(r1.completed_cycles == 2);
+  REQUIRE(f.cpu.GetRegs().P.D == true);
+
+  TickResult r2 = f.cpu.Tick(2);
+  REQUIRE(r2.completed_cycles == 2);
+  REQUIRE(f.cpu.GetRegs().P.D == false);
+}
+
+TEST_CASE("CLV clears overflow without touching other flags", "[cpu][opcode]") {
+  TestFixture f;
+  f.LoadAt(0, {0xB8});
+  auto regs = f.cpu.GetRegs();
+  regs.P.V = true;
+  regs.P.N = true;
+  regs.P.Z = true;
+  f.cpu.SetRegs(regs);
+
+  TickResult r = f.cpu.Tick(2);
+
+  REQUIRE(r.completed_cycles == 2);
+  const auto out = f.cpu.GetRegs().P;
+  REQUIRE(out.V == false);
+  REQUIRE(out.N == true);
+  REQUIRE(out.Z == true);
+}
+
+TEST_CASE("XCE swaps C and E flags and enforces emulation forcing", "[cpu][opcode]") {
+  TestFixture f;
+  // Native mode with C=1 — XCE enters emulation mode.
+  f.LoadAt(0, {0xFB});
+  auto regs = f.cpu.GetRegs();
+  regs.P.E = false;
+  regs.P.M = false;
+  regs.P.X = false;
+  regs.P.C = true;
+  regs.X = 0x1234;
+  regs.Y = 0x5678;
+  regs.SP = 0x1FF0;
+  f.cpu.SetRegs(regs);
+
+  TickResult r = f.cpu.Tick(2);
+
+  REQUIRE(r.completed_cycles == 2);
+  const auto out = f.cpu.GetRegs();
+  REQUIRE(out.P.E == true);
+  REQUIRE(out.P.C == false);
+  REQUIRE(out.P.M == true);
+  REQUIRE(out.P.X == true);
+  REQUIRE(out.X == 0x0034);
+  REQUIRE(out.Y == 0x0078);
+  REQUIRE(out.SP == 0x01F0);
+}
+
+TEST_CASE("XCE from emulation to native leaves widths as chosen by later REP/SEP", "[cpu][opcode]") {
+  TestFixture f;
+  // Default after reset is E=1, C=0. XCE -> E=0, C=1. M/X stay 1.
+  f.LoadAt(0, {0xFB});
+
+  TickResult r = f.cpu.Tick(2);
+
+  REQUIRE(r.completed_cycles == 2);
+  const auto out = f.cpu.GetRegs();
+  REQUIRE(out.P.E == false);
+  REQUIRE(out.P.C == true);
+  REQUIRE(out.P.M == true);
+  REQUIRE(out.P.X == true);
+}
+
+TEST_CASE("REP in native mode clears the specified P bits", "[cpu][opcode]") {
+  TestFixture f;
+  // REP #$30 clears M and X.
+  f.LoadAt(0, {0xC2, 0x30});
+  auto regs = f.cpu.GetRegs();
+  regs.P.E = false;
+  regs.P.M = true;
+  regs.P.X = true;
+  regs.P.C = true;
+  f.cpu.SetRegs(regs);
+
+  TickResult r = f.cpu.Tick(3);
+
+  REQUIRE(r.completed_cycles == 3);
+  const auto out = f.cpu.GetRegs().P;
+  REQUIRE(out.M == false);
+  REQUIRE(out.X == false);
+  REQUIRE(out.C == true);
+  REQUIRE(f.cpu.GetRegs().PC == 0x8002);
+}
+
+TEST_CASE("SEP in native mode sets the specified P bits", "[cpu][opcode]") {
+  TestFixture f;
+  // SEP #$21 sets M and C.
+  f.LoadAt(0, {0xE2, 0x21});
+  auto regs = f.cpu.GetRegs();
+  regs.P.E = false;
+  regs.P.M = false;
+  regs.P.X = false;
+  regs.P.C = false;
+  f.cpu.SetRegs(regs);
+
+  TickResult r = f.cpu.Tick(3);
+
+  REQUIRE(r.completed_cycles == 3);
+  const auto out = f.cpu.GetRegs().P;
+  REQUIRE(out.M == true);
+  REQUIRE(out.C == true);
+  REQUIRE(out.X == false);
+}
+
+TEST_CASE("TAX in emulation mode copies A low byte to X low and sets N/Z", "[cpu][opcode]") {
+  TestFixture f;
+  f.LoadAt(0, {0xAA});
+  auto regs = f.cpu.GetRegs();
+  regs.A = 0x12C0;
+  regs.X = 0x00FF;
+  f.cpu.SetRegs(regs);
+
+  TickResult r = f.cpu.Tick(2);
+
+  REQUIRE(r.completed_cycles == 2);
+  const auto out = f.cpu.GetRegs();
+  REQUIRE(out.X == 0x00C0);
+  REQUIRE(out.P.N == true);
+  REQUIRE(out.P.Z == false);
+}
+
+TEST_CASE("TXA 16-bit copies full 16 bits when M is clear", "[cpu][opcode]") {
+  TestFixture f;
+  f.LoadAt(0, {0x8A});
+  auto regs = f.cpu.GetRegs();
+  regs.P.E = false;
+  regs.P.M = false;
+  regs.X = 0xBEEF;
+  regs.A = 0x1234;
+  f.cpu.SetRegs(regs);
+
+  TickResult r = f.cpu.Tick(2);
+
+  REQUIRE(r.completed_cycles == 2);
+  REQUIRE(f.cpu.GetRegs().A == 0xBEEF);
+  REQUIRE(f.cpu.GetRegs().P.N == true);
+}
+
+TEST_CASE("TXS in emulation mode forces SH back to $01", "[cpu][opcode]") {
+  TestFixture f;
+  f.LoadAt(0, {0x9A});
+  auto regs = f.cpu.GetRegs();
+  regs.X = 0xBEEF;
+  f.cpu.SetRegs(regs);
+
+  TickResult r = f.cpu.Tick(2);
+
+  REQUIRE(r.completed_cycles == 2);
+  REQUIRE(f.cpu.GetRegs().SP == 0x01EF);
+}
+
+TEST_CASE("TXS in native 16-bit mode transfers the full 16 bits", "[cpu][opcode]") {
+  TestFixture f;
+  f.LoadAt(0, {0x9A});
+  auto regs = f.cpu.GetRegs();
+  regs.P.E = false;
+  regs.P.X = false;
+  regs.X = 0x1234;
+  f.cpu.SetRegs(regs);
+
+  TickResult r = f.cpu.Tick(2);
+
+  REQUIRE(r.completed_cycles == 2);
+  REQUIRE(f.cpu.GetRegs().SP == 0x1234);
+}
+
+TEST_CASE("TCD transfers the full 16-bit accumulator to DP regardless of M", "[cpu][opcode]") {
+  TestFixture f;
+  f.LoadAt(0, {0x5B});
+  auto regs = f.cpu.GetRegs();
+  // Even with M=1 (8-bit A), TCD is a 16-bit transfer.
+  regs.A = 0x8000;
+  regs.DP = 0x0000;
+  f.cpu.SetRegs(regs);
+
+  TickResult r = f.cpu.Tick(2);
+
+  REQUIRE(r.completed_cycles == 2);
+  REQUIRE(f.cpu.GetRegs().DP == 0x8000);
+  REQUIRE(f.cpu.GetRegs().P.N == true);
+  REQUIRE(f.cpu.GetRegs().P.Z == false);
+}
+
+TEST_CASE("TDC sets Z when the result is zero", "[cpu][opcode]") {
+  TestFixture f;
+  f.LoadAt(0, {0x7B});
+  auto regs = f.cpu.GetRegs();
+  regs.A = 0xFFFF;
+  regs.DP = 0x0000;
+  f.cpu.SetRegs(regs);
+
+  TickResult r = f.cpu.Tick(2);
+
+  REQUIRE(r.completed_cycles == 2);
+  REQUIRE(f.cpu.GetRegs().A == 0x0000);
+  REQUIRE(f.cpu.GetRegs().P.Z == true);
+  REQUIRE(f.cpu.GetRegs().P.N == false);
+}
+
+TEST_CASE("TCS in emulation mode forces SH back to $01", "[cpu][opcode]") {
+  TestFixture f;
+  f.LoadAt(0, {0x1B});
+  auto regs = f.cpu.GetRegs();
+  regs.A = 0xBEEF;
+  f.cpu.SetRegs(regs);
+
+  TickResult r = f.cpu.Tick(2);
+
+  REQUIRE(r.completed_cycles == 2);
+  REQUIRE(f.cpu.GetRegs().SP == 0x01EF);
+}
+
+TEST_CASE("TSC reads the full 16-bit SP into A", "[cpu][opcode]") {
+  TestFixture f;
+  f.LoadAt(0, {0x3B});
+  auto regs = f.cpu.GetRegs();
+  regs.SP = 0x01F0;
+  regs.A = 0x0000;
+  f.cpu.SetRegs(regs);
+
+  TickResult r = f.cpu.Tick(2);
+
+  REQUIRE(r.completed_cycles == 2);
+  REQUIRE(f.cpu.GetRegs().A == 0x01F0);
+  REQUIRE(f.cpu.GetRegs().P.N == false);
+  REQUIRE(f.cpu.GetRegs().P.Z == false);
+}
+
+TEST_CASE("BEQ taken when Z=1 jumps forward", "[cpu][opcode]") {
+  TestFixture f;
+  f.LoadAt(0, {0xF0, 0x02, 0xEA, 0xEA, 0xA9, 0x42});
+  auto regs = f.cpu.GetRegs();
+  regs.P.Z = true;
+  f.cpu.SetRegs(regs);
+
+  TickResult r = f.cpu.Tick(5);
+
+  REQUIRE(r.completed_cycles == 5);
+  REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x42);
+}
+
+TEST_CASE("BCS not taken when C=0 falls through", "[cpu][opcode]") {
+  TestFixture f;
+  f.LoadAt(0, {0xB0, 0x02, 0xA9, 0x11, 0xA9, 0x22});
+  auto regs = f.cpu.GetRegs();
+  regs.P.C = false;
+  f.cpu.SetRegs(regs);
+
+  TickResult r = f.cpu.Tick(4);
+
+  REQUIRE(r.completed_cycles == 4);
+  REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x11);
+}
+
+TEST_CASE("BMI taken when N=1", "[cpu][opcode]") {
+  TestFixture f;
+  f.LoadAt(0, {0x30, 0x02, 0xEA, 0xEA, 0xA9, 0x99});
+  auto regs = f.cpu.GetRegs();
+  regs.P.N = true;
+  f.cpu.SetRegs(regs);
+
+  TickResult r = f.cpu.Tick(5);
+
+  REQUIRE(r.completed_cycles == 5);
+  REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x99);
+}
+
+TEST_CASE("BVC taken when V=0", "[cpu][opcode]") {
+  TestFixture f;
+  f.LoadAt(0, {0x50, 0x02, 0xEA, 0xEA, 0xA9, 0x55});
+
+  TickResult r = f.cpu.Tick(5);
+
+  REQUIRE(r.completed_cycles == 5);
+  REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x55);
+}
+
+TEST_CASE("BRL applies signed 16-bit displacement in 4 cycles", "[cpu][opcode]") {
+  TestFixture f;
+  // BRL +0x0100 from $8000: PC_after_BRL_instr = $8003, target = $8103.
+  f.LoadAt(0, {0x82, 0x00, 0x01});
+  f.LoadAt(0x103, {0xA9, 0x77});
+
+  TickResult r = f.cpu.Tick(6);
+
+  REQUIRE(r.completed_cycles == 6);
+  REQUIRE(f.cpu.GetRegs().PC == 0x8105);
+  REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x77);
+}
+
+TEST_CASE("JMP absolute sets PC in 3 cycles", "[cpu][opcode]") {
+  TestFixture f;
+  f.LoadAt(0, {0x4C, 0x10, 0x80});
+  f.LoadAt(0x10, {0xA9, 0x33});
+
+  TickResult r = f.cpu.Tick(5);
+
+  REQUIRE(r.completed_cycles == 5);
+  REQUIRE(f.cpu.GetRegs().PC == 0x8012);
+  REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x33);
+}
+
+TEST_CASE("ADC immediate 8-bit adds with carry", "[cpu][opcode]") {
+  TestFixture f;
+  f.LoadAt(0, {0x69, 0x01});
+  auto regs = f.cpu.GetRegs();
+  regs.A = 0x0041;
+  regs.P.C = true;
+  f.cpu.SetRegs(regs);
+
+  TickResult r = f.cpu.Tick(2);
+
+  REQUIRE(r.completed_cycles == 2);
+  REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x43);
+  REQUIRE(f.cpu.GetRegs().P.C == false);
+  REQUIRE(f.cpu.GetRegs().P.Z == false);
+}
+
+TEST_CASE("ADC immediate 8-bit sets carry and overflow on wrap", "[cpu][opcode]") {
+  TestFixture f;
+  f.LoadAt(0, {0x69, 0x01});
+  auto regs = f.cpu.GetRegs();
+  regs.A = 0x007F;
+  regs.P.C = false;
+  f.cpu.SetRegs(regs);
+
+  TickResult r = f.cpu.Tick(2);
+
+  REQUIRE(r.completed_cycles == 2);
+  REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x80);
+  REQUIRE(f.cpu.GetRegs().P.V == true);
+  REQUIRE(f.cpu.GetRegs().P.N == true);
+}
+
+TEST_CASE("ADC immediate 16-bit uses 3-cycle path", "[cpu][opcode]") {
+  TestFixture f;
+  f.LoadAt(0, {0x69, 0x34, 0x12});
+  auto regs = f.cpu.GetRegs();
+  regs.P.E = false;
+  regs.P.M = false;
+  regs.A = 0x1000;
+  regs.P.C = false;
+  f.cpu.SetRegs(regs);
+
+  TickResult r = f.cpu.Tick(3);
+
+  REQUIRE(r.completed_cycles == 3);
+  REQUIRE(f.cpu.GetRegs().A == 0x2234);
+}
+
+TEST_CASE("SBC immediate 8-bit subtracts with borrow", "[cpu][opcode]") {
+  TestFixture f;
+  f.LoadAt(0, {0xE9, 0x01});
+  auto regs = f.cpu.GetRegs();
+  regs.A = 0x0005;
+  regs.P.C = true;
+  f.cpu.SetRegs(regs);
+
+  TickResult r = f.cpu.Tick(2);
+
+  REQUIRE(r.completed_cycles == 2);
+  REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x04);
+  REQUIRE(f.cpu.GetRegs().P.C == true);
+}
+
+TEST_CASE("AND immediate masks A", "[cpu][opcode]") {
+  TestFixture f;
+  f.LoadAt(0, {0x29, 0x0F});
+  auto regs = f.cpu.GetRegs();
+  regs.A = 0x00A5;
+  f.cpu.SetRegs(regs);
+
+  (void)f.cpu.Tick(2);
+
+  REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x05);
+}
+
+TEST_CASE("ORA immediate ORs A", "[cpu][opcode]") {
+  TestFixture f;
+  f.LoadAt(0, {0x09, 0xF0});
+  auto regs = f.cpu.GetRegs();
+  regs.A = 0x000F;
+  f.cpu.SetRegs(regs);
+
+  (void)f.cpu.Tick(2);
+
+  REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0xFF);
+  REQUIRE(f.cpu.GetRegs().P.N == true);
+}
+
+TEST_CASE("EOR immediate XORs A", "[cpu][opcode]") {
+  TestFixture f;
+  f.LoadAt(0, {0x49, 0xFF});
+  auto regs = f.cpu.GetRegs();
+  regs.A = 0x005A;
+  f.cpu.SetRegs(regs);
+
+  (void)f.cpu.Tick(2);
+
+  REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0xA5);
+}
+
+TEST_CASE("CMP immediate sets Z when equal and C when >=", "[cpu][opcode]") {
+  TestFixture f;
+  f.LoadAt(0, {0xC9, 0x42, 0xC9, 0x43});
+  auto regs = f.cpu.GetRegs();
+  regs.A = 0x0042;
+  f.cpu.SetRegs(regs);
+
+  (void)f.cpu.Tick(2);
+  REQUIRE(f.cpu.GetRegs().P.Z == true);
+  REQUIRE(f.cpu.GetRegs().P.C == true);
+
+  (void)f.cpu.Tick(2);
+  REQUIRE(f.cpu.GetRegs().P.Z == false);
+  REQUIRE(f.cpu.GetRegs().P.C == false);
+  REQUIRE(f.cpu.GetRegs().P.N == true);
+}
+
+TEST_CASE("CPX immediate compares X", "[cpu][opcode]") {
+  TestFixture f;
+  f.LoadAt(0, {0xE0, 0x10});
+  auto regs = f.cpu.GetRegs();
+  regs.X = 0x20;
+  f.cpu.SetRegs(regs);
+
+  (void)f.cpu.Tick(2);
+
+  REQUIRE(f.cpu.GetRegs().P.C == true);
+  REQUIRE(f.cpu.GetRegs().P.Z == false);
+}
+
+TEST_CASE("BIT immediate only affects Z", "[cpu][opcode]") {
+  TestFixture f;
+  f.LoadAt(0, {0x89, 0xF0});
+  auto regs = f.cpu.GetRegs();
+  regs.A = 0x0F;
+  regs.P.N = false;
+  regs.P.V = false;
+  f.cpu.SetRegs(regs);
+
+  (void)f.cpu.Tick(2);
+
+  REQUIRE(f.cpu.GetRegs().P.Z == true);
+  // N and V should not be touched in immediate mode per the 65C816 manual.
+  REQUIRE(f.cpu.GetRegs().P.N == false);
+  REQUIRE(f.cpu.GetRegs().P.V == false);
+}
+
+TEST_CASE("PHX pushes X low byte in emulation mode", "[cpu][opcode]") {
+  TestFixture f;
+  f.LoadAt(0, {0xDA});
+  auto regs = f.cpu.GetRegs();
+  regs.X = 0x55;
+  f.cpu.SetRegs(regs);
+
+  TickResult r = f.cpu.Tick(3);
+
+  REQUIRE(r.completed_cycles == 3);
+  REQUIRE(f.cpu.GetRegs().SP == 0x01FE);
+}
+
+TEST_CASE("PHP + PLP round-trip preserves P (respecting emulation)", "[cpu][opcode]") {
+  TestFixture f;
+  // PHP ; clear N+V+Z+C ; PLP  — should restore N=1, V=1.
+  f.LoadAt(0, {0x08, 0x18, 0xB8, 0x28});
+  auto regs = f.cpu.GetRegs();
+  regs.P.N = true;
+  regs.P.V = true;
+  regs.P.C = true;
+  f.cpu.SetRegs(regs);
+
+  // PHP (3) + CLC (2) + CLV (2) + PLP (4) = 11
+  TickResult r = f.cpu.Tick(11);
+
+  REQUIRE(r.completed_cycles == 11);
+  const auto out = f.cpu.GetRegs().P;
+  REQUIRE(out.N == true);
+  REQUIRE(out.V == true);
+  REQUIRE(out.C == true);
+}
+
+TEST_CASE("PHD + PLD round-trip restores DP with N/Z flags", "[cpu][opcode]") {
+  TestFixture f;
+  // PHD ; set DP=0 ; PLD
+  f.LoadAt(0, {0x0B, 0x2B});
+  auto regs = f.cpu.GetRegs();
+  regs.DP = 0xBEEF;
+  f.cpu.SetRegs(regs);
+
+  TickResult r1 = f.cpu.Tick(4);  // PHD
+  REQUIRE(r1.completed_cycles == 4);
+
+  regs = f.cpu.GetRegs();
+  regs.DP = 0;
+  f.cpu.SetRegs(regs);
+
+  TickResult r2 = f.cpu.Tick(5);  // PLD
+  REQUIRE(r2.completed_cycles == 5);
+  REQUIRE(f.cpu.GetRegs().DP == 0xBEEF);
+  REQUIRE(f.cpu.GetRegs().P.N == true);
+  REQUIRE(f.cpu.GetRegs().P.Z == false);
+}
+
+TEST_CASE("PHK pushes PBR to the stack", "[cpu][opcode]") {
+  TestFixture f;
+  f.LoadAt(0, {0x4B});
+
+  TickResult r = f.cpu.Tick(3);
+
+  REQUIRE(r.completed_cycles == 3);
+  REQUIRE(f.cpu.GetRegs().SP == 0x01FE);
+}
+
+TEST_CASE("PEA pushes a 16-bit immediate (high byte first)", "[cpu][opcode]") {
+  TestFixture f;
+  // PEA $1234 — pushes $12 then $34.
+  f.LoadAt(0, {0xF4, 0x34, 0x12});
+
+  TickResult r = f.cpu.Tick(5);
+
+  REQUIRE(r.completed_cycles == 5);
+  REQUIRE(f.cpu.GetRegs().SP == 0x01FD);
+}
+
+TEST_CASE("PLA 16-bit pulls both bytes when M is clear", "[cpu][opcode]") {
+  TestFixture f;
+  // PHA $ABCD ; reset A ; PLA
+  f.LoadAt(0, {0x48, 0x68});
+  auto regs = f.cpu.GetRegs();
+  regs.P.E = false;
+  regs.P.M = false;
+  regs.A = 0xABCD;
+  f.cpu.SetRegs(regs);
+
+  // PHA 16-bit = 4 cycles, PLA 16-bit = 5 cycles = 9 total.
+  TickResult r = f.cpu.Tick(9);
+
+  REQUIRE(r.completed_cycles == 9);
+  REQUIRE(f.cpu.GetRegs().A == 0xABCD);
+}
+
+TEST_CASE("JSR + RTS round trip", "[cpu][opcode]") {
+  TestFixture f;
+  // $8000: JSR $8010 ; $8003: LDA #$42 ; $8010: LDA #$77 ; RTS
+  f.LoadAt(0x00, {0x20, 0x10, 0x80, 0xA9, 0x42});
+  f.LoadAt(0x10, {0xA9, 0x77, 0x60});
+
+  // JSR (6) + LDA (2) + RTS (6) + LDA (2) = 16 cycles
+  TickResult r = f.cpu.Tick(16);
+
+  REQUIRE(r.completed_cycles == 16);
+  // After RTS returns, LDA #$42 has run.
+  REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x42);
+  // SP restored back to $01FF.
+  REQUIRE(f.cpu.GetRegs().SP == 0x01FF);
+}
+
+TEST_CASE("JSL + RTL round trip crosses banks and restores PBR", "[cpu][opcode]") {
+  TestFixture f;
+  // Map page $01:$80 so the JSL target exists. Reuse the same ROM but pretend
+  // bank 1 for the test by using absolute long within bank 0.
+  // $8000: JSL $00:$8010 ; $8004: LDA #$11 ; $8010: LDA #$22 ; RTL
+  f.LoadAt(0x00, {0x22, 0x10, 0x80, 0x00, 0xA9, 0x11});
+  f.LoadAt(0x10, {0xA9, 0x22, 0x6B});
+
+  // JSL (8) + LDA (2) + RTL (6) + LDA (2) = 18 cycles
+  TickResult r = f.cpu.Tick(18);
+
+  REQUIRE(r.completed_cycles == 18);
+  REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x11);
+  REQUIRE(f.cpu.GetRegs().PBR == 0x00);
+  REQUIRE(f.cpu.GetRegs().SP == 0x01FF);
+}
+
+TEST_CASE("JMP absolute long sets PC and PBR", "[cpu][opcode]") {
+  TestFixture f;
+  // JMP $00:8020 — within-bank long jump.
+  f.LoadAt(0, {0x5C, 0x20, 0x80, 0x00});
+  f.LoadAt(0x20, {0xA9, 0xAB});
+
+  TickResult r = f.cpu.Tick(6);
+
+  REQUIRE(r.completed_cycles == 6);
+  REQUIRE(f.cpu.GetRegs().PC == 0x8022);
+  REQUIRE(f.cpu.GetRegs().PBR == 0x00);
+  REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0xAB);
+}
+
+TEST_CASE("TXY transfers X to Y using the index width", "[cpu][opcode]") {
+  TestFixture f;
+  f.LoadAt(0, {0x9B});
+  auto regs = f.cpu.GetRegs();
+  regs.P.E = false;
+  regs.P.X = false;
+  regs.X = 0x4321;
+  regs.Y = 0xAAAA;
+  f.cpu.SetRegs(regs);
+
+  TickResult r = f.cpu.Tick(2);
+
+  REQUIRE(r.completed_cycles == 2);
+  REQUIRE(f.cpu.GetRegs().Y == 0x4321);
+}
+
+TEST_CASE("REP in emulation mode cannot clear M or X", "[cpu][opcode]") {
+  TestFixture f;
+  // E=1; REP #$30 should NOT clear M/X because emulation forces them to 1.
+  f.LoadAt(0, {0xC2, 0x30});
+
+  TickResult r = f.cpu.Tick(3);
+
+  REQUIRE(r.completed_cycles == 3);
+  const auto out = f.cpu.GetRegs().P;
+  REQUIRE(out.M == true);
+  REQUIRE(out.X == true);
+}

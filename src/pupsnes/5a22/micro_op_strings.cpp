@@ -30,8 +30,34 @@ std::string_view ToString(MicroBusAction action) {
       return "PushAHigh";
     case MicroBusAction::kPushDbr:
       return "PushDbr";
+    case MicroBusAction::kPushPch:
+      return "PushPch";
+    case MicroBusAction::kPushPcl:
+      return "PushPcl";
+    case MicroBusAction::kPushPbr:
+      return "PushPbr";
+    case MicroBusAction::kPushP:
+      return "PushP";
+    case MicroBusAction::kPushX8:
+      return "PushX8";
+    case MicroBusAction::kPushXHigh:
+      return "PushXHigh";
+    case MicroBusAction::kPushY8:
+      return "PushY8";
+    case MicroBusAction::kPushYHigh:
+      return "PushYHigh";
+    case MicroBusAction::kPushDpLow:
+      return "PushDpLow";
+    case MicroBusAction::kPushDpHigh:
+      return "PushDpHigh";
+    case MicroBusAction::kPushAddrLow:
+      return "PushAddrLow";
+    case MicroBusAction::kPushAddrHigh:
+      return "PushAddrHigh";
     case MicroBusAction::kPullStack:
       return "PullStack";
+    case MicroBusAction::kPreIncPullStack:
+      return "PreIncPullStack";
   }
   return "?";
 }
@@ -92,6 +118,130 @@ std::string_view ToString(MicroInternalOp op) {
       return "IncY";
     case MicroInternalOp::kDecY:
       return "DecY";
+    case MicroInternalOp::kClearCarry:
+      return "ClearCarry";
+    case MicroInternalOp::kSetCarry:
+      return "SetCarry";
+    case MicroInternalOp::kClearDecimal:
+      return "ClearDecimal";
+    case MicroInternalOp::kSetDecimal:
+      return "SetDecimal";
+    case MicroInternalOp::kClearInterrupt:
+      return "ClearInterrupt";
+    case MicroInternalOp::kSetInterrupt:
+      return "SetInterrupt";
+    case MicroInternalOp::kClearOverflow:
+      return "ClearOverflow";
+    case MicroInternalOp::kRepFromFetch:
+      return "RepFromFetch";
+    case MicroInternalOp::kSepFromFetch:
+      return "SepFromFetch";
+    case MicroInternalOp::kExchangeCarryEmulation:
+      return "ExchangeCarryEmulation";
+    case MicroInternalOp::kTransferAToX:
+      return "TransferAToX";
+    case MicroInternalOp::kTransferAToY:
+      return "TransferAToY";
+    case MicroInternalOp::kTransferSToX:
+      return "TransferSToX";
+    case MicroInternalOp::kTransferXToA:
+      return "TransferXToA";
+    case MicroInternalOp::kTransferXToS:
+      return "TransferXToS";
+    case MicroInternalOp::kTransferXToY:
+      return "TransferXToY";
+    case MicroInternalOp::kTransferYToA:
+      return "TransferYToA";
+    case MicroInternalOp::kTransferYToX:
+      return "TransferYToX";
+    case MicroInternalOp::kTransferAToD:
+      return "TransferAToD";
+    case MicroInternalOp::kTransferAToS:
+      return "TransferAToS";
+    case MicroInternalOp::kTransferDToA:
+      return "TransferDToA";
+    case MicroInternalOp::kTransferSToA:
+      return "TransferSToA";
+    case MicroInternalOp::kSetBranchTakenIfZero:
+      return "SetBranchTakenIfZero";
+    case MicroInternalOp::kSetBranchTakenIfCarry:
+      return "SetBranchTakenIfCarry";
+    case MicroInternalOp::kSetBranchTakenIfNotCarry:
+      return "SetBranchTakenIfNotCarry";
+    case MicroInternalOp::kSetBranchTakenIfNegative:
+      return "SetBranchTakenIfNegative";
+    case MicroInternalOp::kSetBranchTakenIfNotNegative:
+      return "SetBranchTakenIfNotNegative";
+    case MicroInternalOp::kSetBranchTakenIfOverflow:
+      return "SetBranchTakenIfOverflow";
+    case MicroInternalOp::kSetBranchTakenIfNotOverflow:
+      return "SetBranchTakenIfNotOverflow";
+    case MicroInternalOp::kBranchRelative16:
+      return "BranchRelative16";
+    case MicroInternalOp::kSetPcFromAddr:
+      return "SetPcFromAddr";
+    case MicroInternalOp::kSetPcAndPbrFromAddr:
+      return "SetPcAndPbrFromAddr";
+    case MicroInternalOp::kSetAddrHighFromFetchAndSetPc:
+      return "SetAddrHighFromFetchAndSetPc";
+    case MicroInternalOp::kSetAddrBankFromFetchAndSetPcAndPbr:
+      return "SetAddrBankFromFetchAndSetPcAndPbr";
+    case MicroInternalOp::kDecrementPc:
+      return "DecrementPc";
+    case MicroInternalOp::kIncrementPc:
+      return "IncrementPc";
+    case MicroInternalOp::kSetPclFromFetch:
+      return "SetPclFromFetch";
+    case MicroInternalOp::kSetPchFromFetch:
+      return "SetPchFromFetch";
+    case MicroInternalOp::kSetPbrFromFetch:
+      return "SetPbrFromFetch";
+    case MicroInternalOp::kLoadPFromFetch:
+      return "LoadPFromFetch";
+    case MicroInternalOp::kLoadDpLowFromFetch:
+      return "LoadDpLowFromFetch";
+    case MicroInternalOp::kLoadDpHighFromFetchUpdateNz:
+      return "LoadDpHighFromFetchUpdateNz";
+    case MicroInternalOp::kLoadXHighFromFetchUpdateNz:
+      return "LoadXHighFromFetchUpdateNz";
+    case MicroInternalOp::kLoadYHighFromFetchUpdateNz:
+      return "LoadYHighFromFetchUpdateNz";
+    case MicroInternalOp::kAluAdc8FromFetch:
+      return "AluAdc8FromFetch";
+    case MicroInternalOp::kAluSbc8FromFetch:
+      return "AluSbc8FromFetch";
+    case MicroInternalOp::kAluAnd8FromFetch:
+      return "AluAnd8FromFetch";
+    case MicroInternalOp::kAluOra8FromFetch:
+      return "AluOra8FromFetch";
+    case MicroInternalOp::kAluEor8FromFetch:
+      return "AluEor8FromFetch";
+    case MicroInternalOp::kAluCmp8FromFetch:
+      return "AluCmp8FromFetch";
+    case MicroInternalOp::kAluCpx8FromFetch:
+      return "AluCpx8FromFetch";
+    case MicroInternalOp::kAluCpy8FromFetch:
+      return "AluCpy8FromFetch";
+    case MicroInternalOp::kAluBit8ImmFromFetch:
+      return "AluBit8ImmFromFetch";
+    case MicroInternalOp::kAluAdc16FromFetch:
+      return "AluAdc16FromFetch";
+    case MicroInternalOp::kAluSbc16FromFetch:
+      return "AluSbc16FromFetch";
+    case MicroInternalOp::kAluAnd16FromFetch:
+      return "AluAnd16FromFetch";
+    case MicroInternalOp::kAluOra16FromFetch:
+      return "AluOra16FromFetch";
+    case MicroInternalOp::kAluEor16FromFetch:
+      return "AluEor16FromFetch";
+    case MicroInternalOp::kAluCmp16FromFetch:
+      return "AluCmp16FromFetch";
+    case MicroInternalOp::kAluCpx16FromFetch:
+      return "AluCpx16FromFetch";
+    case MicroInternalOp::kAluCpy16FromFetch:
+      return "AluCpy16FromFetch";
+    case MicroInternalOp::kAluBit16ImmFromFetch:
+      return "AluBit16ImmFromFetch";
   }
   return "?";
 }

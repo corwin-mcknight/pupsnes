@@ -1,0 +1,54 @@
+rom_name = "flag_ops_smoke"
+title = "CLC/SEC/CLI/SEI/CLD/SED/CLV/REP/SEP/XCE Smoke"
+purpose = "Drive XCE, REP, and SEP to switch between emulation and native mode and confirm that M/X width changes take effect (16-bit LDA/STA/LDX/STX), then narrow back on return to emulation."
+why_expected_to_fail = "This ROM previously failed before XCE, REP, SEP, CLC, and SEC were implemented -- without XCE the CPU could not leave emulation mode, so M and X could not clear and 16-bit stores would write wrong byte counts."
+cycle_budget = 96
+expected_current_status = "pass"
+
+[goal]
+name = "parks-at-loop-label"
+description = "After all flag transitions and stores, PC should settle at the BRA loop at 0x8022."
+kind = "cpu_pc"
+expected_value = 0x8022
+
+[goal]
+name = "rep-lda16-low-byte"
+description = "REP cleared M, so LDA takes 16 bits and STA writes the low byte 0x34 to 7E:0000."
+kind = "wram_byte"
+address = 0x0000
+expected_value = 0x34
+
+[goal]
+name = "rep-lda16-high-byte"
+description = "The 16-bit STA after REP also writes the high byte 0x12 to 7E:0001."
+kind = "wram_byte"
+address = 0x0001
+expected_value = 0x12
+
+[goal]
+name = "rep-ldx16-low-byte"
+description = "REP cleared X, so LDX takes 16 bits and STX writes the low byte 0xCD to 7E:0002."
+kind = "wram_byte"
+address = 0x0002
+expected_value = 0xCD
+
+[goal]
+name = "rep-ldx16-high-byte"
+description = "The 16-bit STX after REP also writes the high byte 0xAB to 7E:0003."
+kind = "wram_byte"
+address = 0x0003
+expected_value = 0xAB
+
+[goal]
+name = "sep-narrows-accumulator"
+description = "SEP set M, so the subsequent LDA and STA write only the low byte 0x99 to 7E:0004."
+kind = "wram_byte"
+address = 0x0004
+expected_value = 0x99
+
+[goal]
+name = "xce-back-to-emulation-still-stores"
+description = "SEC plus XCE lands back in emulation; LDA and STA still write 0x77 to 7E:0005."
+kind = "wram_byte"
+address = 0x0005
+expected_value = 0x77

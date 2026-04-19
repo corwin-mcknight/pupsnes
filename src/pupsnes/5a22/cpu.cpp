@@ -263,7 +263,41 @@ TickResult CPU::PerformBusAction(MicroBusAction action, TimeMasterDeltaT cycle_t
       return BusWrite(StackAddr(), static_cast<uint8_t>(regs_.A >> 8U), cycle_time);
     case MicroBusAction::kPushDbr:
       return BusWrite(StackAddr(), regs_.DBR, cycle_time);
+    case MicroBusAction::kPushPch:
+      return BusWrite(StackAddr(), static_cast<uint8_t>(regs_.PC >> 8U), cycle_time);
+    case MicroBusAction::kPushPcl:
+      return BusWrite(StackAddr(), static_cast<uint8_t>(regs_.PC), cycle_time);
+    case MicroBusAction::kPushPbr:
+      return BusWrite(StackAddr(), regs_.PBR, cycle_time);
+    case MicroBusAction::kPushP:
+      return BusWrite(StackAddr(), regs_.P.ToByte(), cycle_time);
+    case MicroBusAction::kPushX8:
+      return BusWrite(StackAddr(), static_cast<uint8_t>(regs_.X), cycle_time);
+    case MicroBusAction::kPushXHigh:
+      return BusWrite(StackAddr(), static_cast<uint8_t>(regs_.X >> 8U), cycle_time);
+    case MicroBusAction::kPushY8:
+      return BusWrite(StackAddr(), static_cast<uint8_t>(regs_.Y), cycle_time);
+    case MicroBusAction::kPushYHigh:
+      return BusWrite(StackAddr(), static_cast<uint8_t>(regs_.Y >> 8U), cycle_time);
+    case MicroBusAction::kPushDpLow:
+      return BusWrite(StackAddr(), static_cast<uint8_t>(regs_.DP), cycle_time);
+    case MicroBusAction::kPushDpHigh:
+      return BusWrite(StackAddr(), static_cast<uint8_t>(regs_.DP >> 8U), cycle_time);
+    case MicroBusAction::kPushAddrLow:
+      return BusWrite(StackAddr(), static_cast<uint8_t>(addr_ & 0xFFU), cycle_time);
+    case MicroBusAction::kPushAddrHigh:
+      return BusWrite(StackAddr(), static_cast<uint8_t>((addr_ >> 8U) & 0xFFU), cycle_time);
     case MicroBusAction::kPullStack:
+      return BusRead(StackAddr(), cycle_time);
+    case MicroBusAction::kPreIncPullStack:
+      // Stack pulls: the SP must point at the top of the stack before reading.
+      // Increment first, then read.
+      if (regs_.P.E) {
+        const uint8_t sp_lo = static_cast<uint8_t>(static_cast<uint8_t>(regs_.SP) + 1U);
+        regs_.SP = static_cast<uint16_t>(0x0100U | sp_lo);
+      } else {
+        regs_.SP = static_cast<uint16_t>(regs_.SP + 1U);
+      }
       return BusRead(StackAddr(), cycle_time);
   }
   return TickResult{0, TickStopReason::kContinue};

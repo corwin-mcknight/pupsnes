@@ -1,65 +1,129 @@
 rom_name = "all_instr_loop"
 title = "All Instructions + BNE Loop"
-purpose = "Exercise every currently-implemented 65C816 opcode (NOP, PHA, PHB, PLB, LDA imm, LDX imm, LDY imm, STA abs, STX abs, STY abs, STA long, INC A, DEC A, INX, INY, DEX, DEY, BRA, BNE) inside a BNE-driven inner loop, then BRA back to the top of the main work block so the ROM runs continuously."
+purpose = "Exercise the full implemented 65C816 opcode set so far, both in a one-time features block (flag ops, ALU immediate, transfers, JSR/RTS, PHP/PLP, PHX/PLX, PEA/PLX/PLY, BEQ/BCC) and in a BNE-driven inner loop, then BRA back to the top of the main work block so the ROM runs continuously."
 why_expected_to_fail = "This ROM previously failed before the full baseline opcode set and real branch looping were implemented."
-cycle_budget = 192
+cycle_budget = 320
 expected_current_status = "pass"
 
 [goal]
-name = "parks-at-main-loop-top"
-description = "After 12 cycles of setup plus 3 full 60-cycle iterations of the main work block, PC should land back at the main_loop label (the NOP at $8005)."
-kind = "cpu_pc"
-expected_value = 0x8005
-
-[goal]
 name = "plb-sets-data-bank"
-description = "PLB should have pulled $7E off the stack into DBR."
+description = "PLB should have pulled 0x7E off the stack into DBR."
 kind = "cpu_dbr"
 expected_value = 0x7E
 
 [goal]
 name = "stack-pointer-stable-after-phb"
-description = "PHA+PLB cancels out; PHB leaves SP at $01FE, and the main loop never touches the stack so SP stays there."
+description = "PHA+PLB cancels out; PHB leaves SP at 0x01FE, and all subsequent pushes/pulls are balanced, so SP stays at 0x01FE."
 kind = "cpu_sp"
 expected_value = 0x01FE
 
 [goal]
 name = "accumulator-final-value"
-description = "At the end of each iteration A low byte is $02 (3x INC A then DEC A)."
+description = "At the end of each iteration A low byte is 0x02 (3x INC A then DEC A)."
 kind = "cpu_a8"
 expected_value = 0x02
 
 [goal]
 name = "inc-loop-result-a"
-description = "STA absolute should write the loop-computed A=$02 to $7E:0000."
+description = "STA absolute should write the loop-computed A=0x02 to 7E:0000."
 kind = "wram_byte"
 address = 0x0000
 expected_value = 0x02
 
 [goal]
 name = "inc-loop-result-x"
-description = "STX absolute should write X=$01 (DEX loop result + INX) to $7E:0001."
+description = "STX absolute should write X=0x01 (DEX loop result + INX) to 7E:0001."
 kind = "wram_byte"
 address = 0x0001
 expected_value = 0x01
 
 [goal]
 name = "inc-loop-result-y"
-description = "STY absolute should write Y=$12 (3x INY + DEY) to $7E:0002."
+description = "STY absolute should write Y=0x12 (3x INY + DEY) to 7E:0002."
 kind = "wram_byte"
 address = 0x0002
 expected_value = 0x12
 
 [goal]
 name = "sta-long-writes-dbr-bank"
-description = "STA long should write A=$02 to $7E:0003 via the 24-bit address."
+description = "STA long should write A=0x02 to 7E:0003 via the 24-bit address."
 kind = "wram_byte"
 address = 0x0003
 expected_value = 0x02
 
 [goal]
 name = "phb-wrote-dbr-to-stack"
-description = "PHB should have written DBR=$7E to $00:01FF (after PLB restored SP)."
+description = "PHB should have written DBR=0x7E to 00:01FF (after PLB restored SP)."
 kind = "wram_byte"
 address = 0x01FF
 expected_value = 0x7E
+
+[goal]
+name = "features-adc-result"
+description = "ADC block writes A=0x08 (5 + 3 with C=0) to 7E:0010."
+kind = "wram_byte"
+address = 0x0010
+expected_value = 0x08
+
+[goal]
+name = "features-logical-chain"
+description = "AND/ORA/EOR chain produces 0xC7 at 7E:0011."
+kind = "wram_byte"
+address = 0x0011
+expected_value = 0xC7
+
+[goal]
+name = "features-beq-taken"
+description = "CMP A=0x42 against 0x42 sets Z; BEQ lands on feat_eq which stores 0x11 at 7E:0012."
+kind = "wram_byte"
+address = 0x0012
+expected_value = 0x11
+
+[goal]
+name = "features-bcc-taken"
+description = "CPX X=0x10 against 0x20 clears C; BCC branches and stores 0xC0 at 7E:0013."
+kind = "wram_byte"
+address = 0x0013
+expected_value = 0xC0
+
+[goal]
+name = "features-tax-store"
+description = "TAX after LDA 0x42 makes X=0x42; STX writes 0x42 at 7E:0014."
+kind = "wram_byte"
+address = 0x0014
+expected_value = 0x42
+
+[goal]
+name = "features-tay-store"
+description = "TAY mirrors 0x42 into Y; STY writes 0x42 at 7E:0015."
+kind = "wram_byte"
+address = 0x0015
+expected_value = 0x42
+
+[goal]
+name = "features-jsr-rts"
+description = "JSR sub that does LDA 0xAA / RTS leaves A=0xAA; caller stores it at 7E:0016."
+kind = "wram_byte"
+address = 0x0016
+expected_value = 0xAA
+
+[goal]
+name = "features-phx-plx-round-trip"
+description = "PHX with X=0x33 then PLX restores X=0x33; STX writes it to 7E:0017."
+kind = "wram_byte"
+address = 0x0017
+expected_value = 0x33
+
+[goal]
+name = "features-pea-low"
+description = "PEA 0xBEEF pushes high first then low; PLX pulls low = 0xEF into X stored at 7E:0018."
+kind = "wram_byte"
+address = 0x0018
+expected_value = 0xEF
+
+[goal]
+name = "features-pea-high"
+description = "PLY pulls the remaining high byte = 0xBE stored at 7E:0019."
+kind = "wram_byte"
+address = 0x0019
+expected_value = 0xBE

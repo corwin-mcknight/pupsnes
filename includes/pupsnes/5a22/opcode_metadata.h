@@ -16,6 +16,8 @@ enum class OpcodeAddressingMode : uint8_t {
   kAbsolute = 4,
   kAbsoluteLong = 5,
   kRelative8 = 6,
+  kImmediateByte = 7,
+  kRelative16 = 8,
 };
 
 enum class OpcodeImplementationStatus : uint8_t {

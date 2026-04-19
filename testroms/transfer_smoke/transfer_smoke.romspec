@@ -1,0 +1,124 @@
+rom_name = "transfer_smoke"
+title = "TAX/TAY/TSX/TXA/TXS/TXY/TYA/TYX/TCD/TCS/TDC/TSC"
+purpose = "Exercise every 65C816 register transfer in 16-bit native mode, verify the target registers receive the source value, and confirm TXS/TCS behavior plus emulation-mode re-entry."
+why_expected_to_fail = "This ROM previously failed before any register-transfer opcodes were implemented -- the first TAX after the native-mode transition would have faulted."
+cycle_budget = 200
+expected_current_status = "pass"
+
+[goal]
+name = "tax-copies-a-low-byte"
+description = "TAX after LDA 0x1234 and STX writes the low byte 0x34 to 7E:0000."
+kind = "wram_byte"
+address = 0x0000
+expected_value = 0x34
+
+[goal]
+name = "tax-copies-a-high-byte"
+description = "TAX is a 16-bit transfer, so STX writes the high byte 0x12 to 7E:0001."
+kind = "wram_byte"
+address = 0x0001
+expected_value = 0x12
+
+[goal]
+name = "tay-copies-a-low-byte"
+description = "TAY after LDA 0x1234 and STY writes the low byte 0x34 to 7E:0002."
+kind = "wram_byte"
+address = 0x0002
+expected_value = 0x34
+
+[goal]
+name = "tay-copies-a-high-byte"
+description = "TAY is a 16-bit transfer, so STY writes the high byte 0x12 to 7E:0003."
+kind = "wram_byte"
+address = 0x0003
+expected_value = 0x12
+
+[goal]
+name = "txy-copies-x-low-byte"
+description = "TAX then TXY with A=0xBEEF places low byte 0xEF at 7E:0004."
+kind = "wram_byte"
+address = 0x0004
+expected_value = 0xEF
+
+[goal]
+name = "txy-copies-x-high-byte"
+description = "TAX then TXY with A=0xBEEF places high byte 0xBE at 7E:0005."
+kind = "wram_byte"
+address = 0x0005
+expected_value = 0xBE
+
+[goal]
+name = "txa-low-byte"
+description = "TXA with X=0xCAFE copies low byte 0xFE into A; STA writes it to 7E:0006."
+kind = "wram_byte"
+address = 0x0006
+expected_value = 0xFE
+
+[goal]
+name = "txa-high-byte"
+description = "TXA with X=0xCAFE copies high byte 0xCA into A; STA writes it to 7E:0007."
+kind = "wram_byte"
+address = 0x0007
+expected_value = 0xCA
+
+[goal]
+name = "tya-low-byte"
+description = "TYA with Y=0xABCD copies low byte 0xCD into A; STA writes it to 7E:0008."
+kind = "wram_byte"
+address = 0x0008
+expected_value = 0xCD
+
+[goal]
+name = "tya-high-byte"
+description = "TYA with Y=0xABCD copies high byte 0xAB into A; STA writes it to 7E:0009."
+kind = "wram_byte"
+address = 0x0009
+expected_value = 0xAB
+
+[goal]
+name = "tcd-then-tdc-low-byte"
+description = "TCD stores 0x5678 into DP and TDC reads it back; STA writes low byte 0x78 to 7E:000A."
+kind = "wram_byte"
+address = 0x000A
+expected_value = 0x78
+
+[goal]
+name = "tcd-then-tdc-high-byte"
+description = "TDC round-trip writes high byte 0x56 to 7E:000B."
+kind = "wram_byte"
+address = 0x000B
+expected_value = 0x56
+
+[goal]
+name = "tcs-tsx-low-byte"
+description = "TCS then TSX with A=0x1FF0 puts low byte 0xF0 at 7E:000C."
+kind = "wram_byte"
+address = 0x000C
+expected_value = 0xF0
+
+[goal]
+name = "tcs-tsx-high-byte"
+description = "TCS then TSX with A=0x1FF0 puts high byte 0x1F at 7E:000D; native-mode TCS transfers both bytes."
+kind = "wram_byte"
+address = 0x000D
+expected_value = 0x1F
+
+[goal]
+name = "tsc-low-byte"
+description = "TSC reads the native-mode SP 0x1FF0 into A; STA writes low byte 0xF0 to 7E:000E."
+kind = "wram_byte"
+address = 0x000E
+expected_value = 0xF0
+
+[goal]
+name = "tsc-high-byte"
+description = "TSC reads the native-mode SP 0x1FF0 into A; STA writes high byte 0x1F to 7E:000F."
+kind = "wram_byte"
+address = 0x000F
+expected_value = 0x1F
+
+[goal]
+name = "final-sp-after-emulation-forcing"
+description = "Final TCS loaded 0x01FF, and the XCE back into emulation forces SH=0x01 anyway, leaving SP at 0x01FF."
+kind = "cpu_sp"
+expected_value = 0x01FF

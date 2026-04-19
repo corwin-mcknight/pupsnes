@@ -1,0 +1,40 @@
+rom_name = "control_flow_smoke"
+title = "Control flow: BEQ, BCC, JSR/RTS, ALU immediates"
+purpose = "Exercise branches (BEQ, BCC), JSR/RTS round trip, and the ALU immediate set (ADC/AND/ORA/EOR/CMP/CPX) by driving a small computation whose WRAM footprint can be inspected."
+why_expected_to_fail = "This ROM previously failed before conditional branches, JSR/RTS, and the ALU immediate batch were implemented."
+cycle_budget = 100
+expected_current_status = "pass"
+
+[goal]
+name = "adc-immediate-result"
+description = "LDA 0x05 then ADC 0x03 should leave A=0x08 which gets stored to 7E:0000."
+kind = "wram_byte"
+address = 0x0000
+expected_value = 0x08
+
+[goal]
+name = "jsr-rts-returned-value"
+description = "Subroutine loads A=0xAA and RTS returns. Caller stores A at 7E:0002."
+kind = "wram_byte"
+address = 0x0002
+expected_value = 0xAA
+
+[goal]
+name = "logical-chain-result"
+description = "AND/ORA/EOR chain produces 0xBD at 7E:0003."
+kind = "wram_byte"
+address = 0x0003
+expected_value = 0xBD
+
+[goal]
+name = "cpx-less-branch-taken"
+description = "CPX 0x20 with X=0x10 sets C=0, so BCC is taken and 0xC0 lands at 7E:0004."
+kind = "wram_byte"
+address = 0x0004
+expected_value = 0xC0
+
+[goal]
+name = "sp-restored-after-jsr-rts"
+description = "JSR/RTS pair should leave SP balanced at 0x01FE (the PHA+PLB at start consumed one byte that was then restored, leaving SP at 0x01FF; JSR pushed 2 and RTS pulled 2, final SP = 0x01FF)."
+kind = "cpu_sp"
+expected_value = 0x01FF
