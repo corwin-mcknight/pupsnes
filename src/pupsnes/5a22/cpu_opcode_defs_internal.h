@@ -9,11 +9,17 @@
 
 namespace pupsnes::opcode_defs_internal {
 
+namespace micro_op_params {
+// Packing helpers for MicroOp::params. Populated in subsequent refactor
+// steps as each enum group collapses into a parameterized category.
+}  // namespace micro_op_params
+
 struct CycleSlotSpec {
   MicroBusAction bus_action = MicroBusAction::kNone;
   MicroInternalOp internal_op = MicroInternalOp::kNone;
   TimingRuleExpr rule{};
   std::string_view label{};
+  uint8_t params = 0;
 };
 
 struct CycleFragment {
@@ -422,7 +428,7 @@ constexpr InstructionEntry LowerOpcode(const OpcodeSpec& spec) {
     if (rule_index == entry.rule_count) {
       entry.rules[entry.rule_count++] = table;
     }
-    entry.ops[i] = MicroOp{slot.bus_action, slot.internal_op, rule_index};
+    entry.ops[i] = MicroOp{slot.bus_action, slot.internal_op, slot.params, rule_index};
   }
 
   return entry;

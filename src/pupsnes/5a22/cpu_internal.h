@@ -54,8 +54,10 @@ struct TimingRuleExpr {
 struct MicroOp {
   MicroBusAction bus_action = MicroBusAction::kNone;
   MicroInternalOp internal_op = MicroInternalOp::kNone;
+  uint8_t params = 0;
   uint8_t rule_index = 0;
 };
+static_assert(sizeof(MicroOp) == 4, "MicroOp must stay at 4 bytes");
 
 inline constexpr uint8_t kMaxInstructionRules = 4;
 
@@ -78,5 +80,6 @@ struct InstructionEntry {
   std::array<MicroOp, kMaxRemainingOps> ops{};
   std::array<uint32_t, kMaxInstructionRules> rules{};
 };
+static_assert(sizeof(InstructionEntry) <= 48, "InstructionEntry budget");
 
 }  // namespace pupsnes

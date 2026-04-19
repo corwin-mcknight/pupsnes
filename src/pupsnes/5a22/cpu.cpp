@@ -499,6 +499,7 @@ void CPU::DrainSkippedMicroOpsSlow() {
       rec.index = micro_op_index_;
       rec.bus_action = mop.bus_action;
       rec.internal_op = mop.internal_op;
+      rec.params = mop.params;
       rec.status = MicroOpStatus::kSkipped;
       rec.fetch_data = fetch_data_;
       rec.addr = addr_;
@@ -582,7 +583,7 @@ TickResult CPU::BusWriteSlow(SnesAddrT addr, uint8_t data, TimeMasterDeltaT cycl
   return ((truth_table >> bits) & 1U) != 0U;
 }
 
-void CPU::ExecuteInternalOp(MicroInternalOp op) {
+void CPU::ExecuteInternalOp(MicroInternalOp op, [[maybe_unused]] uint8_t params) {
   switch (op) {
     case MicroInternalOp::kNone:
       break;
@@ -915,7 +916,8 @@ CPU::StepResult CPU::FetchOpcode(TimeMasterDeltaT cycle_time) {
   return StepResult{true, TickResult{0, TickStopReason::kContinue}};
 }
 
-TickResult CPU::PerformBusAction(MicroBusAction action, TimeMasterDeltaT cycle_time) {
+TickResult CPU::PerformBusAction(MicroBusAction action, [[maybe_unused]] uint8_t params,
+                                 TimeMasterDeltaT cycle_time) {
   switch (action) {
     case MicroBusAction::kNone:
       return TickResult{0, TickStopReason::kContinue};
@@ -999,17 +1001,18 @@ CPU::StepResult CPU::ExecuteMicroOp(TimeMasterDeltaT cycle_time) {
   const MicroOp* const ops = instr->ops.data();
   const MicroOp& mop = ops[op_idx];
   const SnesAddrT pre_pc = PcAddr(regs_);
-  TickResult blocked = PerformBusAction(mop.bus_action, cycle_time);
+  TickResult blocked = PerformBusAction(mop.bus_action, mop.params, cycle_time);
   if (blocked.reason != TickStopReason::kContinue) {
     return StepResult{false, blocked};
   }
-  ExecuteInternalOp(mop.internal_op);
+  ExecuteInternalOp(mop.internal_op, mop.params);
 
   if (micro_op_recorder_ != nullptr) {
     MicroOpRecord rec;
     rec.index = micro_op_index_;
     rec.bus_action = mop.bus_action;
     rec.internal_op = mop.internal_op;
+    rec.params = mop.params;
     rec.status = MicroOpStatus::kExecuted;
     rec.fetch_data = fetch_data_;
     rec.addr = addr_;

@@ -150,6 +150,31 @@ enum class MicroInternalOp : uint8_t {
   kAluBit16ImmFromFetch,
 };
 
+// Typed enums for MicroOp::params packing. Populated in subsequent refactor
+// steps as each enum group collapses into a parameterized category. For now
+// they exist alongside MicroInternalOp; no opcode uses them yet.
+enum class Reg : uint8_t { kA, kX, kY, kSp, kDp, kDbr, kP, kPcl, kPch, kPbr };
+enum class Width : uint8_t { kByMFlag, kByXFlag, kForce8, kForce16 };
+enum class ByteSel : uint8_t { kLow, kHigh, kBank };
+enum class Flag : uint8_t { kC, kD, kI, kV, kZ, kN, kM, kX };
+enum class BranchCond : uint8_t { kAlways, kZ, kNotZ, kC, kNotC, kN, kNotN, kV, kNotV };
+enum class AluOp : uint8_t { kAdc, kSbc, kAnd, kOra, kEor, kCmp, kCpx, kCpy, kBit };
+enum class WriteSrc : uint8_t { kFetchData, kA, kX, kY };
+enum class PushSrc : uint8_t {
+  kA,
+  kX,
+  kY,
+  kPcl,
+  kPch,
+  kPbr,
+  kDbr,
+  kP,
+  kDpLow,
+  kDpHigh,
+  kAddrLow,
+  kAddrHigh,
+};
+
 // Maximum micro-ops remaining after the opcode fetch (longest 65C816
 // instruction = 7 cycles). Used by MicroOpRecord-based debugger observers;
 // the matching InstructionEntry::ops size lives in cpu_internal.h.
@@ -171,6 +196,7 @@ struct MicroOpRecord {
   uint8_t index = 0;  // 0 = opcode fetch, 1..N = remaining ops (1-based)
   MicroBusAction bus_action = MicroBusAction::kNone;
   MicroInternalOp internal_op = MicroInternalOp::kNone;
+  uint8_t params = 0;
   MicroOpStatus status = MicroOpStatus::kPending;
   uint8_t fetch_data = 0;
   uint32_t addr = 0;
@@ -307,12 +333,13 @@ class CPU : public Device {
   // Fetch/execute pipeline. All definitions in cpu.cpp.
   [[nodiscard]] StepResult FetchOpcode(TimeMasterDeltaT cycle_time);
   [[nodiscard]] StepResult ExecuteMicroOp(TimeMasterDeltaT cycle_time);
-  [[nodiscard]] TickResult PerformBusAction(MicroBusAction action, TimeMasterDeltaT cycle_time);
+  [[nodiscard]] TickResult PerformBusAction(MicroBusAction action, [[maybe_unused]] uint8_t params,
+                                            TimeMasterDeltaT cycle_time);
 
   // Internal-op dispatch. The switch and every op body live in cpu.cpp; we
   // keep only the declaration here so that adding a new MicroInternalOp
   // variant does not trigger a recompile of every TU that includes cpu.h.
-  void ExecuteInternalOp(MicroInternalOp op);
+  void ExecuteInternalOp(MicroInternalOp op, [[maybe_unused]] uint8_t params);
 
   void FinishInstruction();
   void DrainSkippedMicroOpsSlow();
