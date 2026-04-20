@@ -164,6 +164,27 @@ namespace {
   regs.P.N = (regs.DBR & 0x80U) != 0U;
 }
 
+[[gnu::always_inline]] inline void LoadDpLowFromFetch(CpuRegs& regs, uint8_t fetch) {
+  regs.DP = static_cast<uint16_t>((regs.DP & 0xFF00U) | fetch);
+}
+[[gnu::always_inline]] inline void LoadDpHighFromFetchUpdateNz(CpuRegs& regs, uint8_t fetch) {
+  const uint16_t high = static_cast<uint16_t>(static_cast<uint16_t>(fetch) << 8U);
+  regs.DP = static_cast<uint16_t>(high | (regs.DP & 0x00FFU));
+  regs.P.Z = (regs.DP == 0U);
+  regs.P.N = (regs.DP & 0x8000U) != 0U;
+}
+[[gnu::always_inline]] inline void SetPclFromFetch(CpuRegs& regs, uint8_t fetch) {
+  regs.PC = static_cast<uint16_t>((regs.PC & 0xFF00U) | fetch);
+}
+[[gnu::always_inline]] inline void SetPchFromFetch(CpuRegs& regs, uint8_t fetch) {
+  const uint16_t high = static_cast<uint16_t>(static_cast<uint16_t>(fetch) << 8U);
+  regs.PC = static_cast<uint16_t>((regs.PC & 0x00FFU) | high);
+}
+[[gnu::always_inline]] inline void SetPbrFromFetch(CpuRegs& regs, uint8_t fetch) { regs.PBR = fetch; }
+[[gnu::always_inline]] inline void LoadPFromFetch(CpuRegs& regs, uint8_t fetch) {
+  regs.P.FromByte(fetch, regs.P.E);
+}
+
 [[gnu::always_inline]] inline void IncA(CpuRegs& regs) {
   if (IsAccumulator16Bit(regs)) {
     regs.A = static_cast<uint16_t>(regs.A + 1U);
@@ -367,6 +388,30 @@ namespace {
         LoadYHighUpdateNz(regs, fetch_data);
       }
       return;
+    case Reg::kDbr:
+      LoadDbrUpdateNz(regs, fetch_data);
+      return;
+    case Reg::kDp:
+      if (byte_sel == ByteSel::kLow) {
+        LoadDpLowFromFetch(regs, fetch_data);
+      } else {
+        LoadDpHighFromFetchUpdateNz(regs, fetch_data);
+      }
+      return;
+    case Reg::kPcl:
+      SetPclFromFetch(regs, fetch_data);
+      return;
+    case Reg::kPch:
+      SetPchFromFetch(regs, fetch_data);
+      return;
+    case Reg::kPbr:
+      SetPbrFromFetch(regs, fetch_data);
+      return;
+    case Reg::kP:
+      // P's FromByte handles emulation-mode forcing of M/X back to 1.
+      // update_nz is ignored; P sets its own flags from the byte.
+      LoadPFromFetch(regs, fetch_data);
+      return;
     default:
       break;
   }
@@ -448,18 +493,6 @@ namespace {
   }
 }
 
-[[gnu::always_inline]] inline void RepFromFetch(CpuRegs& regs, uint8_t fetch) {
-  uint8_t p = regs.P.ToByte();
-  p = static_cast<uint8_t>(p & ~fetch);
-  regs.P.FromByte(p, regs.P.E);
-  ApplyEmulationForcing(regs);
-}
-[[gnu::always_inline]] inline void SepFromFetch(CpuRegs& regs, uint8_t fetch) {
-  uint8_t p = regs.P.ToByte();
-  p = static_cast<uint8_t>(p | fetch);
-  regs.P.FromByte(p, regs.P.E);
-  ApplyEmulationForcing(regs);
-}
 [[gnu::always_inline]] inline void ExchangeCarryEmulation(CpuRegs& regs) {
   const bool new_e = regs.P.C;
   const bool new_c = regs.P.E;
@@ -614,6 +647,73 @@ namespace {
 [[gnu::always_inline]] inline void SetPcAndPbrFromAddr(CpuRegs& regs, uint32_t addr) {
   regs.PC = static_cast<uint16_t>(addr & 0xFFFFU);
   regs.PBR = static_cast<uint8_t>((addr >> 16U) & 0xFFU);
+}
+
+// Dispatch a parameterized kSetAddrByteFromFetch. byte_sel chooses which byte
+// of addr_ is replaced; from_dbr = true is only valid with byte_sel == kHigh
+// and also writes DBR into addr_[23:16] (replicating the old
+// kSetAddrHighFromFetchAndBankFromDbr op). The switch collapses at compile
+// time because every call site passes compile-time constants.
+[[gnu::always_inline]] inline void DispatchSetAddrByte(uint32_t& addr, const CpuRegs& regs, uint8_t fetch,
+                                                      ByteSel byte_sel, bool from_dbr) {
+  switch (byte_sel) {
+    case ByteSel::kLow:
+      SetAddrByteFromFetch(addr, fetch, 0);
+      return;
+    case ByteSel::kHigh:
+      SetAddrByteFromFetch(addr, fetch, 8);
+      if (from_dbr) {
+        addr = (addr & 0x00FFFFU) | (static_cast<uint32_t>(regs.DBR) << 16U);
+      }
+      return;
+    case ByteSel::kBank:
+      SetAddrByteFromFetch(addr, fetch, 16);
+      return;
+  }
+  __builtin_unreachable();
+}
+
+// Dispatch the parameterized branch-relative op. wide=true pulls the 16-bit
+// displacement from addr_; wide=false uses fetch_data_ and updates
+// branch_page_crossed.
+[[gnu::always_inline]] inline void DispatchBranchRelative(CpuRegs& regs, uint32_t addr, uint8_t fetch,
+                                                         bool& branch_page_crossed, bool wide) {
+  if (wide) {
+    BranchRelative16(regs, addr);
+  } else {
+    BranchRelative8(regs, fetch, branch_page_crossed);
+  }
+}
+
+// Dispatch kSetPcFromAddr. with_pbr=true also copies addr_[23:16] into PBR.
+[[gnu::always_inline]] inline void DispatchSetPcFromAddr(CpuRegs& regs, uint32_t addr, bool with_pbr) {
+  if (with_pbr) {
+    SetPcAndPbrFromAddr(regs, addr);
+  } else {
+    SetPcFromAddr(regs, addr);
+  }
+}
+
+// Dispatch the fused kLoadAddrByteAndSetPc. First write the fetch byte into
+// the selected byte of addr_, then set PC (and optionally PBR) from addr_.
+[[gnu::always_inline]] inline void DispatchLoadAddrByteAndSetPc(uint32_t& addr, CpuRegs& regs, uint8_t fetch,
+                                                               ByteSel byte_sel, bool with_pbr) {
+  DispatchSetAddrByte(addr, regs, fetch, byte_sel, /*from_dbr=*/false);
+  DispatchSetPcFromAddr(regs, addr, with_pbr);
+}
+
+// Dispatch kMaskStatus (REP/SEP). or_bits=true emits SEP (P |= fetch); false
+// emits REP (P &= ~fetch). Both paths preserve the E-mode forcing of M/X
+// back to 1 via regs.P.FromByte + ApplyEmulationForcing.
+[[gnu::always_inline]] inline void DispatchMaskStatus(CpuRegs& regs, uint8_t fetch, bool or_bits) {
+  uint8_t p = regs.P.ToByte();
+  if (or_bits) {
+    p = static_cast<uint8_t>(p | fetch);
+  } else {
+    p = static_cast<uint8_t>(p & ~fetch);
+  }
+  regs.P.FromByte(p, regs.P.E);
+  ApplyEmulationForcing(regs);
 }
 
 // Binary ADC helper. BCD/decimal mode is not yet implemented; in D=1 the
@@ -952,33 +1052,35 @@ void CPU::ExecuteInternalOp(MicroInternalOp op, [[maybe_unused]] uint8_t params)
       timing_context_.branch_taken =
           DispatchSetBranch(regs_, opcode_defs_internal::micro_op_params::UnpackBranchCond(params));
       break;
-    case MicroInternalOp::kBranchRelative8:
-      BranchRelative8(regs_, fetch_data_, timing_context_.branch_page_crossed);
+    case MicroInternalOp::kBranchRelative:
+      DispatchBranchRelative(regs_, addr_, fetch_data_, timing_context_.branch_page_crossed,
+                             opcode_defs_internal::micro_op_params::UnpackBranchRelativeWide(params));
       break;
-    case MicroInternalOp::kSetAddrLowFromFetch:
-      SetAddrByteFromFetch(addr_, fetch_data_, 0);
+    case MicroInternalOp::kSetAddrByteFromFetch:
+      DispatchSetAddrByte(addr_, regs_, fetch_data_,
+                          opcode_defs_internal::micro_op_params::UnpackSetAddrByteSel(params),
+                          opcode_defs_internal::micro_op_params::UnpackSetAddrFromDbr(params));
       break;
-    case MicroInternalOp::kSetAddrHighFromFetch:
-      SetAddrByteFromFetch(addr_, fetch_data_, 8);
+    case MicroInternalOp::kModifyAddr:
+      if (opcode_defs_internal::micro_op_params::UnpackModifyAddrIncrement(params)) {
+        addr_ = (addr_ + 1U) & 0xFFFFFFU;
+      } else {
+        addr_ = (addr_ - 1U) & 0xFFFFFFU;
+      }
       break;
-    case MicroInternalOp::kSetAddrBankFromFetch:
-      SetAddrByteFromFetch(addr_, fetch_data_, 16);
+    case MicroInternalOp::kModifySp:
+      if (opcode_defs_internal::micro_op_params::UnpackModifySpIncrement(params)) {
+        IncrementSp(regs_);
+      } else {
+        DecrementSp(regs_);
+      }
       break;
-    case MicroInternalOp::kSetAddrHighFromFetchAndBankFromDbr:
-      SetAddrByteFromFetch(addr_, fetch_data_, 8);
-      addr_ = (addr_ & 0x00FFFFU) | (static_cast<uint32_t>(regs_.DBR) << 16U);
-      break;
-    case MicroInternalOp::kIncrementAddr:
-      addr_ = (addr_ + 1U) & 0xFFFFFFU;
-      break;
-    case MicroInternalOp::kDecrementSp:
-      DecrementSp(regs_);
-      break;
-    case MicroInternalOp::kIncrementSp:
-      IncrementSp(regs_);
-      break;
-    case MicroInternalOp::kLoadDbrUpdateNz:
-      LoadDbrUpdateNz(regs_, fetch_data_);
+    case MicroInternalOp::kModifyPc:
+      if (opcode_defs_internal::micro_op_params::UnpackModifyPcIncrement(params)) {
+        regs_.PC = static_cast<uint16_t>(regs_.PC + 1U);
+      } else {
+        regs_.PC = static_cast<uint16_t>(regs_.PC - 1U);
+      }
       break;
     case MicroInternalOp::kIncDecReg:
       DispatchIncDecReg(regs_, opcode_defs_internal::micro_op_params::UnpackIncDecReg(params),
@@ -988,11 +1090,9 @@ void CPU::ExecuteInternalOp(MicroInternalOp op, [[maybe_unused]] uint8_t params)
       DispatchSetFlag(regs_, opcode_defs_internal::micro_op_params::UnpackSetFlagFlag(params),
                       opcode_defs_internal::micro_op_params::UnpackSetFlagValue(params));
       break;
-    case MicroInternalOp::kRepFromFetch:
-      RepFromFetch(regs_, fetch_data_);
-      break;
-    case MicroInternalOp::kSepFromFetch:
-      SepFromFetch(regs_, fetch_data_);
+    case MicroInternalOp::kMaskStatus:
+      DispatchMaskStatus(regs_, fetch_data_,
+                         opcode_defs_internal::micro_op_params::UnpackMaskStatusOr(params));
       break;
     case MicroInternalOp::kExchangeCarryEmulation:
       ExchangeCarryEmulation(regs_);
@@ -1001,58 +1101,15 @@ void CPU::ExecuteInternalOp(MicroInternalOp op, [[maybe_unused]] uint8_t params)
       DispatchTransferReg(regs_, opcode_defs_internal::micro_op_params::UnpackTransferSrc(params),
                           opcode_defs_internal::micro_op_params::UnpackTransferDst(params));
       break;
-    case MicroInternalOp::kBranchRelative16:
-      BranchRelative16(regs_, addr_);
-      break;
     case MicroInternalOp::kSetPcFromAddr:
-      SetPcFromAddr(regs_, addr_);
+      DispatchSetPcFromAddr(regs_, addr_,
+                            opcode_defs_internal::micro_op_params::UnpackSetPcWithPbr(params));
       break;
-    case MicroInternalOp::kSetPcAndPbrFromAddr:
-      SetPcAndPbrFromAddr(regs_, addr_);
-      break;
-    case MicroInternalOp::kSetAddrHighFromFetchAndSetPc:
-      SetAddrByteFromFetch(addr_, fetch_data_, 8);
-      SetPcFromAddr(regs_, addr_);
-      break;
-    case MicroInternalOp::kSetAddrBankFromFetchAndSetPcAndPbr:
-      SetAddrByteFromFetch(addr_, fetch_data_, 16);
-      SetPcAndPbrFromAddr(regs_, addr_);
-      break;
-    case MicroInternalOp::kDecrementPc:
-      regs_.PC = static_cast<uint16_t>(regs_.PC - 1U);
-      break;
-    case MicroInternalOp::kIncrementPc:
-      regs_.PC = static_cast<uint16_t>(regs_.PC + 1U);
-      break;
-    case MicroInternalOp::kSetPclFromFetch:
-      regs_.PC = static_cast<uint16_t>((regs_.PC & 0xFF00U) | fetch_data_);
-      break;
-    case MicroInternalOp::kSetPchFromFetch: {
-      const uint16_t high = static_cast<uint16_t>(static_cast<uint16_t>(fetch_data_) << 8U);
-      regs_.PC = static_cast<uint16_t>((regs_.PC & 0x00FFU) | high);
-      break;
-    }
-    case MicroInternalOp::kSetPbrFromFetch:
-      regs_.PBR = fetch_data_;
-      break;
-    case MicroInternalOp::kLoadPFromFetch:
-      regs_.P.FromByte(fetch_data_, regs_.P.E);
-      break;
-    case MicroInternalOp::kLoadDpLowFromFetch:
-      regs_.DP = static_cast<uint16_t>((regs_.DP & 0xFF00U) | fetch_data_);
-      break;
-    case MicroInternalOp::kLoadDpHighFromFetchUpdateNz: {
-      const uint16_t high = static_cast<uint16_t>(static_cast<uint16_t>(fetch_data_) << 8U);
-      regs_.DP = static_cast<uint16_t>(high | (regs_.DP & 0x00FFU));
-      regs_.P.Z = (regs_.DP == 0U);
-      regs_.P.N = (regs_.DP & 0x8000U) != 0U;
-      break;
-    }
-    case MicroInternalOp::kLoadXHighFromFetchUpdateNz:
-      LoadXHighUpdateNz(regs_, fetch_data_);
-      break;
-    case MicroInternalOp::kLoadYHighFromFetchUpdateNz:
-      LoadYHighUpdateNz(regs_, fetch_data_);
+    case MicroInternalOp::kLoadAddrByteAndSetPc:
+      DispatchLoadAddrByteAndSetPc(
+          addr_, regs_, fetch_data_,
+          opcode_defs_internal::micro_op_params::UnpackLoadAddrByteAndSetPcSel(params),
+          opcode_defs_internal::micro_op_params::UnpackLoadAddrByteAndSetPcWithPbr(params));
       break;
     case MicroInternalOp::kAlu8Imm:
       DispatchAlu8Imm(regs_, fetch_data_, opcode_defs_internal::micro_op_params::UnpackAluOp(params));

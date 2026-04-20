@@ -116,6 +116,99 @@ inline constexpr uint8_t PackAluOp(AluOp op) {
 inline constexpr AluOp UnpackAluOp(uint8_t params) {
   return static_cast<AluOp>(params & 0x0FU);
 }
+
+// Set addr byte from fetch (kSetAddrByteFromFetch): bits [1:0] = ByteSel
+// (kLow/kHigh/kBank), bit [2] = from_dbr. from_dbr is only meaningful with
+// byte_sel == kHigh; that combination replicates the old
+// kSetAddrHighFromFetchAndBankFromDbr semantics (high from fetch, bank from
+// DBR).
+inline constexpr uint8_t PackSetAddrByte(ByteSel byte_sel, bool from_dbr) {
+  return static_cast<uint8_t>((static_cast<uint32_t>(byte_sel) & 0x03U) |
+                              ((from_dbr ? 1U : 0U) << 2U));
+}
+inline constexpr ByteSel UnpackSetAddrByteSel(uint8_t params) {
+  return static_cast<ByteSel>(params & 0x03U);
+}
+inline constexpr bool UnpackSetAddrFromDbr(uint8_t params) {
+  return (params & 0x04U) != 0U;
+}
+
+// Modify addr (kModifyAddr): bit 4 = decrement flag (0 = +1, 1 = -1). Encoded
+// so the default (bit 4 = 0) is increment, which is also what results when
+// kModifyAddr shares its CycleSlotSpec::params byte with a WriteRegByte in
+// the same slot: WriteRegByte's packing occupies bits [3:0], leaving bit 4
+// at 0 so the address advances after the write. No ModifyAddr decrement call
+// site exists today; the plan reserves the encoding for future use.
+inline constexpr uint8_t PackModifyAddr(bool increment) {
+  return static_cast<uint8_t>(increment ? 0U : (1U << 4U));
+}
+inline constexpr bool UnpackModifyAddrIncrement(uint8_t params) {
+  return (params & 0x10U) == 0U;
+}
+
+// Modify SP (kModifySp): bit 5 = increment flag (0 = -1, 1 = +1). Encoded so
+// the default (bit 5 = 0) is decrement, which is what results when kModifySp
+// shares its CycleSlotSpec::params byte with a PushStack in the same slot:
+// PushStack's PushSrc packing occupies bits [3:0], leaving bit 5 at 0 so SP
+// decrements after the push. Standalone kModifySp increment slots must set
+// bit 5.
+inline constexpr uint8_t PackModifySp(bool increment) {
+  return static_cast<uint8_t>(increment ? (1U << 5U) : 0U);
+}
+inline constexpr bool UnpackModifySpIncrement(uint8_t params) {
+  return (params & 0x20U) != 0U;
+}
+
+// Modify PC (kModifyPc): bit 4 = decrement flag (0 = +1, 1 = -1). No sharing
+// constraint today — kModifyPc always appears with bus_action = kNone — so
+// the default encoding could be either polarity. We mirror kModifyAddr
+// (default = increment) for consistency.
+inline constexpr uint8_t PackModifyPc(bool increment) {
+  return static_cast<uint8_t>(increment ? 0U : (1U << 4U));
+}
+inline constexpr bool UnpackModifyPcIncrement(uint8_t params) {
+  return (params & 0x10U) == 0U;
+}
+
+// Branch relative (kBranchRelative): bit 0 = wide (1 = 16-bit displacement
+// from addr_, 0 = signed 8-bit from fetch_data_).
+inline constexpr uint8_t PackBranchRelative(bool wide) {
+  return static_cast<uint8_t>(wide ? 1U : 0U);
+}
+inline constexpr bool UnpackBranchRelativeWide(uint8_t params) {
+  return (params & 0x01U) != 0U;
+}
+
+// Set PC from addr (kSetPcFromAddr): bit 0 = with_pbr. When 1, also sets
+// PBR = addr_[23:16] (used by RTL/JML via addr-stashed path).
+inline constexpr uint8_t PackSetPcFromAddr(bool with_pbr) {
+  return static_cast<uint8_t>(with_pbr ? 1U : 0U);
+}
+inline constexpr bool UnpackSetPcWithPbr(uint8_t params) {
+  return (params & 0x01U) != 0U;
+}
+
+// Fused kLoadAddrByteAndSetPc: bits [1:0] = ByteSel, bit [2] = with_pbr.
+// Used for JMP abs (kHigh, false) and JML (kBank, true).
+inline constexpr uint8_t PackLoadAddrByteAndSetPc(ByteSel byte_sel, bool with_pbr) {
+  return static_cast<uint8_t>((static_cast<uint32_t>(byte_sel) & 0x03U) |
+                              ((with_pbr ? 1U : 0U) << 2U));
+}
+inline constexpr ByteSel UnpackLoadAddrByteAndSetPcSel(uint8_t params) {
+  return static_cast<ByteSel>(params & 0x03U);
+}
+inline constexpr bool UnpackLoadAddrByteAndSetPcWithPbr(uint8_t params) {
+  return (params & 0x04U) != 0U;
+}
+
+// Mask status (kMaskStatus): bit 0 = or_bits (1 = SEP/OR, 0 = REP/AND-NOT).
+// Both paths preserve E-mode forcing of M/X back to 1.
+inline constexpr uint8_t PackMaskStatus(bool or_bits) {
+  return static_cast<uint8_t>(or_bits ? 1U : 0U);
+}
+inline constexpr bool UnpackMaskStatusOr(uint8_t params) {
+  return (params & 0x01U) != 0U;
+}
 }  // namespace micro_op_params
 
 struct CycleSlotSpec {
@@ -269,7 +362,7 @@ constexpr CycleSlotSpec WriteRegByte(WriteSrc src, ByteSel byte_sel,
 // Parameterized push to the stack. Packs PushSrc into CycleSlotSpec::params
 // for the unified kPushStack bus action. Dispatch lives in DispatchPushStackByte
 // in cpu.cpp. internal_op defaults to kNone so callers can opt in (typically
-// kDecrementSp to sequence SP after the write) at the emit site.
+// kModifySp with decrement=0 to sequence SP after the write) at the emit site.
 constexpr CycleSlotSpec PushReg(PushSrc src, MicroInternalOp internal_op = MicroInternalOp::kNone,
                                 TimingRuleExpr rule = Always(), std::string_view label = {}) {
   return CycleSlotSpec{
@@ -393,6 +486,115 @@ constexpr CycleSlotSpec AluImm16(AluOp op, TimingRuleExpr rule = Always(),
       rule,
       label,
       micro_op_params::PackAluOp(op),
+  };
+}
+
+// Parameterized "set addr byte from fetch". Wraps the kSetAddrByteFromFetch
+// internal op. byte_sel chooses which byte of addr_ is replaced; from_dbr is
+// meaningful only when byte_sel == kHigh and triggers the old
+// kSetAddrHighFromFetchAndBankFromDbr behavior (high byte from fetch + bank
+// from DBR).
+constexpr CycleSlotSpec SetAddrByte(ByteSel byte_sel, bool from_dbr = false,
+                                    TimingRuleExpr rule = Always(), std::string_view label = {}) {
+  return CycleSlotSpec{
+      MicroBusAction::kNone,
+      MicroInternalOp::kSetAddrByteFromFetch,
+      rule,
+      label,
+      micro_op_params::PackSetAddrByte(byte_sel, from_dbr),
+  };
+}
+
+// Parameterized kModifyAddr. Defaults to increment; decrement is reserved.
+constexpr CycleSlotSpec ModifyAddr(bool increment = true, TimingRuleExpr rule = Always(),
+                                   std::string_view label = {}) {
+  return CycleSlotSpec{
+      MicroBusAction::kNone,
+      MicroInternalOp::kModifyAddr,
+      rule,
+      label,
+      micro_op_params::PackModifyAddr(increment),
+  };
+}
+
+// Parameterized kModifySp. increment = true for pull-path SP advance,
+// false for push-path SP retreat.
+constexpr CycleSlotSpec ModifySp(bool increment, TimingRuleExpr rule = Always(),
+                                 std::string_view label = {}) {
+  return CycleSlotSpec{
+      MicroBusAction::kNone,
+      MicroInternalOp::kModifySp,
+      rule,
+      label,
+      micro_op_params::PackModifySp(increment),
+  };
+}
+
+// Parameterized kModifyPc. Defaults to increment.
+constexpr CycleSlotSpec ModifyPc(bool increment = true, TimingRuleExpr rule = Always(),
+                                 std::string_view label = {}) {
+  return CycleSlotSpec{
+      MicroBusAction::kNone,
+      MicroInternalOp::kModifyPc,
+      rule,
+      label,
+      micro_op_params::PackModifyPc(increment),
+  };
+}
+
+// Parameterized branch-relative apply. wide = true selects the 16-bit
+// displacement stashed in addr_[15:0] (BRL); wide = false applies the signed
+// 8-bit displacement in fetch_data_ and tracks branch_page_crossed.
+constexpr CycleSlotSpec BranchRelative(bool wide, TimingRuleExpr rule = Always(),
+                                       std::string_view label = {}) {
+  return CycleSlotSpec{
+      MicroBusAction::kNone,
+      MicroInternalOp::kBranchRelative,
+      rule,
+      label,
+      micro_op_params::PackBranchRelative(wide),
+  };
+}
+
+// Parameterized kSetPcFromAddr. with_pbr = true also copies addr_[23:16] into
+// PBR (used by RTL and the addr-stashed jump-long path).
+constexpr CycleSlotSpec SetPcFromAddr(bool with_pbr = false, TimingRuleExpr rule = Always(),
+                                      std::string_view label = {}) {
+  return CycleSlotSpec{
+      MicroBusAction::kNone,
+      MicroInternalOp::kSetPcFromAddr,
+      rule,
+      label,
+      micro_op_params::PackSetPcFromAddr(with_pbr),
+  };
+}
+
+// Parameterized fused "set addr byte from fetch + set PC from addr". Used by
+// JMP absolute (byte_sel = kHigh, with_pbr = false) and JML absolute long
+// (byte_sel = kBank, with_pbr = true). Emits a kFetchPc bus action paired
+// with the kLoadAddrByteAndSetPc internal op.
+constexpr CycleSlotSpec LoadAddrByteAndSetPc(ByteSel byte_sel, bool with_pbr,
+                                             TimingRuleExpr rule = Always(),
+                                             std::string_view label = {}) {
+  return CycleSlotSpec{
+      MicroBusAction::kFetchPc,
+      MicroInternalOp::kLoadAddrByteAndSetPc,
+      rule,
+      label,
+      micro_op_params::PackLoadAddrByteAndSetPc(byte_sel, with_pbr),
+  };
+}
+
+// Parameterized REP/SEP (kMaskStatus). or_bits = true for SEP (P |= fetch),
+// false for REP (P &= ~fetch). Both paths preserve E-mode forcing of M/X.
+constexpr CycleSlotSpec MaskStatus(bool or_bits, TimingRuleExpr rule = Always(),
+                                   std::string_view label = {}) {
+  return CycleSlotSpec{
+      MicroBusAction::kNone,
+      MicroInternalOp::kMaskStatus,
+      rule,
+      label,
+      micro_op_params::PackMaskStatus(or_bits),
   };
 }
 

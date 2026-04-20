@@ -4,18 +4,32 @@
 namespace pupsnes::opcode_defs_internal {
 namespace {
 
+// FetchPc + SetAddrByteFromFetch is a compound: FetchPc brings the byte in via
+// bus action, kSetAddrByteFromFetch runs as the internal op. Since both live
+// in the same CycleSlotSpec we just synthesize the slot by hand.
+constexpr CycleSlotSpec FetchAddrByte(ByteSel byte_sel, bool from_dbr,
+                                      TimingRuleExpr rule, std::string_view label) {
+  return CycleSlotSpec{
+      MicroBusAction::kFetchPc,
+      MicroInternalOp::kSetAddrByteFromFetch,
+      rule,
+      label,
+      micro_op_params::PackSetAddrByte(byte_sel, from_dbr),
+  };
+}
+
 constexpr CycleFragment FetchLongAddr() {
   return Fragment()
-      .Then(FetchPc(MicroInternalOp::kSetAddrLowFromFetch, Always(), "fetch address low"))
-      .Then(FetchPc(MicroInternalOp::kSetAddrHighFromFetch, Always(), "fetch address high"))
-      .Then(FetchPc(MicroInternalOp::kSetAddrBankFromFetch, Always(), "fetch address bank"))
+      .Then(FetchAddrByte(ByteSel::kLow, false, Always(), "fetch address low"))
+      .Then(FetchAddrByte(ByteSel::kHigh, false, Always(), "fetch address high"))
+      .Then(FetchAddrByte(ByteSel::kBank, false, Always(), "fetch address bank"))
       .Build();
 }
 
 constexpr CycleFragment FetchAbsoluteAddr() {
   return Fragment()
-      .Then(FetchPc(MicroInternalOp::kSetAddrLowFromFetch, Always(), "fetch address low"))
-      .Then(FetchPc(MicroInternalOp::kSetAddrHighFromFetchAndBankFromDbr, Always(), "fetch address high"))
+      .Then(FetchAddrByte(ByteSel::kLow, false, Always(), "fetch address low"))
+      .Then(FetchAddrByte(ByteSel::kHigh, true, Always(), "fetch address high"))
       .Build();
 }
 
@@ -45,8 +59,7 @@ constexpr CycleFragment AluImmediateAccumulator(AluOp op) {
   // ALU immediate for A: 2 cycles if M=1, 3 cycles if M=0.
   return Fragment()
       .Then(AluImm8(op, Not(Condition(TimingCondition::kAccumulator16)), "fetch imm (8)"))
-      .Then(FetchPc(MicroInternalOp::kSetAddrLowFromFetch, Condition(TimingCondition::kAccumulator16),
-                    "fetch imm low"))
+      .Then(FetchAddrByte(ByteSel::kLow, false, Condition(TimingCondition::kAccumulator16), "fetch imm low"))
       .Then(AluImm16(op, Condition(TimingCondition::kAccumulator16), "fetch imm high"))
       .Build();
 }
@@ -55,7 +68,7 @@ constexpr CycleFragment AluImmediateIndex(AluOp op) {
   // ALU immediate keyed on X flag (for CPX/CPY): 2 cycles if X=1, 3 if X=0.
   return Fragment()
       .Then(AluImm8(op, Not(Condition(TimingCondition::kIndex16)), "fetch imm (8)"))
-      .Then(FetchPc(MicroInternalOp::kSetAddrLowFromFetch, Condition(TimingCondition::kIndex16), "fetch imm low"))
+      .Then(FetchAddrByte(ByteSel::kLow, false, Condition(TimingCondition::kIndex16), "fetch imm low"))
       .Then(AluImm16(op, Condition(TimingCondition::kIndex16), "fetch imm high"))
       .Build();
 }
@@ -74,16 +87,22 @@ constexpr CycleFragment LoadIndexYImmediate() {
 constexpr CycleFragment BranchSequence(BranchCond cond) {
   return Fragment()
       .Then(FetchPcBranchTest(cond))
-      .Then(Internal(MicroInternalOp::kBranchRelative8, Condition(TimingCondition::kBranchTaken), "apply branch"))
+      .Then(BranchRelative(false, Condition(TimingCondition::kBranchTaken), "apply branch"))
       .Then(Internal(MicroInternalOp::kNone,
                      AllOf(Condition(TimingCondition::kEmulationMode), Condition(TimingCondition::kBranchPageCrossed)),
                      "emulation page-cross penalty"))
       .Build();
 }
 
+// Note: StoreAccumulator / StoreIndexX / StoreIndexY pair WriteRegByte's bus
+// action with a post-write kModifyAddr increment. Both ops share the same
+// CycleSlotSpec::params byte — WriteRegByte's packing occupies bits [3:0] and
+// kModifyAddr reads bit 4 (which is 0 in the shared encoding, meaning
+// increment). This convention keeps both ops co-resident without adding a
+// second params axis; see PackModify documentation.
 constexpr CycleFragment StoreAccumulator() {
   return Fragment()
-      .Then(WriteRegByte(WriteSrc::kA, ByteSel::kLow, MicroInternalOp::kIncrementAddr, Always(), "write A low"))
+      .Then(WriteRegByte(WriteSrc::kA, ByteSel::kLow, MicroInternalOp::kModifyAddr, Always(), "write A low"))
       .Then(WriteRegByte(WriteSrc::kA, ByteSel::kHigh, MicroInternalOp::kNone,
                          Condition(TimingCondition::kAccumulator16), "write A high"))
       .Build();
@@ -91,7 +110,7 @@ constexpr CycleFragment StoreAccumulator() {
 
 constexpr CycleFragment StoreIndexX() {
   return Fragment()
-      .Then(WriteRegByte(WriteSrc::kX, ByteSel::kLow, MicroInternalOp::kIncrementAddr, Always(), "write X low"))
+      .Then(WriteRegByte(WriteSrc::kX, ByteSel::kLow, MicroInternalOp::kModifyAddr, Always(), "write X low"))
       .Then(WriteRegByte(WriteSrc::kX, ByteSel::kHigh, MicroInternalOp::kNone, Condition(TimingCondition::kIndex16),
                          "write X high"))
       .Build();
@@ -99,7 +118,7 @@ constexpr CycleFragment StoreIndexX() {
 
 constexpr CycleFragment StoreIndexY() {
   return Fragment()
-      .Then(WriteRegByte(WriteSrc::kY, ByteSel::kLow, MicroInternalOp::kIncrementAddr, Always(), "write Y low"))
+      .Then(WriteRegByte(WriteSrc::kY, ByteSel::kLow, MicroInternalOp::kModifyAddr, Always(), "write Y low"))
       .Then(WriteRegByte(WriteSrc::kY, ByteSel::kHigh, MicroInternalOp::kNone, Condition(TimingCondition::kIndex16),
                          "write Y high"))
       .Build();
@@ -108,24 +127,25 @@ constexpr CycleFragment StoreIndexY() {
 constexpr CycleFragment PushAccumulator() {
   return Fragment()
       .Then(Internal(MicroInternalOp::kNone, Always(), "internal"))
-      .Then(PushReg(PushSrc::kAHigh, MicroInternalOp::kDecrementSp, Condition(TimingCondition::kAccumulator16),
+      .Then(PushReg(PushSrc::kAHigh, MicroInternalOp::kModifySp, Condition(TimingCondition::kAccumulator16),
                     "push A high"))
-      .Then(PushReg(PushSrc::kA8, MicroInternalOp::kDecrementSp, Always(), "push A low"))
+      .Then(PushReg(PushSrc::kA8, MicroInternalOp::kModifySp, Always(), "push A low"))
       .Build();
 }
 
 constexpr CycleFragment PushDataBank() {
   return Fragment()
       .Then(Internal(MicroInternalOp::kNone, Always(), "internal"))
-      .Then(PushReg(PushSrc::kDbr, MicroInternalOp::kDecrementSp, Always(), "push DBR"))
+      .Then(PushReg(PushSrc::kDbr, MicroInternalOp::kModifySp, Always(), "push DBR"))
       .Build();
 }
 
 constexpr CycleFragment PullDataBank() {
   return Fragment()
       .Then(Internal(MicroInternalOp::kNone, Always(), "internal"))
-      .Then(Internal(MicroInternalOp::kIncrementSp, Always(), "increment SP"))
-      .Then(PullStack(MicroInternalOp::kLoadDbrUpdateNz, Always(), "pull DBR"))
+      .Then(ModifySp(true, Always(), "increment SP"))
+      .Then(CycleSlotSpec{MicroBusAction::kPullStack, MicroInternalOp::kLoadReg, Always(), "pull DBR",
+                         micro_op_params::PackLoadReg(Reg::kDbr, ByteSel::kLow, true)})
       .Build();
 }
 
@@ -136,14 +156,13 @@ constexpr auto MakeMiscSpecs() {
 }
 
 // Push + decrement-SP shorthand: every real push cycle pairs the bus write
-// with a post-write SP decrement, so this specializes PushReg() with
-// kDecrementSp for authoring readability.
+// with a post-write SP decrement, so this specializes PushReg() with the
+// kModifySp internal op. The two ops share CycleSlotSpec::params: PushStack
+// packs PushSrc into bits [3:0] (all current values fit in [3:0]); kModifySp
+// reads bit 5 as "increment" and bit 5 is 0 in the shared encoding, meaning
+// decrement — which is exactly what every push needs.
 constexpr CycleSlotSpec PushRegSlot(PushSrc src, TimingRuleExpr rule, std::string_view label) {
-  return PushReg(src, MicroInternalOp::kDecrementSp, rule, label);
-}
-
-constexpr CycleSlotSpec PullPreIncSlot(MicroInternalOp internal_op, TimingRuleExpr rule, std::string_view label) {
-  return CycleSlotSpec{MicroBusAction::kPreIncPullStack, internal_op, rule, label};
+  return PushReg(src, MicroInternalOp::kModifySp, rule, label);
 }
 
 constexpr CycleFragment PushIndexX() {
@@ -188,8 +207,8 @@ constexpr CycleFragment PushProgramBank() {
 constexpr CycleFragment PushEffectiveAbsolute() {
   // PEA #imm16: 5 cycles total. Fetch 2 bytes then push both (high first).
   return Fragment()
-      .Then(FetchPc(MicroInternalOp::kSetAddrLowFromFetch, Always(), "fetch value low"))
-      .Then(FetchPc(MicroInternalOp::kSetAddrHighFromFetch, Always(), "fetch value high"))
+      .Then(FetchAddrByte(ByteSel::kLow, false, Always(), "fetch value low"))
+      .Then(FetchAddrByte(ByteSel::kHigh, false, Always(), "fetch value high"))
       .Then(PushRegSlot(PushSrc::kAddrHigh, Always(), "push value high"))
       .Then(PushRegSlot(PushSrc::kAddrLow, Always(), "push value low"))
       .Build();
@@ -215,8 +234,7 @@ constexpr CycleFragment PullIndexX() {
       .Then(PullPreIncLoadReg(Reg::kX, ByteSel::kLow, true, Not(Condition(TimingCondition::kIndex16)),
                               "pull X (8-bit)"))
       .Then(PullPreIncLoadReg(Reg::kX, ByteSel::kLow, false, Condition(TimingCondition::kIndex16), "pull X low"))
-      .Then(PullPreIncSlot(MicroInternalOp::kLoadXHighFromFetchUpdateNz, Condition(TimingCondition::kIndex16),
-                           "pull X high"))
+      .Then(PullPreIncLoadReg(Reg::kX, ByteSel::kHigh, true, Condition(TimingCondition::kIndex16), "pull X high"))
       .Build();
 }
 
@@ -227,8 +245,7 @@ constexpr CycleFragment PullIndexY() {
       .Then(PullPreIncLoadReg(Reg::kY, ByteSel::kLow, true, Not(Condition(TimingCondition::kIndex16)),
                               "pull Y (8-bit)"))
       .Then(PullPreIncLoadReg(Reg::kY, ByteSel::kLow, false, Condition(TimingCondition::kIndex16), "pull Y low"))
-      .Then(PullPreIncSlot(MicroInternalOp::kLoadYHighFromFetchUpdateNz, Condition(TimingCondition::kIndex16),
-                           "pull Y high"))
+      .Then(PullPreIncLoadReg(Reg::kY, ByteSel::kHigh, true, Condition(TimingCondition::kIndex16), "pull Y high"))
       .Build();
 }
 
@@ -236,7 +253,7 @@ constexpr CycleFragment PullStatus() {
   return Fragment()
       .Then(Internal(MicroInternalOp::kNone, Always(), "internal"))
       .Then(Internal(MicroInternalOp::kNone, Always(), "internal"))
-      .Then(PullPreIncSlot(MicroInternalOp::kLoadPFromFetch, Always(), "pull P"))
+      .Then(PullPreIncLoadReg(Reg::kP, ByteSel::kLow, false, Always(), "pull P"))
       .Build();
 }
 
@@ -245,8 +262,8 @@ constexpr CycleFragment PullDirectPage() {
   return Fragment()
       .Then(Internal(MicroInternalOp::kNone, Always(), "internal"))
       .Then(Internal(MicroInternalOp::kNone, Always(), "internal"))
-      .Then(PullPreIncSlot(MicroInternalOp::kLoadDpLowFromFetch, Always(), "pull DP low"))
-      .Then(PullPreIncSlot(MicroInternalOp::kLoadDpHighFromFetchUpdateNz, Always(), "pull DP high"))
+      .Then(PullPreIncLoadReg(Reg::kDp, ByteSel::kLow, false, Always(), "pull DP low"))
+      .Then(PullPreIncLoadReg(Reg::kDp, ByteSel::kHigh, true, Always(), "pull DP high"))
       .Build();
 }
 
@@ -311,11 +328,11 @@ constexpr auto MakeFlagSpecs() {
           .Build(),
       Opcode(0xC2, "REP", "immediate byte")
           .Then(FetchPc(MicroInternalOp::kNone, Always(), "fetch mask"))
-          .Then(Internal(MicroInternalOp::kRepFromFetch, Always(), "apply REP mask"))
+          .Then(MaskStatus(false, Always(), "apply REP mask"))
           .Build(),
       Opcode(0xE2, "SEP", "immediate byte")
           .Then(FetchPc(MicroInternalOp::kNone, Always(), "fetch mask"))
-          .Then(Internal(MicroInternalOp::kSepFromFetch, Always(), "apply SEP mask"))
+          .Then(MaskStatus(true, Always(), "apply SEP mask"))
           .Build(),
   };
 }
@@ -340,9 +357,9 @@ constexpr auto MakeTransferSpecs() {
 constexpr CycleFragment BranchLongSequence() {
   // BRL: fetch 16-bit signed displacement into addr_, then apply relative jump.
   return Fragment()
-      .Then(FetchPc(MicroInternalOp::kSetAddrLowFromFetch, Always(), "fetch disp low"))
-      .Then(FetchPc(MicroInternalOp::kSetAddrHighFromFetch, Always(), "fetch disp high"))
-      .Then(Internal(MicroInternalOp::kBranchRelative16, Always(), "apply long branch"))
+      .Then(FetchAddrByte(ByteSel::kLow, false, Always(), "fetch disp low"))
+      .Then(FetchAddrByte(ByteSel::kHigh, false, Always(), "fetch disp high"))
+      .Then(BranchRelative(true, Always(), "apply long branch"))
       .Build();
 }
 
@@ -350,17 +367,17 @@ constexpr CycleFragment JumpAbsolute() {
   // JMP abs: 3 cycles total. Opcode fetch + fetch low + fetch high (which also
   // sets PC).
   return Fragment()
-      .Then(FetchPc(MicroInternalOp::kSetAddrLowFromFetch, Always(), "fetch target low"))
-      .Then(FetchPc(MicroInternalOp::kSetAddrHighFromFetchAndSetPc, Always(), "fetch target high, set PC"))
+      .Then(FetchAddrByte(ByteSel::kLow, false, Always(), "fetch target low"))
+      .Then(LoadAddrByteAndSetPc(ByteSel::kHigh, false, Always(), "fetch target high, set PC"))
       .Build();
 }
 
 constexpr CycleFragment JumpAbsoluteLong() {
   // JMP long: 4 cycles total. Opcode fetch + low + high + bank (sets PC+PBR).
   return Fragment()
-      .Then(FetchPc(MicroInternalOp::kSetAddrLowFromFetch, Always(), "fetch target low"))
-      .Then(FetchPc(MicroInternalOp::kSetAddrHighFromFetch, Always(), "fetch target high"))
-      .Then(FetchPc(MicroInternalOp::kSetAddrBankFromFetchAndSetPcAndPbr, Always(), "fetch bank, set PC+PBR"))
+      .Then(FetchAddrByte(ByteSel::kLow, false, Always(), "fetch target low"))
+      .Then(FetchAddrByte(ByteSel::kHigh, false, Always(), "fetch target high"))
+      .Then(LoadAddrByteAndSetPc(ByteSel::kBank, true, Always(), "fetch bank, set PC+PBR"))
       .Build();
 }
 
@@ -389,11 +406,11 @@ constexpr CycleFragment JsrAbsolute() {
   // T5: push PCL, decrement SP.
   // T6: fetch target high, set PC.
   return Fragment()
-      .Then(FetchPc(MicroInternalOp::kSetAddrLowFromFetch, Always(), "fetch target low"))
+      .Then(FetchAddrByte(ByteSel::kLow, false, Always(), "fetch target low"))
       .Then(Internal(MicroInternalOp::kNone, Always(), "internal"))
       .Then(PushRegSlot(PushSrc::kPch, Always(), "push PCH"))
       .Then(PushRegSlot(PushSrc::kPcl, Always(), "push PCL"))
-      .Then(FetchPc(MicroInternalOp::kSetAddrHighFromFetchAndSetPc, Always(), "fetch target high, set PC"))
+      .Then(LoadAddrByteAndSetPc(ByteSel::kHigh, false, Always(), "fetch target high, set PC"))
       .Build();
 }
 
@@ -408,14 +425,26 @@ constexpr CycleFragment JsrAbsoluteLong() {
   // T7: push PCL.
   // T8: fetch target bank, set PC+PBR.
   return Fragment()
-      .Then(FetchPc(MicroInternalOp::kSetAddrLowFromFetch, Always(), "fetch target low"))
-      .Then(FetchPc(MicroInternalOp::kSetAddrHighFromFetch, Always(), "fetch target high"))
+      .Then(FetchAddrByte(ByteSel::kLow, false, Always(), "fetch target low"))
+      .Then(FetchAddrByte(ByteSel::kHigh, false, Always(), "fetch target high"))
       .Then(PushRegSlot(PushSrc::kPbr, Always(), "push PBR"))
       .Then(Internal(MicroInternalOp::kNone, Always(), "internal"))
       .Then(PushRegSlot(PushSrc::kPch, Always(), "push PCH"))
       .Then(PushRegSlot(PushSrc::kPcl, Always(), "push PCL"))
-      .Then(FetchPc(MicroInternalOp::kSetAddrBankFromFetchAndSetPcAndPbr, Always(), "fetch bank, set PC+PBR"))
+      .Then(LoadAddrByteAndSetPc(ByteSel::kBank, true, Always(), "fetch bank, set PC+PBR"))
       .Build();
+}
+
+// Build a "pre-increment-pull + LoadReg(reg=PCL/PCH/PBR)" slot. Used by
+// RTS/RTL to pull the return address bytes directly into PC.
+constexpr CycleSlotSpec PullPreIncLoadPcByte(Reg reg, std::string_view label) {
+  return CycleSlotSpec{
+      MicroBusAction::kPreIncPullStack,
+      MicroInternalOp::kLoadReg,
+      Always(),
+      label,
+      micro_op_params::PackLoadReg(reg, ByteSel::kLow, false),
+  };
 }
 
 constexpr CycleFragment Rts() {
@@ -423,9 +452,9 @@ constexpr CycleFragment Rts() {
   return Fragment()
       .Then(Internal(MicroInternalOp::kNone, Always(), "internal"))
       .Then(Internal(MicroInternalOp::kNone, Always(), "internal"))
-      .Then(CycleSlotSpec{MicroBusAction::kPreIncPullStack, MicroInternalOp::kSetPclFromFetch, Always(), "pull PCL"})
-      .Then(CycleSlotSpec{MicroBusAction::kPreIncPullStack, MicroInternalOp::kSetPchFromFetch, Always(), "pull PCH"})
-      .Then(Internal(MicroInternalOp::kIncrementPc, Always(), "increment PC"))
+      .Then(PullPreIncLoadPcByte(Reg::kPcl, "pull PCL"))
+      .Then(PullPreIncLoadPcByte(Reg::kPch, "pull PCH"))
+      .Then(ModifyPc(true, Always(), "increment PC"))
       .Build();
 }
 
@@ -433,10 +462,10 @@ constexpr CycleFragment Rtl() {
   // RTL: 6 cycles total. Pull PCL, pull PCH, increment PC, pull PBR.
   return Fragment()
       .Then(Internal(MicroInternalOp::kNone, Always(), "internal"))
-      .Then(CycleSlotSpec{MicroBusAction::kPreIncPullStack, MicroInternalOp::kSetPclFromFetch, Always(), "pull PCL"})
-      .Then(CycleSlotSpec{MicroBusAction::kPreIncPullStack, MicroInternalOp::kSetPchFromFetch, Always(), "pull PCH"})
-      .Then(Internal(MicroInternalOp::kIncrementPc, Always(), "increment PC"))
-      .Then(CycleSlotSpec{MicroBusAction::kPreIncPullStack, MicroInternalOp::kSetPbrFromFetch, Always(), "pull PBR"})
+      .Then(PullPreIncLoadPcByte(Reg::kPcl, "pull PCL"))
+      .Then(PullPreIncLoadPcByte(Reg::kPch, "pull PCH"))
+      .Then(ModifyPc(true, Always(), "increment PC"))
+      .Then(PullPreIncLoadPcByte(Reg::kPbr, "pull PBR"))
       .Build();
 }
 

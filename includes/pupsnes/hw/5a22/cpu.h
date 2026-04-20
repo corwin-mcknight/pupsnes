@@ -43,57 +43,53 @@ enum class MicroBusAction : uint8_t {
 // Internal register operations performed after the bus action completes.
 enum class MicroInternalOp : uint8_t {
   kNone,
-  kLoadReg,                             // reg_byte = fetch_data_; width/flag semantics per (reg, byte_sel,
-                                        // update_nz); params packs Reg (A/X/Y) in bits [3:0], ByteSel
-                                        // (kLow/kHigh) in bits [5:4], and update_nz in bit 6 (see
-                                        // micro_op_params::PackLoadReg). Dispatch via DispatchLoadReg.
-  kSetBranchTakenCond,                  // branch_taken = <BranchCond(params[3:0])>; params packs the
-                                        // BranchCond (kAlways/kZ/kNotZ/kC/kNotC/kN/kNotN/kV/kNotV)
-                                        // in bits [3:0] (see micro_op_params::PackBranchCond)
-  kBranchRelative8,                     // Apply signed 8-bit branch offset stored in fetch_data_
-                                        // to PC
-  kSetAddrLowFromFetch,                 // addr_[7:0] = fetch_data_
-  kSetAddrHighFromFetch,                // addr_[15:8] = fetch_data_
-  kSetAddrBankFromFetch,                // addr_[23:16] = fetch_data_
-  kSetAddrHighFromFetchAndBankFromDbr,  // addr_[15:8] = fetch_data_, addr_[23:16] = DBR
-  kIncrementAddr,                       // addr_ = addr_ + 1
-  kDecrementSp,                         // Decrement SP (wraps in page 1 when E=1)
-  kIncrementSp,                         // Increment SP (wraps in page 1 when E=1)
-  kLoadDbrUpdateNz,                     // DBR = fetch_data_; update N/Z (8-bit)
-  kIncDecReg,                           // reg += 1 or reg -= 1; width/flag semantics per reg; params
-                                        // packs decrement flag in bit 0 and Reg (A/X/Y) in bits [4:1]
-                                        // (see micro_op_params::PackIncDec)
-  kSetFlag,                             // P.<flag> = value; params packs value in bit 0 and Flag
-                                        // (C/D/I/V only) in bits [4:1] (see micro_op_params::PackSetFlag)
-  kRepFromFetch,                        // P &= ~fetch_data_ (E=1 forces M,X back to 1)
-  kSepFromFetch,                        // P |= fetch_data_ (E=1 forces M,X to 1)
-  kExchangeCarryEmulation,              // swap C and E; on E=1 force M,X=1, XH/YH=0, SH=$01
-  kTransferReg,                         // dst = src; width/flag semantics per (src,dst) pair; params
-                                        // packs src in [3:0] and dst in [7:4] (see micro_op_params::PackTransfer)
-  kBranchRelative16,                    // PC += signed 16-bit from addr_[15:0]
-  kSetPcFromAddr,                       // PC = addr_[15:0]
-  kSetPcAndPbrFromAddr,                 // PC = addr_[15:0], PBR = addr_[23:16]
-  kSetAddrHighFromFetchAndSetPc,        // addr_[15:8] = fetch; PC = addr_[15:0] (single-cycle JMP)
-  kSetAddrBankFromFetchAndSetPcAndPbr,  // addr_[23:16] = fetch; PC+PBR from addr (single-cycle JML)
-  kDecrementPc,                         // PC -= 1
-  kIncrementPc,                         // PC += 1
-  kSetPclFromFetch,                     // PC low = fetch_data_
-  kSetPchFromFetch,                     // PC high = fetch_data_
-  kSetPbrFromFetch,                     // PBR = fetch_data_
-  kLoadPFromFetch,                      // P.FromByte(fetch_data_, E)
-  kLoadDpLowFromFetch,                  // DP low = fetch_data_
-  kLoadDpHighFromFetchUpdateNz,         // DP high = fetch_data_; update N/Z (16-bit)
-  kLoadXHighFromFetchUpdateNz,          // X high = fetch_data_; update N/Z (16-bit)
-  kLoadYHighFromFetchUpdateNz,          // Y high = fetch_data_; update N/Z (16-bit)
-  kAlu8Imm,                             // 8-bit ALU immediate: apply AluOp to fetch_data_ against
-                                        // A/X/Y (or just update Z for BIT imm). Params pack AluOp in
-                                        // bits [3:0] (see micro_op_params::PackAluOp). Dispatch lives
-                                        // in DispatchAlu8Imm in cpu.cpp.
-  kAlu16Imm,                            // 16-bit ALU immediate: apply AluOp to the 16-bit operand
-                                        // formed from addr_[7:0] (low, stashed by a prior
-                                        // kSetAddrLowFromFetch) and fetch_data_ (high). Params pack
-                                        // AluOp in bits [3:0]. Dispatch lives in DispatchAlu16Imm in
-                                        // cpu.cpp.
+  kLoadReg,                 // reg_byte = fetch_data_; width/flag semantics per (reg, byte_sel,
+                            // update_nz); params packs Reg (A/X/Y/Dp/Dbr/Pcl/Pch/Pbr/P) in
+                            // bits [3:0], ByteSel (kLow/kHigh) in bits [5:4], and update_nz in
+                            // bit 6 (see micro_op_params::PackLoadReg). Dispatch via
+                            // DispatchLoadReg. For Reg::kP, emulation-mode forcing is handled
+                            // by regs.P.FromByte(fetch, E); update_nz is ignored.
+  kSetBranchTakenCond,      // branch_taken = <BranchCond(params[3:0])>; params packs the
+                            // BranchCond (kAlways/kZ/kNotZ/kC/kNotC/kN/kNotN/kV/kNotV)
+                            // in bits [3:0] (see micro_op_params::PackBranchCond)
+  kBranchRelative,          // Apply signed branch offset to PC. Params bit 0 = wide: when 0,
+                            // uses signed 8-bit displacement from fetch_data_; when 1, uses
+                            // signed 16-bit displacement from addr_[15:0]. The 8-bit path also
+                            // updates timing_context_.branch_page_crossed.
+  kSetAddrByteFromFetch,    // addr_[byte] = fetch_data_. Params bits [1:0] = ByteSel (kLow,
+                            // kHigh, kBank), bit [2] = from_dbr. from_dbr is only meaningful
+                            // when byte_sel == kHigh: in that combination addr_[15:8] is set
+                            // from fetch and addr_[23:16] is set from DBR.
+  kModifyAddr,              // addr_ += 1 (bit 0 set) or addr_ -= 1 (bit 0 clear). Wraps at 24
+                            // bits. Only increment is currently used; decrement encoding is
+                            // reserved.
+  kModifySp,                // SP += 1 or SP -= 1 (bit 0 = increment). Wraps in page 1 when E=1.
+  kModifyPc,                // PC += 1 or PC -= 1 (bit 0 = increment). 16-bit wrap.
+  kIncDecReg,               // reg += 1 or reg -= 1; width/flag semantics per reg; params
+                            // packs decrement flag in bit 0 and Reg (A/X/Y) in bits [4:1]
+                            // (see micro_op_params::PackIncDec)
+  kSetFlag,                 // P.<flag> = value; params packs value in bit 0 and Flag
+                            // (C/D/I/V only) in bits [4:1] (see micro_op_params::PackSetFlag)
+  kMaskStatus,              // P mask update. Params bit 0: 1 = SEP (P |= fetch_data_), 0 = REP
+                            // (P &= ~fetch_data_). Both paths preserve the E-mode forcing of
+                            // M/X back to 1 via regs.P.FromByte + ApplyEmulationForcing.
+  kExchangeCarryEmulation,  // swap C and E; on E=1 force M,X=1, XH/YH=0, SH=$01
+  kTransferReg,             // dst = src; width/flag semantics per (src,dst) pair; params
+                            // packs src in [3:0] and dst in [7:4] (see micro_op_params::PackTransfer)
+  kSetPcFromAddr,           // PC = addr_[15:0]. Params bit 0 = with_pbr: when 1, also set
+                            // PBR = addr_[23:16].
+  kLoadAddrByteAndSetPc,    // Fused "set addr byte from fetch + set PC from addr". Params
+                            // bits [1:0] = ByteSel (kHigh for JMP abs; kBank for JML),
+                            // bit [2] = with_pbr (1 for JML: also set PBR from addr).
+  kAlu8Imm,                 // 8-bit ALU immediate: apply AluOp to fetch_data_ against
+                            // A/X/Y (or just update Z for BIT imm). Params pack AluOp in
+                            // bits [3:0] (see micro_op_params::PackAluOp). Dispatch lives
+                            // in DispatchAlu8Imm in cpu.cpp.
+  kAlu16Imm,                // 16-bit ALU immediate: apply AluOp to the 16-bit operand
+                            // formed from addr_[7:0] (low, stashed by a prior
+                            // kSetAddrByteFromFetch(kLow)) and fetch_data_ (high). Params
+                            // pack AluOp in bits [3:0]. Dispatch lives in DispatchAlu16Imm
+                            // in cpu.cpp.
 };
 
 // Typed enums for MicroOp::params packing. Populated in subsequent refactor
