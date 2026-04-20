@@ -90,42 +90,10 @@ std::string_view ToString(MicroInternalOp op) {
       return "LoadXHighFromFetchUpdateNz";
     case MicroInternalOp::kLoadYHighFromFetchUpdateNz:
       return "LoadYHighFromFetchUpdateNz";
-    case MicroInternalOp::kAluAdc8FromFetch:
-      return "AluAdc8FromFetch";
-    case MicroInternalOp::kAluSbc8FromFetch:
-      return "AluSbc8FromFetch";
-    case MicroInternalOp::kAluAnd8FromFetch:
-      return "AluAnd8FromFetch";
-    case MicroInternalOp::kAluOra8FromFetch:
-      return "AluOra8FromFetch";
-    case MicroInternalOp::kAluEor8FromFetch:
-      return "AluEor8FromFetch";
-    case MicroInternalOp::kAluCmp8FromFetch:
-      return "AluCmp8FromFetch";
-    case MicroInternalOp::kAluCpx8FromFetch:
-      return "AluCpx8FromFetch";
-    case MicroInternalOp::kAluCpy8FromFetch:
-      return "AluCpy8FromFetch";
-    case MicroInternalOp::kAluBit8ImmFromFetch:
-      return "AluBit8ImmFromFetch";
-    case MicroInternalOp::kAluAdc16FromFetch:
-      return "AluAdc16FromFetch";
-    case MicroInternalOp::kAluSbc16FromFetch:
-      return "AluSbc16FromFetch";
-    case MicroInternalOp::kAluAnd16FromFetch:
-      return "AluAnd16FromFetch";
-    case MicroInternalOp::kAluOra16FromFetch:
-      return "AluOra16FromFetch";
-    case MicroInternalOp::kAluEor16FromFetch:
-      return "AluEor16FromFetch";
-    case MicroInternalOp::kAluCmp16FromFetch:
-      return "AluCmp16FromFetch";
-    case MicroInternalOp::kAluCpx16FromFetch:
-      return "AluCpx16FromFetch";
-    case MicroInternalOp::kAluCpy16FromFetch:
-      return "AluCpy16FromFetch";
-    case MicroInternalOp::kAluBit16ImmFromFetch:
-      return "AluBit16ImmFromFetch";
+    case MicroInternalOp::kAlu8Imm:
+      return "Alu8Imm";
+    case MicroInternalOp::kAlu16Imm:
+      return "Alu16Imm";
   }
   return "?";
 }

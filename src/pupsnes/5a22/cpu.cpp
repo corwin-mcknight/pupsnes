@@ -693,6 +693,88 @@ namespace {
   regs.P.N = (diff & 0x8000U) != 0U;
 }
 
+// Dispatch a parameterized 8-bit ALU immediate to the concrete per-op helper
+// above. Mirrors the per-variant kAluXxx8FromFetch cases from the old
+// ExecuteInternalOp switch. Because AluOp is a compile-time constant at every
+// AluImm8 call site, the switch collapses to a direct call on the hot path —
+// no runtime table lookup.
+[[gnu::always_inline]] inline void DispatchAlu8Imm(CpuRegs& regs, uint8_t fetch_data, AluOp op) {
+  switch (op) {
+    case AluOp::kAdc:
+      AluAdc8(regs, fetch_data);
+      return;
+    case AluOp::kSbc:
+      AluSbc8(regs, fetch_data);
+      return;
+    case AluOp::kAnd:
+      AluAnd8(regs, fetch_data);
+      return;
+    case AluOp::kOra:
+      AluOra8(regs, fetch_data);
+      return;
+    case AluOp::kEor:
+      AluEor8(regs, fetch_data);
+      return;
+    case AluOp::kCmp:
+      DoCompare8(regs, static_cast<uint8_t>(regs.A), fetch_data);
+      return;
+    case AluOp::kCpx:
+      DoCompare8(regs, static_cast<uint8_t>(regs.X), fetch_data);
+      return;
+    case AluOp::kCpy:
+      DoCompare8(regs, static_cast<uint8_t>(regs.Y), fetch_data);
+      return;
+    case AluOp::kBit: {
+      // Immediate BIT only updates Z (not N/V). See docs/plans/6502opcodes.md.
+      const uint8_t result = static_cast<uint8_t>(regs.A) & fetch_data;
+      regs.P.Z = (result == 0U);
+      return;
+    }
+  }
+  __builtin_unreachable();
+}
+
+// Dispatch a parameterized 16-bit ALU immediate to the concrete per-op helper
+// above. The 16-bit operand is formed from addr_[7:0] (low byte stashed by a
+// prior kSetAddrLowFromFetch) and fetch_data_ (high byte). Same collapse
+// behavior as the 8-bit dispatcher.
+[[gnu::always_inline]] inline void DispatchAlu16Imm(CpuRegs& regs, uint32_t addr, uint8_t fetch_data, AluOp op) {
+  const uint16_t operand = AluOperand16FromFetch(addr, fetch_data);
+  switch (op) {
+    case AluOp::kAdc:
+      AluAdc16(regs, operand);
+      return;
+    case AluOp::kSbc:
+      AluSbc16(regs, operand);
+      return;
+    case AluOp::kAnd:
+      AluAnd16(regs, operand);
+      return;
+    case AluOp::kOra:
+      AluOra16(regs, operand);
+      return;
+    case AluOp::kEor:
+      AluEor16(regs, operand);
+      return;
+    case AluOp::kCmp:
+      DoCompare16(regs, regs.A, operand);
+      return;
+    case AluOp::kCpx:
+      DoCompare16(regs, regs.X, operand);
+      return;
+    case AluOp::kCpy:
+      DoCompare16(regs, regs.Y, operand);
+      return;
+    case AluOp::kBit: {
+      // Immediate BIT only updates Z (not N/V).
+      const uint16_t result = static_cast<uint16_t>(regs.A & operand);
+      regs.P.Z = (result == 0U);
+      return;
+    }
+  }
+  __builtin_unreachable();
+}
+
 }  // namespace
 
 // ---------------------------------------------------------------------------
@@ -972,64 +1054,12 @@ void CPU::ExecuteInternalOp(MicroInternalOp op, [[maybe_unused]] uint8_t params)
     case MicroInternalOp::kLoadYHighFromFetchUpdateNz:
       LoadYHighUpdateNz(regs_, fetch_data_);
       break;
-    case MicroInternalOp::kAluAdc8FromFetch:
-      AluAdc8(regs_, fetch_data_);
+    case MicroInternalOp::kAlu8Imm:
+      DispatchAlu8Imm(regs_, fetch_data_, opcode_defs_internal::micro_op_params::UnpackAluOp(params));
       break;
-    case MicroInternalOp::kAluSbc8FromFetch:
-      AluSbc8(regs_, fetch_data_);
+    case MicroInternalOp::kAlu16Imm:
+      DispatchAlu16Imm(regs_, addr_, fetch_data_, opcode_defs_internal::micro_op_params::UnpackAluOp(params));
       break;
-    case MicroInternalOp::kAluAnd8FromFetch:
-      AluAnd8(regs_, fetch_data_);
-      break;
-    case MicroInternalOp::kAluOra8FromFetch:
-      AluOra8(regs_, fetch_data_);
-      break;
-    case MicroInternalOp::kAluEor8FromFetch:
-      AluEor8(regs_, fetch_data_);
-      break;
-    case MicroInternalOp::kAluCmp8FromFetch:
-      DoCompare8(regs_, static_cast<uint8_t>(regs_.A), fetch_data_);
-      break;
-    case MicroInternalOp::kAluCpx8FromFetch:
-      DoCompare8(regs_, static_cast<uint8_t>(regs_.X), fetch_data_);
-      break;
-    case MicroInternalOp::kAluCpy8FromFetch:
-      DoCompare8(regs_, static_cast<uint8_t>(regs_.Y), fetch_data_);
-      break;
-    case MicroInternalOp::kAluBit8ImmFromFetch: {
-      const uint8_t result = static_cast<uint8_t>(regs_.A) & fetch_data_;
-      regs_.P.Z = (result == 0U);
-      break;
-    }
-    case MicroInternalOp::kAluAdc16FromFetch:
-      AluAdc16(regs_, AluOperand16FromFetch(addr_, fetch_data_));
-      break;
-    case MicroInternalOp::kAluSbc16FromFetch:
-      AluSbc16(regs_, AluOperand16FromFetch(addr_, fetch_data_));
-      break;
-    case MicroInternalOp::kAluAnd16FromFetch:
-      AluAnd16(regs_, AluOperand16FromFetch(addr_, fetch_data_));
-      break;
-    case MicroInternalOp::kAluOra16FromFetch:
-      AluOra16(regs_, AluOperand16FromFetch(addr_, fetch_data_));
-      break;
-    case MicroInternalOp::kAluEor16FromFetch:
-      AluEor16(regs_, AluOperand16FromFetch(addr_, fetch_data_));
-      break;
-    case MicroInternalOp::kAluCmp16FromFetch:
-      DoCompare16(regs_, regs_.A, AluOperand16FromFetch(addr_, fetch_data_));
-      break;
-    case MicroInternalOp::kAluCpx16FromFetch:
-      DoCompare16(regs_, regs_.X, AluOperand16FromFetch(addr_, fetch_data_));
-      break;
-    case MicroInternalOp::kAluCpy16FromFetch:
-      DoCompare16(regs_, regs_.Y, AluOperand16FromFetch(addr_, fetch_data_));
-      break;
-    case MicroInternalOp::kAluBit16ImmFromFetch: {
-      const uint16_t result = static_cast<uint16_t>(regs_.A & AluOperand16FromFetch(addr_, fetch_data_));
-      regs_.P.Z = (result == 0U);
-      break;
-    }
   }
 }
 

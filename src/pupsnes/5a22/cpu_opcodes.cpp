@@ -41,22 +41,22 @@ constexpr CycleFragment LoadIndexXImmediate() {
       .Build();
 }
 
-constexpr CycleFragment AluImmediateAccumulator(MicroInternalOp op8, MicroInternalOp op16) {
+constexpr CycleFragment AluImmediateAccumulator(AluOp op) {
   // ALU immediate for A: 2 cycles if M=1, 3 cycles if M=0.
   return Fragment()
-      .Then(FetchPc(op8, Not(Condition(TimingCondition::kAccumulator16)), "fetch imm (8)"))
+      .Then(AluImm8(op, Not(Condition(TimingCondition::kAccumulator16)), "fetch imm (8)"))
       .Then(FetchPc(MicroInternalOp::kSetAddrLowFromFetch, Condition(TimingCondition::kAccumulator16),
                     "fetch imm low"))
-      .Then(FetchPc(op16, Condition(TimingCondition::kAccumulator16), "fetch imm high"))
+      .Then(AluImm16(op, Condition(TimingCondition::kAccumulator16), "fetch imm high"))
       .Build();
 }
 
-constexpr CycleFragment AluImmediateIndex(MicroInternalOp op8, MicroInternalOp op16) {
+constexpr CycleFragment AluImmediateIndex(AluOp op) {
   // ALU immediate keyed on X flag (for CPX/CPY): 2 cycles if X=1, 3 if X=0.
   return Fragment()
-      .Then(FetchPc(op8, Not(Condition(TimingCondition::kIndex16)), "fetch imm (8)"))
+      .Then(AluImm8(op, Not(Condition(TimingCondition::kIndex16)), "fetch imm (8)"))
       .Then(FetchPc(MicroInternalOp::kSetAddrLowFromFetch, Condition(TimingCondition::kIndex16), "fetch imm low"))
-      .Then(FetchPc(op16, Condition(TimingCondition::kIndex16), "fetch imm high"))
+      .Then(AluImm16(op, Condition(TimingCondition::kIndex16), "fetch imm high"))
       .Build();
 }
 
@@ -442,34 +442,15 @@ constexpr CycleFragment Rtl() {
 
 constexpr auto MakeAluSpecs() {
   return std::array{
-      Opcode(0x69, "ADC", "immediate")
-          .Then(AluImmediateAccumulator(MicroInternalOp::kAluAdc8FromFetch, MicroInternalOp::kAluAdc16FromFetch))
-          .Build(),
-      Opcode(0xE9, "SBC", "immediate")
-          .Then(AluImmediateAccumulator(MicroInternalOp::kAluSbc8FromFetch, MicroInternalOp::kAluSbc16FromFetch))
-          .Build(),
-      Opcode(0x29, "AND", "immediate")
-          .Then(AluImmediateAccumulator(MicroInternalOp::kAluAnd8FromFetch, MicroInternalOp::kAluAnd16FromFetch))
-          .Build(),
-      Opcode(0x09, "ORA", "immediate")
-          .Then(AluImmediateAccumulator(MicroInternalOp::kAluOra8FromFetch, MicroInternalOp::kAluOra16FromFetch))
-          .Build(),
-      Opcode(0x49, "EOR", "immediate")
-          .Then(AluImmediateAccumulator(MicroInternalOp::kAluEor8FromFetch, MicroInternalOp::kAluEor16FromFetch))
-          .Build(),
-      Opcode(0xC9, "CMP", "immediate")
-          .Then(AluImmediateAccumulator(MicroInternalOp::kAluCmp8FromFetch, MicroInternalOp::kAluCmp16FromFetch))
-          .Build(),
-      Opcode(0x89, "BIT", "immediate")
-          .Then(AluImmediateAccumulator(MicroInternalOp::kAluBit8ImmFromFetch,
-                                        MicroInternalOp::kAluBit16ImmFromFetch))
-          .Build(),
-      Opcode(0xE0, "CPX", "immediate index")
-          .Then(AluImmediateIndex(MicroInternalOp::kAluCpx8FromFetch, MicroInternalOp::kAluCpx16FromFetch))
-          .Build(),
-      Opcode(0xC0, "CPY", "immediate index")
-          .Then(AluImmediateIndex(MicroInternalOp::kAluCpy8FromFetch, MicroInternalOp::kAluCpy16FromFetch))
-          .Build(),
+      Opcode(0x69, "ADC", "immediate").Then(AluImmediateAccumulator(AluOp::kAdc)).Build(),
+      Opcode(0xE9, "SBC", "immediate").Then(AluImmediateAccumulator(AluOp::kSbc)).Build(),
+      Opcode(0x29, "AND", "immediate").Then(AluImmediateAccumulator(AluOp::kAnd)).Build(),
+      Opcode(0x09, "ORA", "immediate").Then(AluImmediateAccumulator(AluOp::kOra)).Build(),
+      Opcode(0x49, "EOR", "immediate").Then(AluImmediateAccumulator(AluOp::kEor)).Build(),
+      Opcode(0xC9, "CMP", "immediate").Then(AluImmediateAccumulator(AluOp::kCmp)).Build(),
+      Opcode(0x89, "BIT", "immediate").Then(AluImmediateAccumulator(AluOp::kBit)).Build(),
+      Opcode(0xE0, "CPX", "immediate index").Then(AluImmediateIndex(AluOp::kCpx)).Build(),
+      Opcode(0xC0, "CPY", "immediate index").Then(AluImmediateIndex(AluOp::kCpy)).Build(),
   };
 }
 

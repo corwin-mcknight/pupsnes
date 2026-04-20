@@ -103,6 +103,19 @@ inline constexpr WriteSrc UnpackWriteAddrSrc(uint8_t params) {
 inline constexpr ByteSel UnpackWriteAddrByteSel(uint8_t params) {
   return static_cast<ByteSel>((params >> 2U) & 0x03U);
 }
+
+// ALU immediate (kAlu8Imm / kAlu16Imm): bits [3:0] = AluOp (9 variants — Adc,
+// Sbc, And, Ora, Eor, Cmp, Cpx, Cpy, Bit). Dispatch lives in DispatchAlu8Imm /
+// DispatchAlu16Imm in cpu.cpp. Width selection is baked into the enum variant
+// (8 vs 16) because the two paths differ in operand plumbing: 8-bit consumes
+// fetch_data_ only; 16-bit consumes addr_[7:0] (low, stashed earlier) plus
+// fetch_data_ (high).
+inline constexpr uint8_t PackAluOp(AluOp op) {
+  return static_cast<uint8_t>(static_cast<uint32_t>(op) & 0x0FU);
+}
+inline constexpr AluOp UnpackAluOp(uint8_t params) {
+  return static_cast<AluOp>(params & 0x0FU);
+}
 }  // namespace micro_op_params
 
 struct CycleSlotSpec {
@@ -350,6 +363,36 @@ constexpr CycleSlotSpec PullPreIncLoadReg(Reg reg, ByteSel byte_sel, bool update
       rule,
       label,
       micro_op_params::PackLoadReg(reg, byte_sel, update_nz),
+  };
+}
+
+// Parameterized 8-bit ALU immediate. Emits a kFetchPc bus action paired with
+// the unified kAlu8Imm internal op; packs AluOp into CycleSlotSpec::params for
+// DispatchAlu8Imm in cpu.cpp. Used by ADC/SBC/AND/ORA/EOR/CMP/CPX/CPY/BIT
+// immediate when the controlling flag (M for A, X for X/Y-compares) is 1.
+constexpr CycleSlotSpec AluImm8(AluOp op, TimingRuleExpr rule = Always(),
+                                std::string_view label = {}) {
+  return CycleSlotSpec{
+      MicroBusAction::kFetchPc,
+      MicroInternalOp::kAlu8Imm,
+      rule,
+      label,
+      micro_op_params::PackAluOp(op),
+  };
+}
+
+// Parameterized 16-bit ALU immediate. Emits a kFetchPc bus action paired with
+// the unified kAlu16Imm internal op; packs AluOp into CycleSlotSpec::params for
+// DispatchAlu16Imm in cpu.cpp. Consumes addr_[7:0] as the operand low byte
+// (stashed by a prior kSetAddrLowFromFetch) and fetch_data_ as the high byte.
+constexpr CycleSlotSpec AluImm16(AluOp op, TimingRuleExpr rule = Always(),
+                                 std::string_view label = {}) {
+  return CycleSlotSpec{
+      MicroBusAction::kFetchPc,
+      MicroInternalOp::kAlu16Imm,
+      rule,
+      label,
+      micro_op_params::PackAluOp(op),
   };
 }
 

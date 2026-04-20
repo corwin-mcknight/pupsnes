@@ -85,26 +85,15 @@ enum class MicroInternalOp : uint8_t {
   kLoadDpHighFromFetchUpdateNz,         // DP high = fetch_data_; update N/Z (16-bit)
   kLoadXHighFromFetchUpdateNz,          // X high = fetch_data_; update N/Z (16-bit)
   kLoadYHighFromFetchUpdateNz,          // Y high = fetch_data_; update N/Z (16-bit)
-  // 8-bit ALU ops: use fetch_data_ as the operand, apply to A low byte (or X/Y).
-  kAluAdc8FromFetch,
-  kAluSbc8FromFetch,
-  kAluAnd8FromFetch,
-  kAluOra8FromFetch,
-  kAluEor8FromFetch,
-  kAluCmp8FromFetch,
-  kAluCpx8FromFetch,
-  kAluCpy8FromFetch,
-  kAluBit8ImmFromFetch,  // Immediate BIT: only Z updated
-  // 16-bit ALU ops: operand_low stashed in addr_[7:0]; fetch_data_ is operand high.
-  kAluAdc16FromFetch,
-  kAluSbc16FromFetch,
-  kAluAnd16FromFetch,
-  kAluOra16FromFetch,
-  kAluEor16FromFetch,
-  kAluCmp16FromFetch,
-  kAluCpx16FromFetch,
-  kAluCpy16FromFetch,
-  kAluBit16ImmFromFetch,
+  kAlu8Imm,                             // 8-bit ALU immediate: apply AluOp to fetch_data_ against
+                                        // A/X/Y (or just update Z for BIT imm). Params pack AluOp in
+                                        // bits [3:0] (see micro_op_params::PackAluOp). Dispatch lives
+                                        // in DispatchAlu8Imm in cpu.cpp.
+  kAlu16Imm,                            // 16-bit ALU immediate: apply AluOp to the 16-bit operand
+                                        // formed from addr_[7:0] (low, stashed by a prior
+                                        // kSetAddrLowFromFetch) and fetch_data_ (high). Params pack
+                                        // AluOp in bits [3:0]. Dispatch lives in DispatchAlu16Imm in
+                                        // cpu.cpp.
 };
 
 // Typed enums for MicroOp::params packing. Populated in subsequent refactor
