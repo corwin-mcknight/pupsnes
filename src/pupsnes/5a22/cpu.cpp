@@ -63,6 +63,7 @@ namespace {
   return (static_cast<uint32_t>(r.PBR) << 16U) | static_cast<uint32_t>(r.PC);
 }
 
+// Width-aware N/Z update: `wide` selects between 16-bit and 8-bit-low result.
 [[gnu::always_inline]] inline void SetNzFromWidth(CpuRegs& regs, uint16_t value, bool wide) {
   if (wide) {
     regs.P.Z = (value == 0U);
@@ -72,412 +73,6 @@ namespace {
     regs.P.Z = (lo == 0U);
     regs.P.N = (lo & 0x80U) != 0U;
   }
-}
-
-// dest = src but only replace the low byte (or full 16 bits) according to width.
-[[gnu::always_inline]] inline uint16_t MergeByWidth(uint16_t dest, uint16_t src, bool wide) {
-  return wide ? src : static_cast<uint16_t>((dest & 0xFF00U) | (src & 0x00FFU));
-}
-
-[[gnu::always_inline]] inline void SetAddrByteFromFetch(uint32_t& addr, uint8_t fetch, unsigned shift) {
-  const uint32_t mask = ~(uint32_t{0xFFU} << shift) & 0xFFFFFFU;
-  addr = (addr & mask) | (static_cast<uint32_t>(fetch) << shift);
-}
-
-[[gnu::always_inline]] inline uint16_t AluOperand16FromFetch(uint32_t addr, uint8_t fetch) {
-  const uint16_t low = static_cast<uint16_t>(addr & 0xFFU);
-  const uint16_t high = static_cast<uint16_t>(static_cast<uint16_t>(fetch) << 8U);
-  return static_cast<uint16_t>(low | high);
-}
-
-[[gnu::always_inline]] inline void LoadA8UpdateNz(CpuRegs& regs, uint8_t fetch) {
-  regs.A = static_cast<uint16_t>((regs.A & 0xFF00U) | fetch);
-  regs.P.Z = (static_cast<uint8_t>(regs.A) == 0U);
-  regs.P.N = (regs.A & 0x0080U) != 0U;
-}
-[[gnu::always_inline]] inline void LoadALow(CpuRegs& regs, uint8_t fetch) {
-  regs.A = static_cast<uint16_t>((regs.A & 0xFF00U) | fetch);
-}
-[[gnu::always_inline]] inline void LoadAHighUpdateNz(CpuRegs& regs, uint8_t fetch) {
-  const uint16_t high = static_cast<uint16_t>(static_cast<uint16_t>(fetch) << 8U);
-  regs.A = static_cast<uint16_t>(high | (regs.A & 0x00FFU));
-  regs.P.Z = (regs.A == 0U);
-  regs.P.N = (regs.A & 0x8000U) != 0U;
-}
-[[gnu::always_inline]] inline void LoadX8UpdateNz(CpuRegs& regs, uint8_t fetch) {
-  regs.X = static_cast<uint16_t>((regs.X & 0xFF00U) | fetch);
-  regs.P.Z = (static_cast<uint8_t>(regs.X) == 0U);
-  regs.P.N = (regs.X & 0x0080U) != 0U;
-}
-[[gnu::always_inline]] inline void LoadXLow(CpuRegs& regs, uint8_t fetch) {
-  regs.X = static_cast<uint16_t>((regs.X & 0xFF00U) | fetch);
-}
-[[gnu::always_inline]] inline void LoadXHighUpdateNz(CpuRegs& regs, uint8_t fetch) {
-  const uint16_t high = static_cast<uint16_t>(static_cast<uint16_t>(fetch) << 8U);
-  regs.X = static_cast<uint16_t>(high | (regs.X & 0x00FFU));
-  regs.P.Z = (regs.X == 0U);
-  regs.P.N = (regs.X & 0x8000U) != 0U;
-}
-[[gnu::always_inline]] inline void LoadY8UpdateNz(CpuRegs& regs, uint8_t fetch) {
-  regs.Y = static_cast<uint16_t>((regs.Y & 0xFF00U) | fetch);
-  regs.P.Z = (static_cast<uint8_t>(regs.Y) == 0U);
-  regs.P.N = (regs.Y & 0x0080U) != 0U;
-}
-[[gnu::always_inline]] inline void LoadYLow(CpuRegs& regs, uint8_t fetch) {
-  regs.Y = static_cast<uint16_t>((regs.Y & 0xFF00U) | fetch);
-}
-[[gnu::always_inline]] inline void LoadYHighUpdateNz(CpuRegs& regs, uint8_t fetch) {
-  const uint16_t high = static_cast<uint16_t>(static_cast<uint16_t>(fetch) << 8U);
-  regs.Y = static_cast<uint16_t>(high | (regs.Y & 0x00FFU));
-  regs.P.Z = (regs.Y == 0U);
-  regs.P.N = (regs.Y & 0x8000U) != 0U;
-}
-
-[[gnu::always_inline]] inline void BranchRelative8(CpuRegs& regs, uint8_t fetch, bool& branch_page_crossed) {
-  const int8_t displacement = static_cast<int8_t>(fetch);
-  const uint16_t old_pc = regs.PC;
-  regs.PC = static_cast<uint16_t>(regs.PC + displacement);
-  branch_page_crossed = ((old_pc ^ regs.PC) & 0xFF00U) != 0U;
-}
-
-[[gnu::always_inline]] inline void DecrementSp(CpuRegs& regs) {
-  if (regs.P.E) {
-    const uint8_t sp_lo = static_cast<uint8_t>(static_cast<uint8_t>(regs.SP) - 1U);
-    regs.SP = static_cast<uint16_t>(0x0100U | sp_lo);
-  } else {
-    regs.SP = static_cast<uint16_t>(regs.SP - 1U);
-  }
-}
-
-[[gnu::always_inline]] inline void IncrementSp(CpuRegs& regs) {
-  if (regs.P.E) {
-    const uint8_t sp_lo = static_cast<uint8_t>(static_cast<uint8_t>(regs.SP) + 1U);
-    regs.SP = static_cast<uint16_t>(0x0100U | sp_lo);
-  } else {
-    regs.SP = static_cast<uint16_t>(regs.SP + 1U);
-  }
-}
-
-[[gnu::always_inline]] inline void LoadDbrUpdateNz(CpuRegs& regs, uint8_t fetch) {
-  regs.DBR = fetch;
-  regs.P.Z = (regs.DBR == 0U);
-  regs.P.N = (regs.DBR & 0x80U) != 0U;
-}
-
-[[gnu::always_inline]] inline void LoadDpLowFromFetch(CpuRegs& regs, uint8_t fetch) {
-  regs.DP = static_cast<uint16_t>((regs.DP & 0xFF00U) | fetch);
-}
-[[gnu::always_inline]] inline void LoadDpHighFromFetchUpdateNz(CpuRegs& regs, uint8_t fetch) {
-  const uint16_t high = static_cast<uint16_t>(static_cast<uint16_t>(fetch) << 8U);
-  regs.DP = static_cast<uint16_t>(high | (regs.DP & 0x00FFU));
-  regs.P.Z = (regs.DP == 0U);
-  regs.P.N = (regs.DP & 0x8000U) != 0U;
-}
-[[gnu::always_inline]] inline void SetPclFromFetch(CpuRegs& regs, uint8_t fetch) {
-  regs.PC = static_cast<uint16_t>((regs.PC & 0xFF00U) | fetch);
-}
-[[gnu::always_inline]] inline void SetPchFromFetch(CpuRegs& regs, uint8_t fetch) {
-  const uint16_t high = static_cast<uint16_t>(static_cast<uint16_t>(fetch) << 8U);
-  regs.PC = static_cast<uint16_t>((regs.PC & 0x00FFU) | high);
-}
-[[gnu::always_inline]] inline void SetPbrFromFetch(CpuRegs& regs, uint8_t fetch) { regs.PBR = fetch; }
-[[gnu::always_inline]] inline void LoadPFromFetch(CpuRegs& regs, uint8_t fetch) {
-  regs.P.FromByte(fetch, regs.P.E);
-}
-
-[[gnu::always_inline]] inline void IncA(CpuRegs& regs) {
-  if (IsAccumulator16Bit(regs)) {
-    regs.A = static_cast<uint16_t>(regs.A + 1U);
-    regs.P.Z = (regs.A == 0U);
-    regs.P.N = (regs.A & 0x8000U) != 0U;
-  } else {
-    const uint8_t lo = static_cast<uint8_t>(static_cast<uint8_t>(regs.A) + 1U);
-    regs.A = static_cast<uint16_t>((regs.A & 0xFF00U) | lo);
-    regs.P.Z = (lo == 0U);
-    regs.P.N = (lo & 0x80U) != 0U;
-  }
-}
-[[gnu::always_inline]] inline void DecA(CpuRegs& regs) {
-  if (IsAccumulator16Bit(regs)) {
-    regs.A = static_cast<uint16_t>(regs.A - 1U);
-    regs.P.Z = (regs.A == 0U);
-    regs.P.N = (regs.A & 0x8000U) != 0U;
-  } else {
-    const uint8_t lo = static_cast<uint8_t>(static_cast<uint8_t>(regs.A) - 1U);
-    regs.A = static_cast<uint16_t>((regs.A & 0xFF00U) | lo);
-    regs.P.Z = (lo == 0U);
-    regs.P.N = (lo & 0x80U) != 0U;
-  }
-}
-[[gnu::always_inline]] inline void IncX(CpuRegs& regs) {
-  if (IsIndex16Bit(regs)) {
-    regs.X = static_cast<uint16_t>(regs.X + 1U);
-    regs.P.Z = (regs.X == 0U);
-    regs.P.N = (regs.X & 0x8000U) != 0U;
-  } else {
-    const uint8_t lo = static_cast<uint8_t>(static_cast<uint8_t>(regs.X) + 1U);
-    regs.X = static_cast<uint16_t>((regs.X & 0xFF00U) | lo);
-    regs.P.Z = (lo == 0U);
-    regs.P.N = (lo & 0x80U) != 0U;
-  }
-}
-[[gnu::always_inline]] inline void DecX(CpuRegs& regs) {
-  if (IsIndex16Bit(regs)) {
-    regs.X = static_cast<uint16_t>(regs.X - 1U);
-    regs.P.Z = (regs.X == 0U);
-    regs.P.N = (regs.X & 0x8000U) != 0U;
-  } else {
-    const uint8_t lo = static_cast<uint8_t>(static_cast<uint8_t>(regs.X) - 1U);
-    regs.X = static_cast<uint16_t>((regs.X & 0xFF00U) | lo);
-    regs.P.Z = (lo == 0U);
-    regs.P.N = (lo & 0x80U) != 0U;
-  }
-}
-[[gnu::always_inline]] inline void IncY(CpuRegs& regs) {
-  if (IsIndex16Bit(regs)) {
-    regs.Y = static_cast<uint16_t>(regs.Y + 1U);
-    regs.P.Z = (regs.Y == 0U);
-    regs.P.N = (regs.Y & 0x8000U) != 0U;
-  } else {
-    const uint8_t lo = static_cast<uint8_t>(static_cast<uint8_t>(regs.Y) + 1U);
-    regs.Y = static_cast<uint16_t>((regs.Y & 0xFF00U) | lo);
-    regs.P.Z = (lo == 0U);
-    regs.P.N = (lo & 0x80U) != 0U;
-  }
-}
-[[gnu::always_inline]] inline void DecY(CpuRegs& regs) {
-  if (IsIndex16Bit(regs)) {
-    regs.Y = static_cast<uint16_t>(regs.Y - 1U);
-    regs.P.Z = (regs.Y == 0U);
-    regs.P.N = (regs.Y & 0x8000U) != 0U;
-  } else {
-    const uint8_t lo = static_cast<uint8_t>(static_cast<uint8_t>(regs.Y) - 1U);
-    regs.Y = static_cast<uint16_t>((regs.Y & 0xFF00U) | lo);
-    regs.P.Z = (lo == 0U);
-    regs.P.N = (lo & 0x80U) != 0U;
-  }
-}
-
-// Dispatch a parameterized register inc/dec to the concrete per-register
-// helper above. The switch collapses at compile time when (reg, decrement) are
-// compile-time constants (true for all current MakeIncDecSpecs entries), so
-// the hot path remains a direct call — no runtime table lookup.
-[[gnu::always_inline]] inline void DispatchIncDecReg(CpuRegs& regs, Reg reg, bool decrement) {
-  switch (reg) {
-    case Reg::kA:
-      if (decrement) {
-        DecA(regs);
-      } else {
-        IncA(regs);
-      }
-      return;
-    case Reg::kX:
-      if (decrement) {
-        DecX(regs);
-      } else {
-        IncX(regs);
-      }
-      return;
-    case Reg::kY:
-      if (decrement) {
-        DecY(regs);
-      } else {
-        IncY(regs);
-      }
-      return;
-    default:
-      break;
-  }
-  __builtin_unreachable();
-}
-
-// Dispatch a parameterized flag set/clear to the concrete P-register field.
-// The switch collapses at compile time when (flag, value) are compile-time
-// constants (true for every MakeFlagSpecs entry that emits kSetFlag), so the
-// hot path is a single store — no runtime lookup. Only C/D/I/V are reachable
-// via real opcodes; any other Flag value is a builder bug.
-[[gnu::always_inline]] inline void DispatchSetFlag(CpuRegs& regs, Flag flag, bool value) {
-  switch (flag) {
-    case Flag::kC:
-      regs.P.C = value;
-      return;
-    case Flag::kD:
-      regs.P.D = value;
-      return;
-    case Flag::kI:
-      regs.P.I = value;
-      return;
-    case Flag::kV:
-      regs.P.V = value;
-      return;
-    default:
-      break;
-  }
-  __builtin_unreachable();
-}
-
-// Dispatch a parameterized branch condition to its concrete P-register test.
-// The switch collapses at compile time when the BranchCond is a compile-time
-// constant (true for every MakeBranchSpecs entry), so the hot path is a single
-// load-and-optional-negate — no runtime lookup. Returns whether the branch is
-// taken; caller assigns into timing_context_.branch_taken.
-[[gnu::always_inline]] inline bool DispatchSetBranch(const CpuRegs& regs, BranchCond cond) {
-  switch (cond) {
-    case BranchCond::kAlways:
-      return true;
-    case BranchCond::kZ:
-      return regs.P.Z;
-    case BranchCond::kNotZ:
-      return !regs.P.Z;
-    case BranchCond::kC:
-      return regs.P.C;
-    case BranchCond::kNotC:
-      return !regs.P.C;
-    case BranchCond::kN:
-      return regs.P.N;
-    case BranchCond::kNotN:
-      return !regs.P.N;
-    case BranchCond::kV:
-      return regs.P.V;
-    case BranchCond::kNotV:
-      return !regs.P.V;
-  }
-  __builtin_unreachable();
-}
-
-// Dispatch a parameterized register load from fetch_data_ to the concrete
-// per-(reg, byte, update_nz) helper above. The switch collapses at compile
-// time when all three axes are compile-time constants (true for every
-// LoadRegFromFetch / PullPreIncLoadReg call site in the opcode specs), so
-// the hot path is a direct call — no runtime table lookup. Only (reg, kHigh,
-// update_nz=true) is a valid high-byte combo for A/X/Y; the builder packs
-// update_nz=true on every high-byte emission.
-[[gnu::always_inline]] inline void DispatchLoadReg(CpuRegs& regs, uint8_t fetch_data, Reg reg, ByteSel byte_sel,
-                                                  bool update_nz) {
-  switch (reg) {
-    case Reg::kA:
-      if (byte_sel == ByteSel::kLow) {
-        if (update_nz) {
-          LoadA8UpdateNz(regs, fetch_data);
-        } else {
-          LoadALow(regs, fetch_data);
-        }
-      } else {
-        LoadAHighUpdateNz(regs, fetch_data);
-      }
-      return;
-    case Reg::kX:
-      if (byte_sel == ByteSel::kLow) {
-        if (update_nz) {
-          LoadX8UpdateNz(regs, fetch_data);
-        } else {
-          LoadXLow(regs, fetch_data);
-        }
-      } else {
-        LoadXHighUpdateNz(regs, fetch_data);
-      }
-      return;
-    case Reg::kY:
-      if (byte_sel == ByteSel::kLow) {
-        if (update_nz) {
-          LoadY8UpdateNz(regs, fetch_data);
-        } else {
-          LoadYLow(regs, fetch_data);
-        }
-      } else {
-        LoadYHighUpdateNz(regs, fetch_data);
-      }
-      return;
-    case Reg::kDbr:
-      LoadDbrUpdateNz(regs, fetch_data);
-      return;
-    case Reg::kDp:
-      if (byte_sel == ByteSel::kLow) {
-        LoadDpLowFromFetch(regs, fetch_data);
-      } else {
-        LoadDpHighFromFetchUpdateNz(regs, fetch_data);
-      }
-      return;
-    case Reg::kPcl:
-      SetPclFromFetch(regs, fetch_data);
-      return;
-    case Reg::kPch:
-      SetPchFromFetch(regs, fetch_data);
-      return;
-    case Reg::kPbr:
-      SetPbrFromFetch(regs, fetch_data);
-      return;
-    case Reg::kP:
-      // P's FromByte handles emulation-mode forcing of M/X back to 1.
-      // update_nz is ignored; P sets its own flags from the byte.
-      LoadPFromFetch(regs, fetch_data);
-      return;
-    default:
-      break;
-  }
-  __builtin_unreachable();
-}
-
-// Dispatch a parameterized stack push to the concrete byte-extraction logic
-// for each PushSrc. Mirrors the per-variant kPushXxx byte math from the old
-// PerformBusAction switch. The switch collapses at compile time when PushSrc
-// is a compile-time constant (true for every PushReg call site), so the hot
-// path is a direct byte computation — no runtime table lookup. The caller
-// issues the stack write at StackAddr(regs) with the returned byte.
-[[gnu::always_inline]] inline uint8_t DispatchPushStackByte(const CpuRegs& regs, SnesAddrT addr, PushSrc src) {
-  switch (src) {
-    case PushSrc::kA8:
-      return static_cast<uint8_t>(regs.A);
-    case PushSrc::kAHigh:
-      return static_cast<uint8_t>(regs.A >> 8U);
-    case PushSrc::kX8:
-      return static_cast<uint8_t>(regs.X);
-    case PushSrc::kXHigh:
-      return static_cast<uint8_t>(regs.X >> 8U);
-    case PushSrc::kY8:
-      return static_cast<uint8_t>(regs.Y);
-    case PushSrc::kYHigh:
-      return static_cast<uint8_t>(regs.Y >> 8U);
-    case PushSrc::kPcl:
-      return static_cast<uint8_t>(regs.PC);
-    case PushSrc::kPch:
-      return static_cast<uint8_t>(regs.PC >> 8U);
-    case PushSrc::kPbr:
-      return regs.PBR;
-    case PushSrc::kDbr:
-      return regs.DBR;
-    case PushSrc::kP:
-      return regs.P.ToByte();
-    case PushSrc::kDpLow:
-      return static_cast<uint8_t>(regs.DP);
-    case PushSrc::kDpHigh:
-      return static_cast<uint8_t>(regs.DP >> 8U);
-    case PushSrc::kAddrLow:
-      return static_cast<uint8_t>(addr & 0xFFU);
-    case PushSrc::kAddrHigh:
-      return static_cast<uint8_t>((addr >> 8U) & 0xFFU);
-  }
-  __builtin_unreachable();
-}
-
-// Dispatch a parameterized write-to-addr_ to the concrete byte-extraction
-// logic for each (WriteSrc, ByteSel). Mirrors the per-variant kWriteXxxAddr
-// byte math from the old PerformBusAction switch. Because (src, byte_sel) is
-// a compile-time constant at every WriteRegByte call site, the switch
-// collapses to a direct byte computation on the hot path.
-[[gnu::always_inline]] inline uint8_t DispatchWriteByte(const CpuRegs& regs, uint8_t fetch_data, WriteSrc src,
-                                                        ByteSel byte_sel) {
-  switch (src) {
-    case WriteSrc::kFetchData:
-      return fetch_data;
-    case WriteSrc::kA:
-      return (byte_sel == ByteSel::kLow) ? static_cast<uint8_t>(regs.A) : static_cast<uint8_t>(regs.A >> 8U);
-    case WriteSrc::kX:
-      return (byte_sel == ByteSel::kLow) ? static_cast<uint8_t>(regs.X) : static_cast<uint8_t>(regs.X >> 8U);
-    case WriteSrc::kY:
-      return (byte_sel == ByteSel::kLow) ? static_cast<uint8_t>(regs.Y) : static_cast<uint8_t>(regs.Y >> 8U);
-  }
-  __builtin_unreachable();
 }
 
 // When e=1 the m and x flags are forced to 1, XH/YH forced to $00, and the
@@ -493,384 +88,18 @@ namespace {
   }
 }
 
-[[gnu::always_inline]] inline void ExchangeCarryEmulation(CpuRegs& regs) {
-  const bool new_e = regs.P.C;
-  const bool new_c = regs.P.E;
-  regs.P.E = new_e;
-  regs.P.C = new_c;
-  ApplyEmulationForcing(regs);
-}
-
-[[gnu::always_inline]] inline void TransferAToX(CpuRegs& regs) {
-  const bool wide = IsIndex16Bit(regs);
-  regs.X = MergeByWidth(regs.X, regs.A, wide);
-  SetNzFromWidth(regs, regs.X, wide);
-}
-[[gnu::always_inline]] inline void TransferAToY(CpuRegs& regs) {
-  const bool wide = IsIndex16Bit(regs);
-  regs.Y = MergeByWidth(regs.Y, regs.A, wide);
-  SetNzFromWidth(regs, regs.Y, wide);
-}
-[[gnu::always_inline]] inline void TransferSToX(CpuRegs& regs) {
-  const bool wide = IsIndex16Bit(regs);
-  regs.X = MergeByWidth(regs.X, regs.SP, wide);
-  SetNzFromWidth(regs, regs.X, wide);
-}
-[[gnu::always_inline]] inline void TransferXToA(CpuRegs& regs) {
-  const bool wide = IsAccumulator16Bit(regs);
-  regs.A = MergeByWidth(regs.A, regs.X, wide);
-  SetNzFromWidth(regs, regs.A, wide);
-}
-[[gnu::always_inline]] inline void TransferXToS(CpuRegs& regs) {
-  // SP is always written full width except that E=1 forces SH back to $01.
-  regs.SP = regs.X;
-  if (regs.P.E) {
-    regs.SP = static_cast<uint16_t>(0x0100U | (regs.SP & 0x00FFU));
-  }
-}
-[[gnu::always_inline]] inline void TransferXToY(CpuRegs& regs) {
-  const bool wide = IsIndex16Bit(regs);
-  regs.Y = MergeByWidth(regs.Y, regs.X, wide);
-  SetNzFromWidth(regs, regs.Y, wide);
-}
-[[gnu::always_inline]] inline void TransferYToA(CpuRegs& regs) {
-  const bool wide = IsAccumulator16Bit(regs);
-  regs.A = MergeByWidth(regs.A, regs.Y, wide);
-  SetNzFromWidth(regs, regs.A, wide);
-}
-[[gnu::always_inline]] inline void TransferYToX(CpuRegs& regs) {
-  const bool wide = IsIndex16Bit(regs);
-  regs.X = MergeByWidth(regs.X, regs.Y, wide);
-  SetNzFromWidth(regs, regs.X, wide);
-}
-[[gnu::always_inline]] inline void TransferAToD(CpuRegs& regs) {
-  regs.DP = regs.A;
-  SetNzFromWidth(regs, regs.DP, true);
-}
-[[gnu::always_inline]] inline void TransferAToS(CpuRegs& regs) {
-  regs.SP = regs.A;
-  if (regs.P.E) {
-    regs.SP = static_cast<uint16_t>(0x0100U | (regs.SP & 0x00FFU));
-  }
-}
-[[gnu::always_inline]] inline void TransferDToA(CpuRegs& regs) {
-  regs.A = regs.DP;
-  SetNzFromWidth(regs, regs.A, true);
-}
-[[gnu::always_inline]] inline void TransferSToA(CpuRegs& regs) {
-  regs.A = regs.SP;
-  SetNzFromWidth(regs, regs.A, true);
-}
-
-// Dispatch a parameterized register-to-register transfer to the concrete
-// per-pair helper above. The switch collapses at compile time when the (src,
-// dst) pair is a known constant (true for all current MakeTransferSpecs
-// entries), so the hot path remains a direct call — no runtime table lookup.
-[[gnu::always_inline]] inline void DispatchTransferReg(CpuRegs& regs, Reg src, Reg dst) {
-  switch (src) {
-    case Reg::kA:
-      switch (dst) {
-        case Reg::kX:
-          TransferAToX(regs);
-          return;
-        case Reg::kY:
-          TransferAToY(regs);
-          return;
-        case Reg::kSp:
-          TransferAToS(regs);
-          return;
-        case Reg::kDp:
-          TransferAToD(regs);
-          return;
-        default:
-          break;
-      }
-      break;
-    case Reg::kX:
-      switch (dst) {
-        case Reg::kA:
-          TransferXToA(regs);
-          return;
-        case Reg::kY:
-          TransferXToY(regs);
-          return;
-        case Reg::kSp:
-          TransferXToS(regs);
-          return;
-        default:
-          break;
-      }
-      break;
-    case Reg::kY:
-      switch (dst) {
-        case Reg::kA:
-          TransferYToA(regs);
-          return;
-        case Reg::kX:
-          TransferYToX(regs);
-          return;
-        default:
-          break;
-      }
-      break;
-    case Reg::kSp:
-      switch (dst) {
-        case Reg::kA:
-          TransferSToA(regs);
-          return;
-        case Reg::kX:
-          TransferSToX(regs);
-          return;
-        default:
-          break;
-      }
-      break;
-    case Reg::kDp:
-      if (dst == Reg::kA) {
-        TransferDToA(regs);
-        return;
-      }
-      break;
-    default:
-      break;
-  }
-  __builtin_unreachable();
-}
-
-[[gnu::always_inline]] inline void BranchRelative16(CpuRegs& regs, uint32_t addr) {
-  const int16_t displacement = static_cast<int16_t>(static_cast<uint16_t>(addr & 0xFFFFU));
-  regs.PC = static_cast<uint16_t>(regs.PC + displacement);
-}
-[[gnu::always_inline]] inline void SetPcFromAddr(CpuRegs& regs, uint32_t addr) {
-  regs.PC = static_cast<uint16_t>(addr & 0xFFFFU);
-}
-[[gnu::always_inline]] inline void SetPcAndPbrFromAddr(CpuRegs& regs, uint32_t addr) {
-  regs.PC = static_cast<uint16_t>(addr & 0xFFFFU);
-  regs.PBR = static_cast<uint8_t>((addr >> 16U) & 0xFFU);
-}
-
-// Dispatch a parameterized kSetAddrByteFromFetch. byte_sel chooses which byte
-// of addr_ is replaced; from_dbr = true is only valid with byte_sel == kHigh
-// and also writes DBR into addr_[23:16] (replicating the old
-// kSetAddrHighFromFetchAndBankFromDbr op). The switch collapses at compile
-// time because every call site passes compile-time constants.
-[[gnu::always_inline]] inline void DispatchSetAddrByte(uint32_t& addr, const CpuRegs& regs, uint8_t fetch,
-                                                      ByteSel byte_sel, bool from_dbr) {
-  switch (byte_sel) {
-    case ByteSel::kLow:
-      SetAddrByteFromFetch(addr, fetch, 0);
-      return;
-    case ByteSel::kHigh:
-      SetAddrByteFromFetch(addr, fetch, 8);
-      if (from_dbr) {
-        addr = (addr & 0x00FFFFU) | (static_cast<uint32_t>(regs.DBR) << 16U);
-      }
-      return;
-    case ByteSel::kBank:
-      SetAddrByteFromFetch(addr, fetch, 16);
-      return;
-  }
-  __builtin_unreachable();
-}
-
-// Dispatch the parameterized branch-relative op. wide=true pulls the 16-bit
-// displacement from addr_; wide=false uses fetch_data_ and updates
-// branch_page_crossed.
-[[gnu::always_inline]] inline void DispatchBranchRelative(CpuRegs& regs, uint32_t addr, uint8_t fetch,
-                                                         bool& branch_page_crossed, bool wide) {
-  if (wide) {
-    BranchRelative16(regs, addr);
-  } else {
-    BranchRelative8(regs, fetch, branch_page_crossed);
-  }
-}
-
-// Dispatch kSetPcFromAddr. with_pbr=true also copies addr_[23:16] into PBR.
-[[gnu::always_inline]] inline void DispatchSetPcFromAddr(CpuRegs& regs, uint32_t addr, bool with_pbr) {
-  if (with_pbr) {
-    SetPcAndPbrFromAddr(regs, addr);
-  } else {
-    SetPcFromAddr(regs, addr);
-  }
-}
-
-// Dispatch the fused kLoadAddrByteAndSetPc. First write the fetch byte into
-// the selected byte of addr_, then set PC (and optionally PBR) from addr_.
-[[gnu::always_inline]] inline void DispatchLoadAddrByteAndSetPc(uint32_t& addr, CpuRegs& regs, uint8_t fetch,
-                                                               ByteSel byte_sel, bool with_pbr) {
-  DispatchSetAddrByte(addr, regs, fetch, byte_sel, /*from_dbr=*/false);
-  DispatchSetPcFromAddr(regs, addr, with_pbr);
-}
-
-// Dispatch kMaskStatus (REP/SEP). or_bits=true emits SEP (P |= fetch); false
-// emits REP (P &= ~fetch). Both paths preserve the E-mode forcing of M/X
-// back to 1 via regs.P.FromByte + ApplyEmulationForcing.
-[[gnu::always_inline]] inline void DispatchMaskStatus(CpuRegs& regs, uint8_t fetch, bool or_bits) {
-  uint8_t p = regs.P.ToByte();
-  if (or_bits) {
-    p = static_cast<uint8_t>(p | fetch);
-  } else {
-    p = static_cast<uint8_t>(p & ~fetch);
-  }
-  regs.P.FromByte(p, regs.P.E);
-  ApplyEmulationForcing(regs);
-}
-
-// Binary ADC helper. BCD/decimal mode is not yet implemented; in D=1 the
-// behavior falls back to binary arithmetic (and v flag is overwritten).
-[[gnu::always_inline]] inline void AluAdc8(CpuRegs& regs, uint8_t operand) {
-  const uint16_t a_lo = static_cast<uint8_t>(regs.A);
-  const uint16_t sum = static_cast<uint16_t>(a_lo + operand + (regs.P.C ? 1U : 0U));
-  const uint8_t result = static_cast<uint8_t>(sum);
-  const bool overflow = ((~(a_lo ^ operand) & (a_lo ^ result)) & 0x80U) != 0U;
-  regs.A = static_cast<uint16_t>((regs.A & 0xFF00U) | result);
-  regs.P.C = (sum & 0x0100U) != 0U;
-  regs.P.V = overflow;
-  regs.P.Z = (result == 0U);
-  regs.P.N = (result & 0x80U) != 0U;
-}
-[[gnu::always_inline]] inline void AluAdc16(CpuRegs& regs, uint16_t operand) {
-  const uint32_t a = regs.A;
-  const uint32_t sum = a + operand + (regs.P.C ? 1U : 0U);
-  const uint16_t result = static_cast<uint16_t>(sum);
-  const bool overflow = ((~(a ^ operand) & (a ^ result)) & 0x8000U) != 0U;
-  regs.A = result;
-  regs.P.C = (sum & 0x10000U) != 0U;
-  regs.P.V = overflow;
-  regs.P.Z = (result == 0U);
-  regs.P.N = (result & 0x8000U) != 0U;
-}
-// SBC binary: A - operand - (1 - C). Implement as ADC of ~operand.
-[[gnu::always_inline]] inline void AluSbc8(CpuRegs& regs, uint8_t operand) {
-  AluAdc8(regs, static_cast<uint8_t>(~operand));
-}
-[[gnu::always_inline]] inline void AluSbc16(CpuRegs& regs, uint16_t operand) {
-  AluAdc16(regs, static_cast<uint16_t>(~operand));
-}
-[[gnu::always_inline]] inline void AluAnd8(CpuRegs& regs, uint8_t operand) {
-  const uint8_t result = static_cast<uint8_t>(regs.A) & operand;
-  regs.A = static_cast<uint16_t>((regs.A & 0xFF00U) | result);
-  regs.P.Z = (result == 0U);
-  regs.P.N = (result & 0x80U) != 0U;
-}
-[[gnu::always_inline]] inline void AluAnd16(CpuRegs& regs, uint16_t operand) {
-  regs.A = static_cast<uint16_t>(regs.A & operand);
-  regs.P.Z = (regs.A == 0U);
-  regs.P.N = (regs.A & 0x8000U) != 0U;
-}
-[[gnu::always_inline]] inline void AluOra8(CpuRegs& regs, uint8_t operand) {
-  const uint8_t result = static_cast<uint8_t>(regs.A) | operand;
-  regs.A = static_cast<uint16_t>((regs.A & 0xFF00U) | result);
-  regs.P.Z = (result == 0U);
-  regs.P.N = (result & 0x80U) != 0U;
-}
-[[gnu::always_inline]] inline void AluOra16(CpuRegs& regs, uint16_t operand) {
-  regs.A = static_cast<uint16_t>(regs.A | operand);
-  regs.P.Z = (regs.A == 0U);
-  regs.P.N = (regs.A & 0x8000U) != 0U;
-}
-[[gnu::always_inline]] inline void AluEor8(CpuRegs& regs, uint8_t operand) {
-  const uint8_t result = static_cast<uint8_t>(regs.A) ^ operand;
-  regs.A = static_cast<uint16_t>((regs.A & 0xFF00U) | result);
-  regs.P.Z = (result == 0U);
-  regs.P.N = (result & 0x80U) != 0U;
-}
-[[gnu::always_inline]] inline void AluEor16(CpuRegs& regs, uint16_t operand) {
-  regs.A = static_cast<uint16_t>(regs.A ^ operand);
-  regs.P.Z = (regs.A == 0U);
-  regs.P.N = (regs.A & 0x8000U) != 0U;
-}
-[[gnu::always_inline]] inline void DoCompare8(CpuRegs& regs, uint8_t reg, uint8_t operand) {
-  const uint16_t diff = static_cast<uint16_t>(reg) - static_cast<uint16_t>(operand);
-  regs.P.C = reg >= operand;
-  regs.P.Z = (static_cast<uint8_t>(diff) == 0U);
-  regs.P.N = (diff & 0x80U) != 0U;
-}
-[[gnu::always_inline]] inline void DoCompare16(CpuRegs& regs, uint16_t reg, uint16_t operand) {
-  const uint32_t diff = static_cast<uint32_t>(reg) - static_cast<uint32_t>(operand);
-  regs.P.C = reg >= operand;
-  regs.P.Z = (static_cast<uint16_t>(diff) == 0U);
-  regs.P.N = (diff & 0x8000U) != 0U;
-}
-
-// Dispatch a parameterized 8-bit ALU immediate to the concrete per-op helper
-// above. Mirrors the per-variant kAluXxx8FromFetch cases from the old
-// ExecuteInternalOp switch. Because AluOp is a compile-time constant at every
-// AluImm8 call site, the switch collapses to a direct call on the hot path —
-// no runtime table lookup.
-[[gnu::always_inline]] inline void DispatchAlu8Imm(CpuRegs& regs, uint8_t fetch_data, AluOp op) {
-  switch (op) {
-    case AluOp::kAdc:
-      AluAdc8(regs, fetch_data);
-      return;
-    case AluOp::kSbc:
-      AluSbc8(regs, fetch_data);
-      return;
-    case AluOp::kAnd:
-      AluAnd8(regs, fetch_data);
-      return;
-    case AluOp::kOra:
-      AluOra8(regs, fetch_data);
-      return;
-    case AluOp::kEor:
-      AluEor8(regs, fetch_data);
-      return;
-    case AluOp::kCmp:
-      DoCompare8(regs, static_cast<uint8_t>(regs.A), fetch_data);
-      return;
-    case AluOp::kCpx:
-      DoCompare8(regs, static_cast<uint8_t>(regs.X), fetch_data);
-      return;
-    case AluOp::kCpy:
-      DoCompare8(regs, static_cast<uint8_t>(regs.Y), fetch_data);
-      return;
-    case AluOp::kBit: {
-      // Immediate BIT only updates Z (not N/V). See docs/plans/6502opcodes.md.
-      const uint8_t result = static_cast<uint8_t>(regs.A) & fetch_data;
-      regs.P.Z = (result == 0U);
-      return;
-    }
-  }
-  __builtin_unreachable();
-}
-
-// Dispatch a parameterized 16-bit ALU immediate to the concrete per-op helper
-// above. The 16-bit operand is formed from addr_[7:0] (low byte stashed by a
-// prior kSetAddrLowFromFetch) and fetch_data_ (high byte). Same collapse
-// behavior as the 8-bit dispatcher.
-[[gnu::always_inline]] inline void DispatchAlu16Imm(CpuRegs& regs, uint32_t addr, uint8_t fetch_data, AluOp op) {
-  const uint16_t operand = AluOperand16FromFetch(addr, fetch_data);
-  switch (op) {
-    case AluOp::kAdc:
-      AluAdc16(regs, operand);
-      return;
-    case AluOp::kSbc:
-      AluSbc16(regs, operand);
-      return;
-    case AluOp::kAnd:
-      AluAnd16(regs, operand);
-      return;
-    case AluOp::kOra:
-      AluOra16(regs, operand);
-      return;
-    case AluOp::kEor:
-      AluEor16(regs, operand);
-      return;
-    case AluOp::kCmp:
-      DoCompare16(regs, regs.A, operand);
-      return;
-    case AluOp::kCpx:
-      DoCompare16(regs, regs.X, operand);
-      return;
-    case AluOp::kCpy:
-      DoCompare16(regs, regs.Y, operand);
-      return;
-    case AluOp::kBit: {
-      // Immediate BIT only updates Z (not N/V).
-      const uint16_t result = static_cast<uint16_t>(regs.A & operand);
-      regs.P.Z = (result == 0U);
-      return;
-    }
+// Mutable reference to the 16-bit GPR slot selected by `reg`. Used by
+// kLoadReg / kIncDecReg / kTransferReg to share the read-modify-write pattern
+// across A, X, Y, SP, and DP. Not valid for Reg::kDbr/kPbr/kPcl/kPch/kP —
+// those are byte-sized or synthesized and handled inline at the call site.
+[[gnu::always_inline]] inline uint16_t& RegRef(CpuRegs& r, Reg reg) {
+  switch (reg) {
+    case Reg::kA: return r.A;
+    case Reg::kX: return r.X;
+    case Reg::kY: return r.Y;
+    case Reg::kSp: return r.SP;
+    case Reg::kDp: return r.DP;
+    default: break;
   }
   __builtin_unreachable();
 }
@@ -1039,84 +268,298 @@ TickResult CPU::BusWriteSlow(SnesAddrT addr, uint8_t data, TimeMasterDeltaT cycl
 }
 
 void CPU::ExecuteInternalOp(MicroInternalOp op, [[maybe_unused]] uint8_t params) {
+  namespace mp = opcode_defs_internal::micro_op_params;
   switch (op) {
     case MicroInternalOp::kNone:
-      break;
-    case MicroInternalOp::kLoadReg:
-      DispatchLoadReg(regs_, fetch_data_,
-                      opcode_defs_internal::micro_op_params::UnpackLoadRegReg(params),
-                      opcode_defs_internal::micro_op_params::UnpackLoadRegByteSel(params),
-                      opcode_defs_internal::micro_op_params::UnpackLoadRegNz(params));
-      break;
-    case MicroInternalOp::kSetBranchTakenCond:
-      timing_context_.branch_taken =
-          DispatchSetBranch(regs_, opcode_defs_internal::micro_op_params::UnpackBranchCond(params));
-      break;
+      return;
+
+    case MicroInternalOp::kLoadReg: {
+      const Reg reg = mp::UnpackLoadRegReg(params);
+      const ByteSel sel = mp::UnpackLoadRegByteSel(params);
+      const bool nz = mp::UnpackLoadRegNz(params);
+      const uint8_t fetch = fetch_data_;
+      switch (reg) {
+        case Reg::kA:
+        case Reg::kX:
+        case Reg::kY: {
+          uint16_t& r = RegRef(regs_, reg);
+          if (sel == ByteSel::kLow) {
+            r = static_cast<uint16_t>((r & 0xFF00U) | fetch);
+            if (nz) {
+              regs_.P.Z = (static_cast<uint8_t>(r) == 0U);
+              regs_.P.N = (r & 0x0080U) != 0U;
+            }
+          } else {  // kHigh — always updates NZ for A/X/Y.
+            const uint16_t high = static_cast<uint16_t>(static_cast<uint16_t>(fetch) << 8U);
+            r = static_cast<uint16_t>((r & 0x00FFU) | high);
+            regs_.P.Z = (r == 0U);
+            regs_.P.N = (r & 0x8000U) != 0U;
+          }
+          return;
+        }
+        case Reg::kDp:
+          // DP low never updates NZ; DP high always does. nz param is ignored.
+          if (sel == ByteSel::kLow) {
+            regs_.DP = static_cast<uint16_t>((regs_.DP & 0xFF00U) | fetch);
+          } else {
+            const uint16_t high = static_cast<uint16_t>(static_cast<uint16_t>(fetch) << 8U);
+            regs_.DP = static_cast<uint16_t>((regs_.DP & 0x00FFU) | high);
+            regs_.P.Z = (regs_.DP == 0U);
+            regs_.P.N = (regs_.DP & 0x8000U) != 0U;
+          }
+          return;
+        case Reg::kDbr:
+          regs_.DBR = fetch;
+          regs_.P.Z = (regs_.DBR == 0U);
+          regs_.P.N = (regs_.DBR & 0x80U) != 0U;
+          return;
+        case Reg::kPcl:
+          regs_.PC = static_cast<uint16_t>((regs_.PC & 0xFF00U) | fetch);
+          return;
+        case Reg::kPch: {
+          const uint16_t high = static_cast<uint16_t>(static_cast<uint16_t>(fetch) << 8U);
+          regs_.PC = static_cast<uint16_t>((regs_.PC & 0x00FFU) | high);
+          return;
+        }
+        case Reg::kPbr:
+          regs_.PBR = fetch;
+          return;
+        case Reg::kP:
+          // P.FromByte handles emulation-mode forcing of M/X back to 1. nz is ignored.
+          regs_.P.FromByte(fetch, regs_.P.E);
+          return;
+        default:
+          break;
+      }
+      __builtin_unreachable();
+    }
+
+    case MicroInternalOp::kSetBranchTakenCond: {
+      bool taken = false;
+      switch (mp::UnpackBranchCond(params)) {
+        case BranchCond::kAlways: taken = true; break;
+        case BranchCond::kZ:      taken = regs_.P.Z; break;
+        case BranchCond::kNotZ:   taken = !regs_.P.Z; break;
+        case BranchCond::kC:      taken = regs_.P.C; break;
+        case BranchCond::kNotC:   taken = !regs_.P.C; break;
+        case BranchCond::kN:      taken = regs_.P.N; break;
+        case BranchCond::kNotN:   taken = !regs_.P.N; break;
+        case BranchCond::kV:      taken = regs_.P.V; break;
+        case BranchCond::kNotV:   taken = !regs_.P.V; break;
+      }
+      timing_context_.branch_taken = taken;
+      return;
+    }
+
     case MicroInternalOp::kBranchRelative:
-      DispatchBranchRelative(regs_, addr_, fetch_data_, timing_context_.branch_page_crossed,
-                             opcode_defs_internal::micro_op_params::UnpackBranchRelativeWide(params));
-      break;
-    case MicroInternalOp::kSetAddrByteFromFetch:
-      DispatchSetAddrByte(addr_, regs_, fetch_data_,
-                          opcode_defs_internal::micro_op_params::UnpackSetAddrByteSel(params),
-                          opcode_defs_internal::micro_op_params::UnpackSetAddrFromDbr(params));
-      break;
-    case MicroInternalOp::kModifyAddr:
-      if (opcode_defs_internal::micro_op_params::UnpackModifyAddrIncrement(params)) {
-        addr_ = (addr_ + 1U) & 0xFFFFFFU;
+      if (mp::UnpackBranchRelativeWide(params)) {
+        // BRL: 16-bit displacement stashed in addr_[15:0].
+        const int16_t displacement = static_cast<int16_t>(static_cast<uint16_t>(addr_ & 0xFFFFU));
+        regs_.PC = static_cast<uint16_t>(regs_.PC + displacement);
       } else {
-        addr_ = (addr_ - 1U) & 0xFFFFFFU;
+        const int8_t displacement = static_cast<int8_t>(fetch_data_);
+        const uint16_t old_pc = regs_.PC;
+        regs_.PC = static_cast<uint16_t>(regs_.PC + displacement);
+        timing_context_.branch_page_crossed = ((old_pc ^ regs_.PC) & 0xFF00U) != 0U;
       }
-      break;
-    case MicroInternalOp::kModifySp:
-      if (opcode_defs_internal::micro_op_params::UnpackModifySpIncrement(params)) {
-        IncrementSp(regs_);
+      return;
+
+    case MicroInternalOp::kSetAddrByteFromFetch: {
+      const ByteSel sel = mp::UnpackSetAddrByteSel(params);
+      const unsigned shift = (sel == ByteSel::kLow) ? 0U : (sel == ByteSel::kHigh) ? 8U : 16U;
+      const uint32_t mask = ~(uint32_t{0xFFU} << shift) & 0xFFFFFFU;
+      addr_ = (addr_ & mask) | (static_cast<uint32_t>(fetch_data_) << shift);
+      // from_dbr is only meaningful with kHigh: also set bank byte from DBR.
+      if (sel == ByteSel::kHigh && mp::UnpackSetAddrFromDbr(params)) {
+        addr_ = (addr_ & 0x00FFFFU) | (static_cast<uint32_t>(regs_.DBR) << 16U);
+      }
+      return;
+    }
+
+    case MicroInternalOp::kModifyAddr: {
+      const uint32_t delta = mp::UnpackModifyAddrIncrement(params) ? 1U : UINT32_C(0xFFFFFF);
+      addr_ = (addr_ + delta) & 0xFFFFFFU;
+      return;
+    }
+
+    case MicroInternalOp::kModifySp: {
+      const bool inc = mp::UnpackModifySpIncrement(params);
+      if (regs_.P.E) {
+        const uint8_t sp_lo = static_cast<uint8_t>(static_cast<uint8_t>(regs_.SP) + (inc ? 1U : 0xFFU));
+        regs_.SP = static_cast<uint16_t>(0x0100U | sp_lo);
       } else {
-        DecrementSp(regs_);
+        regs_.SP = static_cast<uint16_t>(regs_.SP + (inc ? 1U : 0xFFFFU));
       }
-      break;
+      return;
+    }
+
     case MicroInternalOp::kModifyPc:
-      if (opcode_defs_internal::micro_op_params::UnpackModifyPcIncrement(params)) {
-        regs_.PC = static_cast<uint16_t>(regs_.PC + 1U);
+      regs_.PC = static_cast<uint16_t>(regs_.PC + (mp::UnpackModifyPcIncrement(params) ? 1U : 0xFFFFU));
+      return;
+
+    case MicroInternalOp::kIncDecReg: {
+      const Reg reg = mp::UnpackIncDecReg(params);
+      const bool dec = mp::UnpackIncDecDecrement(params);
+      const bool wide = (reg == Reg::kA) ? IsAccumulator16Bit(regs_) : IsIndex16Bit(regs_);
+      uint16_t& r = RegRef(regs_, reg);
+      if (wide) {
+        r = static_cast<uint16_t>(r + (dec ? 0xFFFFU : 0x0001U));
+        regs_.P.Z = (r == 0U);
+        regs_.P.N = (r & 0x8000U) != 0U;
       } else {
-        regs_.PC = static_cast<uint16_t>(regs_.PC - 1U);
+        const uint8_t lo = static_cast<uint8_t>(static_cast<uint8_t>(r) + (dec ? 0xFFU : 0x01U));
+        r = static_cast<uint16_t>((r & 0xFF00U) | lo);
+        regs_.P.Z = (lo == 0U);
+        regs_.P.N = (lo & 0x80U) != 0U;
       }
-      break;
-    case MicroInternalOp::kIncDecReg:
-      DispatchIncDecReg(regs_, opcode_defs_internal::micro_op_params::UnpackIncDecReg(params),
-                        opcode_defs_internal::micro_op_params::UnpackIncDecDecrement(params));
-      break;
-    case MicroInternalOp::kSetFlag:
-      DispatchSetFlag(regs_, opcode_defs_internal::micro_op_params::UnpackSetFlagFlag(params),
-                      opcode_defs_internal::micro_op_params::UnpackSetFlagValue(params));
-      break;
-    case MicroInternalOp::kMaskStatus:
-      DispatchMaskStatus(regs_, fetch_data_,
-                         opcode_defs_internal::micro_op_params::UnpackMaskStatusOr(params));
-      break;
-    case MicroInternalOp::kExchangeCarryEmulation:
-      ExchangeCarryEmulation(regs_);
-      break;
-    case MicroInternalOp::kTransferReg:
-      DispatchTransferReg(regs_, opcode_defs_internal::micro_op_params::UnpackTransferSrc(params),
-                          opcode_defs_internal::micro_op_params::UnpackTransferDst(params));
-      break;
+      return;
+    }
+
+    case MicroInternalOp::kSetFlag: {
+      const bool value = mp::UnpackSetFlagValue(params);
+      switch (mp::UnpackSetFlagFlag(params)) {
+        case Flag::kC: regs_.P.C = value; return;
+        case Flag::kD: regs_.P.D = value; return;
+        case Flag::kI: regs_.P.I = value; return;
+        case Flag::kV: regs_.P.V = value; return;
+        default: break;
+      }
+      __builtin_unreachable();
+    }
+
+    case MicroInternalOp::kMaskStatus: {
+      const uint8_t p = regs_.P.ToByte();
+      const uint8_t next = mp::UnpackMaskStatusOr(params)
+                               ? static_cast<uint8_t>(p | fetch_data_)
+                               : static_cast<uint8_t>(p & ~fetch_data_);
+      regs_.P.FromByte(next, regs_.P.E);
+      ApplyEmulationForcing(regs_);
+      return;
+    }
+
+    case MicroInternalOp::kExchangeCarryEmulation: {
+      const bool new_e = regs_.P.C;
+      const bool new_c = regs_.P.E;
+      regs_.P.E = new_e;
+      regs_.P.C = new_c;
+      ApplyEmulationForcing(regs_);
+      return;
+    }
+
+    case MicroInternalOp::kTransferReg: {
+      const Reg src = mp::UnpackTransferSrc(params);
+      const Reg dst = mp::UnpackTransferDst(params);
+      // Dst=SP: full 16-bit write, no flags, E-mode forces SH=$01.
+      if (dst == Reg::kSp) {
+        regs_.SP = RegRef(regs_, src);
+        if (regs_.P.E) {
+          regs_.SP = static_cast<uint16_t>(0x0100U | (regs_.SP & 0x00FFU));
+        }
+        return;
+      }
+      // Width rule:
+      //   dst=DP                                 → always 16 (TCD).
+      //   dst=A and src∈{DP,SP}                  → always 16 (TDC/TSC).
+      //   dst=A and src∈{X,Y}                    → accumulator-sized (TXA/TYA).
+      //   dst∈{X,Y}                              → index-sized (TAX/TAY/TXY/TYX/TSX).
+      const bool wide =
+          (dst == Reg::kDp) ||
+          (dst == Reg::kA ? (src == Reg::kDp || src == Reg::kSp || IsAccumulator16Bit(regs_))
+                          : IsIndex16Bit(regs_));
+      uint16_t& d = RegRef(regs_, dst);
+      const uint16_t s = RegRef(regs_, src);
+      d = wide ? s : static_cast<uint16_t>((d & 0xFF00U) | (s & 0x00FFU));
+      SetNzFromWidth(regs_, d, wide);
+      return;
+    }
+
     case MicroInternalOp::kSetPcFromAddr:
-      DispatchSetPcFromAddr(regs_, addr_,
-                            opcode_defs_internal::micro_op_params::UnpackSetPcWithPbr(params));
-      break;
-    case MicroInternalOp::kLoadAddrByteAndSetPc:
-      DispatchLoadAddrByteAndSetPc(
-          addr_, regs_, fetch_data_,
-          opcode_defs_internal::micro_op_params::UnpackLoadAddrByteAndSetPcSel(params),
-          opcode_defs_internal::micro_op_params::UnpackLoadAddrByteAndSetPcWithPbr(params));
-      break;
+      regs_.PC = static_cast<uint16_t>(addr_ & 0xFFFFU);
+      if (mp::UnpackSetPcWithPbr(params)) {
+        regs_.PBR = static_cast<uint8_t>((addr_ >> 16U) & 0xFFU);
+      }
+      return;
+
+    case MicroInternalOp::kLoadAddrByteAndSetPc: {
+      const ByteSel sel = mp::UnpackLoadAddrByteAndSetPcSel(params);
+      const unsigned shift = (sel == ByteSel::kLow) ? 0U : (sel == ByteSel::kHigh) ? 8U : 16U;
+      const uint32_t mask = ~(uint32_t{0xFFU} << shift) & 0xFFFFFFU;
+      addr_ = (addr_ & mask) | (static_cast<uint32_t>(fetch_data_) << shift);
+      regs_.PC = static_cast<uint16_t>(addr_ & 0xFFFFU);
+      if (mp::UnpackLoadAddrByteAndSetPcWithPbr(params)) {
+        regs_.PBR = static_cast<uint8_t>((addr_ >> 16U) & 0xFFU);
+      }
+      return;
+    }
+
     case MicroInternalOp::kAlu8Imm:
-      DispatchAlu8Imm(regs_, fetch_data_, opcode_defs_internal::micro_op_params::UnpackAluOp(params));
-      break;
-    case MicroInternalOp::kAlu16Imm:
-      DispatchAlu16Imm(regs_, addr_, fetch_data_, opcode_defs_internal::micro_op_params::UnpackAluOp(params));
-      break;
+    case MicroInternalOp::kAlu16Imm: {
+      // Width + sign/carry bit positions selected by the op variant. The
+      // 8-bit path consumes fetch_data_ only; the 16-bit path also consumes
+      // addr_[7:0] (low, stashed by a prior kSetAddrByteFromFetch(kLow)).
+      const bool wide = (op == MicroInternalOp::kAlu16Imm);
+      const uint16_t fetch_high = static_cast<uint16_t>(static_cast<uint16_t>(fetch_data_) << 8U);
+      const uint16_t operand = wide
+          ? static_cast<uint16_t>((addr_ & 0xFFU) | fetch_high)
+          : static_cast<uint16_t>(fetch_data_);
+      const uint16_t mask = wide ? 0xFFFFU : 0x00FFU;
+      const uint16_t sign = wide ? 0x8000U : 0x0080U;
+      const uint32_t carry = wide ? 0x10000U : 0x0100U;
+      const AluOp alu = mp::UnpackAluOp(params);
+
+      auto store_a = [&](uint16_t result) {
+        regs_.A = wide ? result : static_cast<uint16_t>((regs_.A & 0xFF00U) | (result & 0xFFU));
+      };
+
+      switch (alu) {
+        case AluOp::kAdc:
+        case AluOp::kSbc: {
+          // BCD/decimal mode is not yet implemented; D=1 falls back to binary.
+          const uint16_t rhs = (alu == AluOp::kSbc) ? static_cast<uint16_t>(~operand & mask) : operand;
+          const uint32_t a_val = regs_.A & mask;
+          const uint32_t sum = a_val + rhs + (regs_.P.C ? 1U : 0U);
+          const uint16_t result = static_cast<uint16_t>(sum & mask);
+          regs_.P.V = ((~(a_val ^ rhs) & (a_val ^ result)) & sign) != 0U;
+          regs_.P.C = (sum & carry) != 0U;
+          regs_.P.Z = (result == 0U);
+          regs_.P.N = (result & sign) != 0U;
+          store_a(result);
+          return;
+        }
+        case AluOp::kAnd:
+        case AluOp::kOra:
+        case AluOp::kEor: {
+          const uint16_t a_val = regs_.A & mask;
+          const uint16_t result = (alu == AluOp::kAnd)   ? static_cast<uint16_t>(a_val & operand)
+                                  : (alu == AluOp::kOra) ? static_cast<uint16_t>(a_val | operand)
+                                                         : static_cast<uint16_t>(a_val ^ operand);
+          regs_.P.Z = (result == 0U);
+          regs_.P.N = (result & sign) != 0U;
+          store_a(result);
+          return;
+        }
+        case AluOp::kCmp:
+        case AluOp::kCpx:
+        case AluOp::kCpy: {
+          const uint16_t reg_val =
+              (alu == AluOp::kCmp)   ? static_cast<uint16_t>(regs_.A & mask)
+              : (alu == AluOp::kCpx) ? static_cast<uint16_t>(regs_.X & mask)
+                                     : static_cast<uint16_t>(regs_.Y & mask);
+          const uint32_t diff = static_cast<uint32_t>(reg_val) - static_cast<uint32_t>(operand);
+          regs_.P.C = reg_val >= operand;
+          regs_.P.Z = ((diff & mask) == 0U);
+          regs_.P.N = (diff & sign) != 0U;
+          return;
+        }
+        case AluOp::kBit: {
+          // Immediate BIT only updates Z (not N/V). See docs/plans/6502opcodes.md.
+          const uint16_t result = static_cast<uint16_t>((regs_.A & mask) & operand);
+          regs_.P.Z = (result == 0U);
+          return;
+        }
+      }
+      __builtin_unreachable();
+    }
   }
 }
 
@@ -1171,6 +614,7 @@ CPU::StepResult CPU::FetchOpcode(TimeMasterDeltaT cycle_time) {
 
 TickResult CPU::PerformBusAction(MicroBusAction action, [[maybe_unused]] uint8_t params,
                                  TimeMasterDeltaT cycle_time) {
+  namespace mp = opcode_defs_internal::micro_op_params;
   switch (action) {
     case MicroBusAction::kNone:
       return TickResult{0, TickStopReason::kContinue};
@@ -1183,21 +627,50 @@ TickResult CPU::PerformBusAction(MicroBusAction action, [[maybe_unused]] uint8_t
     case MicroBusAction::kReadAddr:
       return BusRead(addr_, cycle_time);
     case MicroBusAction::kWriteRegByte: {
-      const uint8_t byte = DispatchWriteByte(
-          regs_, fetch_data_, opcode_defs_internal::micro_op_params::UnpackWriteAddrSrc(params),
-          opcode_defs_internal::micro_op_params::UnpackWriteAddrByteSel(params));
+      const WriteSrc src = mp::UnpackWriteAddrSrc(params);
+      const ByteSel sel = mp::UnpackWriteAddrByteSel(params);
+      uint8_t byte = 0;
+      switch (src) {
+        case WriteSrc::kFetchData:
+          byte = fetch_data_;
+          break;
+        case WriteSrc::kA:
+          byte = (sel == ByteSel::kLow) ? static_cast<uint8_t>(regs_.A) : static_cast<uint8_t>(regs_.A >> 8U);
+          break;
+        case WriteSrc::kX:
+          byte = (sel == ByteSel::kLow) ? static_cast<uint8_t>(regs_.X) : static_cast<uint8_t>(regs_.X >> 8U);
+          break;
+        case WriteSrc::kY:
+          byte = (sel == ByteSel::kLow) ? static_cast<uint8_t>(regs_.Y) : static_cast<uint8_t>(regs_.Y >> 8U);
+          break;
+      }
       return BusWrite(addr_, byte, cycle_time);
     }
     case MicroBusAction::kPushStack: {
-      const uint8_t byte = DispatchPushStackByte(
-          regs_, addr_, opcode_defs_internal::micro_op_params::UnpackPushStack(params));
+      uint8_t byte = 0;
+      switch (mp::UnpackPushStack(params)) {
+        case PushSrc::kA8:       byte = static_cast<uint8_t>(regs_.A); break;
+        case PushSrc::kAHigh:    byte = static_cast<uint8_t>(regs_.A >> 8U); break;
+        case PushSrc::kX8:       byte = static_cast<uint8_t>(regs_.X); break;
+        case PushSrc::kXHigh:    byte = static_cast<uint8_t>(regs_.X >> 8U); break;
+        case PushSrc::kY8:       byte = static_cast<uint8_t>(regs_.Y); break;
+        case PushSrc::kYHigh:    byte = static_cast<uint8_t>(regs_.Y >> 8U); break;
+        case PushSrc::kPcl:      byte = static_cast<uint8_t>(regs_.PC); break;
+        case PushSrc::kPch:      byte = static_cast<uint8_t>(regs_.PC >> 8U); break;
+        case PushSrc::kPbr:      byte = regs_.PBR; break;
+        case PushSrc::kDbr:      byte = regs_.DBR; break;
+        case PushSrc::kP:        byte = regs_.P.ToByte(); break;
+        case PushSrc::kDpLow:    byte = static_cast<uint8_t>(regs_.DP); break;
+        case PushSrc::kDpHigh:   byte = static_cast<uint8_t>(regs_.DP >> 8U); break;
+        case PushSrc::kAddrLow:  byte = static_cast<uint8_t>(addr_ & 0xFFU); break;
+        case PushSrc::kAddrHigh: byte = static_cast<uint8_t>((addr_ >> 8U) & 0xFFU); break;
+      }
       return BusWrite(StackAddr(regs_), byte, cycle_time);
     }
     case MicroBusAction::kPullStack:
       return BusRead(StackAddr(regs_), cycle_time);
     case MicroBusAction::kPreIncPullStack:
-      // Stack pulls: the SP must point at the top of the stack before reading.
-      // Increment first, then read.
+      // Stack pulls: SP must point at the top of the stack before reading.
       if (regs_.P.E) {
         const uint8_t sp_lo = static_cast<uint8_t>(static_cast<uint8_t>(regs_.SP) + 1U);
         regs_.SP = static_cast<uint16_t>(0x0100U | sp_lo);

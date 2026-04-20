@@ -31,11 +31,11 @@ enum class MicroBusAction : uint8_t {
   kWriteRegByte,    // Write a byte to effective address (addr_); byte source
                     // selected by (WriteSrc, ByteSel) packed in
                     // CycleSlotSpec::params (see micro_op_params::PackWriteAddr).
-                    // Dispatch lives in DispatchWriteByte in cpu.cpp.
+                    // Dispatch lives in the kWriteRegByte case in PerformBusAction in cpu.cpp.
   kPushStack,       // Write a byte to stack ($00:SP); byte source selected by
                     // PushSrc packed in CycleSlotSpec::params[3:0] (see
                     // micro_op_params::PackPushStack). Dispatch lives in
-                    // DispatchPushStackByte in cpu.cpp.
+                    // the kPushStack case in PerformBusAction in cpu.cpp.
   kPullStack,       // Read byte from stack ($00:SP) into fetch_data_
   kPreIncPullStack, // Increment SP then read from stack into fetch_data_
 };
@@ -47,7 +47,7 @@ enum class MicroInternalOp : uint8_t {
                             // update_nz); params packs Reg (A/X/Y/Dp/Dbr/Pcl/Pch/Pbr/P) in
                             // bits [3:0], ByteSel (kLow/kHigh) in bits [5:4], and update_nz in
                             // bit 6 (see micro_op_params::PackLoadReg). Dispatch via
-                            // DispatchLoadReg. For Reg::kP, emulation-mode forcing is handled
+                            // the kLoadReg case in ExecuteInternalOp. For Reg::kP, emulation-mode forcing is handled
                             // by regs.P.FromByte(fetch, E); update_nz is ignored.
   kSetBranchTakenCond,      // branch_taken = <BranchCond(params[3:0])>; params packs the
                             // BranchCond (kAlways/kZ/kNotZ/kC/kNotC/kN/kNotN/kV/kNotV)
@@ -84,11 +84,11 @@ enum class MicroInternalOp : uint8_t {
   kAlu8Imm,                 // 8-bit ALU immediate: apply AluOp to fetch_data_ against
                             // A/X/Y (or just update Z for BIT imm). Params pack AluOp in
                             // bits [3:0] (see micro_op_params::PackAluOp). Dispatch lives
-                            // in DispatchAlu8Imm in cpu.cpp.
+                            // in the kAlu8Imm case in ExecuteInternalOp in cpu.cpp.
   kAlu16Imm,                // 16-bit ALU immediate: apply AluOp to the 16-bit operand
                             // formed from addr_[7:0] (low, stashed by a prior
                             // kSetAddrByteFromFetch(kLow)) and fetch_data_ (high). Params
-                            // pack AluOp in bits [3:0]. Dispatch lives in DispatchAlu16Imm
+                            // pack AluOp in bits [3:0]. Dispatch lives in the kAlu16Imm case in ExecuteInternalOp
                             // in cpu.cpp.
 };
 

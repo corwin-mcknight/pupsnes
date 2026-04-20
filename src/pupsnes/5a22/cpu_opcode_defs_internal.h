@@ -50,7 +50,7 @@ inline constexpr bool UnpackSetFlagValue(uint8_t params) {
 
 // Branch-condition setter (kSetBranchTakenCond): bits [3:0] = BranchCond
 // (kAlways, kZ/kNotZ, kC/kNotC, kN/kNotN, kV/kNotV). Dispatch lives in
-// DispatchSetBranch in cpu.cpp.
+// the kSetBranchTakenCond case in ExecuteInternalOp in cpu.cpp.
 inline constexpr uint8_t PackBranchCond(BranchCond cond) {
   return static_cast<uint8_t>(static_cast<uint32_t>(cond) & 0x0FU);
 }
@@ -60,7 +60,7 @@ inline constexpr BranchCond UnpackBranchCond(uint8_t params) {
 
 // Register load from fetch_data_ (kLoadReg): bits [3:0] = Reg (A/X/Y only),
 // bits [5:4] = ByteSel (kLow = 0, kHigh = 1), bit 6 = update_nz. Dispatch
-// lives in DispatchLoadReg in cpu.cpp. On kHigh, update_nz must be true
+// lives in the kLoadReg case in ExecuteInternalOp in cpu.cpp. On kHigh, update_nz must be true
 // (that's the only high-byte variant the concrete helpers implement); the
 // builder enforces this.
 inline constexpr uint8_t PackLoadReg(Reg reg, ByteSel byte_sel, bool update_nz) {
@@ -80,7 +80,7 @@ inline constexpr bool UnpackLoadRegNz(uint8_t params) {
 
 // Push bus action (kPushStack): bits [3:0] = PushSrc (15 variants — A8/AHigh,
 // X8/XHigh, Y8/YHigh, Pcl/Pch/Pbr, Dbr, P, DpLow/DpHigh, AddrLow/AddrHigh).
-// Dispatch lives in DispatchPushStackByte in cpu.cpp.
+// Dispatch lives in the kPushStack case in PerformBusAction in cpu.cpp.
 inline constexpr uint8_t PackPushStack(PushSrc src) {
   return static_cast<uint8_t>(static_cast<uint32_t>(src) & 0x0FU);
 }
@@ -92,7 +92,7 @@ inline constexpr PushSrc UnpackPushStack(uint8_t params) {
 // bits [3:2] = ByteSel (kLow/kHigh; kBank is accepted but unused by writes).
 // For the generic fetch_data writer, WriteSrc::kFetchData + ByteSel::kLow is
 // the canonical encoding (the ByteSel is ignored for fetch_data). Dispatch
-// lives in DispatchWriteByte in cpu.cpp.
+// lives in the kWriteRegByte case in PerformBusAction in cpu.cpp.
 inline constexpr uint8_t PackWriteAddr(WriteSrc src, ByteSel byte_sel) {
   return static_cast<uint8_t>((static_cast<uint32_t>(src) & 0x03U)
                               | ((static_cast<uint32_t>(byte_sel) & 0x03U) << 2U));
@@ -105,8 +105,8 @@ inline constexpr ByteSel UnpackWriteAddrByteSel(uint8_t params) {
 }
 
 // ALU immediate (kAlu8Imm / kAlu16Imm): bits [3:0] = AluOp (9 variants — Adc,
-// Sbc, And, Ora, Eor, Cmp, Cpx, Cpy, Bit). Dispatch lives in DispatchAlu8Imm /
-// DispatchAlu16Imm in cpu.cpp. Width selection is baked into the enum variant
+// Sbc, And, Ora, Eor, Cmp, Cpx, Cpy, Bit). Dispatch lives in the kAlu8Imm case in ExecuteInternalOp /
+// the kAlu16Imm case in ExecuteInternalOp in cpu.cpp. Width selection is baked into the enum variant
 // (8 vs 16) because the two paths differ in operand plumbing: 8-bit consumes
 // fetch_data_ only; 16-bit consumes addr_[7:0] (low, stashed earlier) plus
 // fetch_data_ (high).
@@ -344,7 +344,7 @@ constexpr CycleSlotSpec ReadAddr(MicroInternalOp internal_op = MicroInternalOp::
 
 // Parameterized write of a register (or fetch_data_) byte to the effective
 // address (addr_). Packs (WriteSrc, ByteSel) into CycleSlotSpec::params for
-// the unified kWriteRegByte bus action. Dispatch lives in DispatchWriteByte
+// the unified kWriteRegByte bus action. Dispatch lives in the kWriteRegByte case in PerformBusAction
 // in cpu.cpp. For the generic fetch_data writer, pass
 // WriteSrc::kFetchData + ByteSel::kLow (ByteSel is ignored in that case).
 constexpr CycleSlotSpec WriteRegByte(WriteSrc src, ByteSel byte_sel,
@@ -360,7 +360,7 @@ constexpr CycleSlotSpec WriteRegByte(WriteSrc src, ByteSel byte_sel,
 }
 
 // Parameterized push to the stack. Packs PushSrc into CycleSlotSpec::params
-// for the unified kPushStack bus action. Dispatch lives in DispatchPushStackByte
+// for the unified kPushStack bus action. Dispatch lives in the kPushStack case in PerformBusAction
 // in cpu.cpp. internal_op defaults to kNone so callers can opt in (typically
 // kModifySp with decrement=0 to sequence SP after the write) at the emit site.
 constexpr CycleSlotSpec PushReg(PushSrc src, MicroInternalOp internal_op = MicroInternalOp::kNone,
@@ -386,7 +386,7 @@ constexpr CycleSlotSpec Internal(MicroInternalOp internal_op = MicroInternalOp::
 
 // Parameterized register-to-register transfer. Packs (src, dst) into
 // CycleSlotSpec::params for the unified kTransferReg internal op. Width and
-// flag semantics of each concrete pair live in DispatchTransferReg in cpu.cpp.
+// flag semantics of each concrete pair live in the kTransferReg case in ExecuteInternalOp in cpu.cpp.
 constexpr CycleSlotSpec TransferReg(Reg src, Reg dst, TimingRuleExpr rule = Always(),
                                     std::string_view label = {}) {
   return CycleSlotSpec{
@@ -400,7 +400,7 @@ constexpr CycleSlotSpec TransferReg(Reg src, Reg dst, TimingRuleExpr rule = Alwa
 
 // Parameterized register inc/dec. Packs (reg, decrement) into
 // CycleSlotSpec::params for the unified kIncDecReg internal op. Width and flag
-// semantics for each register live in DispatchIncDecReg in cpu.cpp.
+// semantics for each register live in the kIncDecReg case in ExecuteInternalOp in cpu.cpp.
 constexpr CycleSlotSpec IncDecReg(Reg reg, bool decrement, TimingRuleExpr rule = Always(),
                                   std::string_view label = {}) {
   return CycleSlotSpec{
@@ -413,7 +413,7 @@ constexpr CycleSlotSpec IncDecReg(Reg reg, bool decrement, TimingRuleExpr rule =
 }
 
 // Parameterized flag set/clear. Packs (flag, value) into CycleSlotSpec::params
-// for the unified kSetFlag internal op. Dispatch lives in DispatchSetFlag in
+// for the unified kSetFlag internal op. Dispatch lives in the kSetFlag case in ExecuteInternalOp in
 // cpu.cpp. Only C, D, I, V are emitted by real opcodes (CLC/SEC/CLI/SEI/CLV/
 // CLD/SED).
 constexpr CycleSlotSpec SetFlag(Flag flag, bool value, TimingRuleExpr rule = Always(),
@@ -429,7 +429,7 @@ constexpr CycleSlotSpec SetFlag(Flag flag, bool value, TimingRuleExpr rule = Alw
 
 // Parameterized load of a register byte from fetch_data_ (FetchPc bus action).
 // Packs (reg, byte_sel, update_nz) into CycleSlotSpec::params for the unified
-// kLoadReg internal op. Dispatch lives in DispatchLoadReg in cpu.cpp. Used by
+// kLoadReg internal op. Dispatch lives in the kLoadReg case in ExecuteInternalOp in cpu.cpp. Used by
 // LDA/LDX/LDY immediate and any other opcode that completes a register via a
 // PC-side fetch.
 constexpr CycleSlotSpec LoadRegFromFetch(Reg reg, ByteSel byte_sel, bool update_nz,
@@ -461,7 +461,7 @@ constexpr CycleSlotSpec PullPreIncLoadReg(Reg reg, ByteSel byte_sel, bool update
 
 // Parameterized 8-bit ALU immediate. Emits a kFetchPc bus action paired with
 // the unified kAlu8Imm internal op; packs AluOp into CycleSlotSpec::params for
-// DispatchAlu8Imm in cpu.cpp. Used by ADC/SBC/AND/ORA/EOR/CMP/CPX/CPY/BIT
+// the kAlu8Imm case in ExecuteInternalOp in cpu.cpp. Used by ADC/SBC/AND/ORA/EOR/CMP/CPX/CPY/BIT
 // immediate when the controlling flag (M for A, X for X/Y-compares) is 1.
 constexpr CycleSlotSpec AluImm8(AluOp op, TimingRuleExpr rule = Always(),
                                 std::string_view label = {}) {
@@ -476,7 +476,7 @@ constexpr CycleSlotSpec AluImm8(AluOp op, TimingRuleExpr rule = Always(),
 
 // Parameterized 16-bit ALU immediate. Emits a kFetchPc bus action paired with
 // the unified kAlu16Imm internal op; packs AluOp into CycleSlotSpec::params for
-// DispatchAlu16Imm in cpu.cpp. Consumes addr_[7:0] as the operand low byte
+// the kAlu16Imm case in ExecuteInternalOp in cpu.cpp. Consumes addr_[7:0] as the operand low byte
 // (stashed by a prior kSetAddrLowFromFetch) and fetch_data_ as the high byte.
 constexpr CycleSlotSpec AluImm16(AluOp op, TimingRuleExpr rule = Always(),
                                  std::string_view label = {}) {
@@ -600,7 +600,7 @@ constexpr CycleSlotSpec MaskStatus(bool or_bits, TimingRuleExpr rule = Always(),
 
 // Parameterized branch-displacement fetch. Reads the signed 8-bit displacement
 // from PBR:PC (advancing PC) and evaluates the branch condition in the same
-// cycle, setting timing_context_.branch_taken via DispatchSetBranch. Packs the
+// cycle, setting timing_context_.branch_taken via the kSetBranchTakenCond case in ExecuteInternalOp. Packs the
 // BranchCond into CycleSlotSpec::params for the unified kSetBranchTakenCond
 // internal op. Used by every conditional branch opcode via BranchSequence;
 // BRL has its own long-form sequence.
