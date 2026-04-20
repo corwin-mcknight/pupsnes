@@ -105,15 +105,16 @@ constexpr CycleFragment StoreIndexY() {
 constexpr CycleFragment PushAccumulator() {
   return Fragment()
       .Then(Internal(MicroInternalOp::kNone, Always(), "internal"))
-      .Then(PushAHigh(MicroInternalOp::kDecrementSp, Condition(TimingCondition::kAccumulator16), "push A high"))
-      .Then(PushA8(MicroInternalOp::kDecrementSp, Always(), "push A low"))
+      .Then(PushReg(PushSrc::kAHigh, MicroInternalOp::kDecrementSp, Condition(TimingCondition::kAccumulator16),
+                    "push A high"))
+      .Then(PushReg(PushSrc::kA8, MicroInternalOp::kDecrementSp, Always(), "push A low"))
       .Build();
 }
 
 constexpr CycleFragment PushDataBank() {
   return Fragment()
       .Then(Internal(MicroInternalOp::kNone, Always(), "internal"))
-      .Then(PushDbr(MicroInternalOp::kDecrementSp, Always(), "push DBR"))
+      .Then(PushReg(PushSrc::kDbr, MicroInternalOp::kDecrementSp, Always(), "push DBR"))
       .Build();
 }
 
@@ -131,8 +132,11 @@ constexpr auto MakeMiscSpecs() {
   };
 }
 
-constexpr CycleSlotSpec PushSlot(MicroBusAction action, TimingRuleExpr rule, std::string_view label) {
-  return CycleSlotSpec{action, MicroInternalOp::kDecrementSp, rule, label};
+// Push + decrement-SP shorthand: every real push cycle pairs the bus write
+// with a post-write SP decrement, so this specializes PushReg() with
+// kDecrementSp for authoring readability.
+constexpr CycleSlotSpec PushRegSlot(PushSrc src, TimingRuleExpr rule, std::string_view label) {
+  return PushReg(src, MicroInternalOp::kDecrementSp, rule, label);
 }
 
 constexpr CycleSlotSpec PullPreIncSlot(MicroInternalOp internal_op, TimingRuleExpr rule, std::string_view label) {
@@ -142,23 +146,23 @@ constexpr CycleSlotSpec PullPreIncSlot(MicroInternalOp internal_op, TimingRuleEx
 constexpr CycleFragment PushIndexX() {
   return Fragment()
       .Then(Internal(MicroInternalOp::kNone, Always(), "internal"))
-      .Then(PushSlot(MicroBusAction::kPushXHigh, Condition(TimingCondition::kIndex16), "push X high"))
-      .Then(PushSlot(MicroBusAction::kPushX8, Always(), "push X low"))
+      .Then(PushRegSlot(PushSrc::kXHigh, Condition(TimingCondition::kIndex16), "push X high"))
+      .Then(PushRegSlot(PushSrc::kX8, Always(), "push X low"))
       .Build();
 }
 
 constexpr CycleFragment PushIndexY() {
   return Fragment()
       .Then(Internal(MicroInternalOp::kNone, Always(), "internal"))
-      .Then(PushSlot(MicroBusAction::kPushYHigh, Condition(TimingCondition::kIndex16), "push Y high"))
-      .Then(PushSlot(MicroBusAction::kPushY8, Always(), "push Y low"))
+      .Then(PushRegSlot(PushSrc::kYHigh, Condition(TimingCondition::kIndex16), "push Y high"))
+      .Then(PushRegSlot(PushSrc::kY8, Always(), "push Y low"))
       .Build();
 }
 
 constexpr CycleFragment PushStatus() {
   return Fragment()
       .Then(Internal(MicroInternalOp::kNone, Always(), "internal"))
-      .Then(PushSlot(MicroBusAction::kPushP, Always(), "push P"))
+      .Then(PushRegSlot(PushSrc::kP, Always(), "push P"))
       .Build();
 }
 
@@ -166,15 +170,15 @@ constexpr CycleFragment PushDirectPage() {
   // PHD: 4 cycles. Always 16-bit.
   return Fragment()
       .Then(Internal(MicroInternalOp::kNone, Always(), "internal"))
-      .Then(PushSlot(MicroBusAction::kPushDpHigh, Always(), "push DP high"))
-      .Then(PushSlot(MicroBusAction::kPushDpLow, Always(), "push DP low"))
+      .Then(PushRegSlot(PushSrc::kDpHigh, Always(), "push DP high"))
+      .Then(PushRegSlot(PushSrc::kDpLow, Always(), "push DP low"))
       .Build();
 }
 
 constexpr CycleFragment PushProgramBank() {
   return Fragment()
       .Then(Internal(MicroInternalOp::kNone, Always(), "internal"))
-      .Then(CycleSlotSpec{MicroBusAction::kPushPbr, MicroInternalOp::kDecrementSp, Always(), "push PBR"})
+      .Then(PushRegSlot(PushSrc::kPbr, Always(), "push PBR"))
       .Build();
 }
 
@@ -183,8 +187,8 @@ constexpr CycleFragment PushEffectiveAbsolute() {
   return Fragment()
       .Then(FetchPc(MicroInternalOp::kSetAddrLowFromFetch, Always(), "fetch value low"))
       .Then(FetchPc(MicroInternalOp::kSetAddrHighFromFetch, Always(), "fetch value high"))
-      .Then(PushSlot(MicroBusAction::kPushAddrHigh, Always(), "push value high"))
-      .Then(PushSlot(MicroBusAction::kPushAddrLow, Always(), "push value low"))
+      .Then(PushRegSlot(PushSrc::kAddrHigh, Always(), "push value high"))
+      .Then(PushRegSlot(PushSrc::kAddrLow, Always(), "push value low"))
       .Build();
 }
 
@@ -384,8 +388,8 @@ constexpr CycleFragment JsrAbsolute() {
   return Fragment()
       .Then(FetchPc(MicroInternalOp::kSetAddrLowFromFetch, Always(), "fetch target low"))
       .Then(Internal(MicroInternalOp::kNone, Always(), "internal"))
-      .Then(CycleSlotSpec{MicroBusAction::kPushPch, MicroInternalOp::kDecrementSp, Always(), "push PCH"})
-      .Then(CycleSlotSpec{MicroBusAction::kPushPcl, MicroInternalOp::kDecrementSp, Always(), "push PCL"})
+      .Then(PushRegSlot(PushSrc::kPch, Always(), "push PCH"))
+      .Then(PushRegSlot(PushSrc::kPcl, Always(), "push PCL"))
       .Then(FetchPc(MicroInternalOp::kSetAddrHighFromFetchAndSetPc, Always(), "fetch target high, set PC"))
       .Build();
 }
@@ -403,10 +407,10 @@ constexpr CycleFragment JsrAbsoluteLong() {
   return Fragment()
       .Then(FetchPc(MicroInternalOp::kSetAddrLowFromFetch, Always(), "fetch target low"))
       .Then(FetchPc(MicroInternalOp::kSetAddrHighFromFetch, Always(), "fetch target high"))
-      .Then(CycleSlotSpec{MicroBusAction::kPushPbr, MicroInternalOp::kDecrementSp, Always(), "push PBR"})
+      .Then(PushRegSlot(PushSrc::kPbr, Always(), "push PBR"))
       .Then(Internal(MicroInternalOp::kNone, Always(), "internal"))
-      .Then(CycleSlotSpec{MicroBusAction::kPushPch, MicroInternalOp::kDecrementSp, Always(), "push PCH"})
-      .Then(CycleSlotSpec{MicroBusAction::kPushPcl, MicroInternalOp::kDecrementSp, Always(), "push PCL"})
+      .Then(PushRegSlot(PushSrc::kPch, Always(), "push PCH"))
+      .Then(PushRegSlot(PushSrc::kPcl, Always(), "push PCL"))
       .Then(FetchPc(MicroInternalOp::kSetAddrBankFromFetchAndSetPcAndPbr, Always(), "fetch bank, set PC+PBR"))
       .Build();
 }

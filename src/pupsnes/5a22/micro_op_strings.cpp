@@ -24,36 +24,8 @@ std::string_view ToString(MicroBusAction action) {
       return "WriteXHighAddr";
     case MicroBusAction::kWriteYHighAddr:
       return "WriteYHighAddr";
-    case MicroBusAction::kPushA8:
-      return "PushA8";
-    case MicroBusAction::kPushAHigh:
-      return "PushAHigh";
-    case MicroBusAction::kPushDbr:
-      return "PushDbr";
-    case MicroBusAction::kPushPch:
-      return "PushPch";
-    case MicroBusAction::kPushPcl:
-      return "PushPcl";
-    case MicroBusAction::kPushPbr:
-      return "PushPbr";
-    case MicroBusAction::kPushP:
-      return "PushP";
-    case MicroBusAction::kPushX8:
-      return "PushX8";
-    case MicroBusAction::kPushXHigh:
-      return "PushXHigh";
-    case MicroBusAction::kPushY8:
-      return "PushY8";
-    case MicroBusAction::kPushYHigh:
-      return "PushYHigh";
-    case MicroBusAction::kPushDpLow:
-      return "PushDpLow";
-    case MicroBusAction::kPushDpHigh:
-      return "PushDpHigh";
-    case MicroBusAction::kPushAddrLow:
-      return "PushAddrLow";
-    case MicroBusAction::kPushAddrHigh:
-      return "PushAddrHigh";
+    case MicroBusAction::kPushStack:
+      return "PushStack";
     case MicroBusAction::kPullStack:
       return "PullStack";
     case MicroBusAction::kPreIncPullStack:

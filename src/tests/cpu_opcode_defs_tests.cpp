@@ -129,14 +129,14 @@ TEST_CASE("Opcode specs lower into expected execution and metadata entries", "[c
 
   ExpectOpcode(0x48, "PHA", "implied", 2,
                {{B::kNone, M::kNone, 0, "internal"},
-                {B::kPushAHigh, M::kDecrementSp, 1, "push A high"},
-                {B::kPushA8, M::kDecrementSp, 0, "push A low"}});
+                {B::kPushStack, M::kDecrementSp, 1, "push A high"},
+                {B::kPushStack, M::kDecrementSp, 0, "push A low"}});
 
   const uint32_t pha_high_rule = kOpcodeArtifacts.execution_table[0x48].rules[1];
   REQUIRE(pha_high_rule == ComputeTimingRuleTruthTable(Condition(TimingCondition::kAccumulator16)));
 
   ExpectOpcode(0x8B, "PHB", "implied", 1,
-               {{B::kNone, M::kNone, 0, "internal"}, {B::kPushDbr, M::kDecrementSp, 0, "push DBR"}});
+               {{B::kNone, M::kNone, 0, "internal"}, {B::kPushStack, M::kDecrementSp, 0, "push DBR"}});
 
   ExpectOpcode(0xAB, "PLB", "implied", 1,
                {{B::kNone, M::kNone, 0, "internal"},

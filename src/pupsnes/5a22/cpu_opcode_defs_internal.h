@@ -77,6 +77,16 @@ inline constexpr ByteSel UnpackLoadRegByteSel(uint8_t params) {
 inline constexpr bool UnpackLoadRegNz(uint8_t params) {
   return (params & 0x40U) != 0U;
 }
+
+// Push bus action (kPushStack): bits [3:0] = PushSrc (15 variants — A8/AHigh,
+// X8/XHigh, Y8/YHigh, Pcl/Pch/Pbr, Dbr, P, DpLow/DpHigh, AddrLow/AddrHigh).
+// Dispatch lives in DispatchPushStackByte in cpu.cpp.
+inline constexpr uint8_t PackPushStack(PushSrc src) {
+  return static_cast<uint8_t>(static_cast<uint32_t>(src) & 0x0FU);
+}
+inline constexpr PushSrc UnpackPushStack(uint8_t params) {
+  return static_cast<PushSrc>(params & 0x0FU);
+}
 }  // namespace micro_op_params
 
 struct CycleSlotSpec {
@@ -240,19 +250,19 @@ constexpr CycleSlotSpec WriteYHighAddr(MicroInternalOp internal_op = MicroIntern
   return CycleSlotSpec{MicroBusAction::kWriteYHighAddr, internal_op, rule, label};
 }
 
-constexpr CycleSlotSpec PushA8(MicroInternalOp internal_op = MicroInternalOp::kNone, TimingRuleExpr rule = Always(),
-                               std::string_view label = {}) {
-  return CycleSlotSpec{MicroBusAction::kPushA8, internal_op, rule, label};
-}
-
-constexpr CycleSlotSpec PushAHigh(MicroInternalOp internal_op = MicroInternalOp::kNone, TimingRuleExpr rule = Always(),
-                                  std::string_view label = {}) {
-  return CycleSlotSpec{MicroBusAction::kPushAHigh, internal_op, rule, label};
-}
-
-constexpr CycleSlotSpec PushDbr(MicroInternalOp internal_op = MicroInternalOp::kNone, TimingRuleExpr rule = Always(),
-                                std::string_view label = {}) {
-  return CycleSlotSpec{MicroBusAction::kPushDbr, internal_op, rule, label};
+// Parameterized push to the stack. Packs PushSrc into CycleSlotSpec::params
+// for the unified kPushStack bus action. Dispatch lives in DispatchPushStackByte
+// in cpu.cpp. internal_op defaults to kNone so callers can opt in (typically
+// kDecrementSp to sequence SP after the write) at the emit site.
+constexpr CycleSlotSpec PushReg(PushSrc src, MicroInternalOp internal_op = MicroInternalOp::kNone,
+                                TimingRuleExpr rule = Always(), std::string_view label = {}) {
+  return CycleSlotSpec{
+      MicroBusAction::kPushStack,
+      internal_op,
+      rule,
+      label,
+      micro_op_params::PackPushStack(src),
+  };
 }
 
 constexpr CycleSlotSpec PullStack(MicroInternalOp internal_op = MicroInternalOp::kNone, TimingRuleExpr rule = Always(),

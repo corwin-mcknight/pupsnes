@@ -35,21 +35,10 @@ enum class MicroBusAction : uint8_t {
   kWriteAHighAddr,  // Write A high byte to effective address (addr_)
   kWriteXHighAddr,  // Write X high byte to effective address (addr_)
   kWriteYHighAddr,  // Write Y high byte to effective address (addr_)
-  kPushA8,          // Write A low byte to stack ($00:SP)
-  kPushAHigh,       // Write A high byte to stack ($00:SP)
-  kPushDbr,         // Write DBR to stack ($00:SP)
-  kPushPch,         // Write PC high byte to stack ($00:SP)
-  kPushPcl,         // Write PC low byte to stack ($00:SP)
-  kPushPbr,         // Write PBR to stack ($00:SP)
-  kPushP,           // Write status register to stack ($00:SP)
-  kPushX8,          // Write X low byte to stack
-  kPushXHigh,       // Write X high byte to stack
-  kPushY8,          // Write Y low byte to stack
-  kPushYHigh,       // Write Y high byte to stack
-  kPushDpLow,       // Write DP low byte to stack
-  kPushDpHigh,      // Write DP high byte to stack
-  kPushAddrLow,     // Write addr_[7:0] to stack
-  kPushAddrHigh,    // Write addr_[15:8] to stack
+  kPushStack,       // Write a byte to stack ($00:SP); byte source selected by
+                    // PushSrc packed in CycleSlotSpec::params[3:0] (see
+                    // micro_op_params::PackPushStack). Dispatch lives in
+                    // DispatchPushStackByte in cpu.cpp.
   kPullStack,       // Read byte from stack ($00:SP) into fetch_data_
   kPreIncPullStack, // Increment SP then read from stack into fetch_data_
 };
@@ -132,9 +121,12 @@ enum class BranchCond : uint8_t { kAlways, kZ, kNotZ, kC, kNotC, kN, kNotN, kV, 
 enum class AluOp : uint8_t { kAdc, kSbc, kAnd, kOra, kEor, kCmp, kCpx, kCpy, kBit };
 enum class WriteSrc : uint8_t { kFetchData, kA, kX, kY };
 enum class PushSrc : uint8_t {
-  kA,
-  kX,
-  kY,
+  kA8,
+  kAHigh,
+  kX8,
+  kXHigh,
+  kY8,
+  kYHigh,
   kPcl,
   kPch,
   kPbr,

@@ -373,6 +373,48 @@ namespace {
   __builtin_unreachable();
 }
 
+// Dispatch a parameterized stack push to the concrete byte-extraction logic
+// for each PushSrc. Mirrors the per-variant kPushXxx byte math from the old
+// PerformBusAction switch. The switch collapses at compile time when PushSrc
+// is a compile-time constant (true for every PushReg call site), so the hot
+// path is a direct byte computation — no runtime table lookup. The caller
+// issues the stack write at StackAddr(regs) with the returned byte.
+[[gnu::always_inline]] inline uint8_t DispatchPushStackByte(const CpuRegs& regs, SnesAddrT addr, PushSrc src) {
+  switch (src) {
+    case PushSrc::kA8:
+      return static_cast<uint8_t>(regs.A);
+    case PushSrc::kAHigh:
+      return static_cast<uint8_t>(regs.A >> 8U);
+    case PushSrc::kX8:
+      return static_cast<uint8_t>(regs.X);
+    case PushSrc::kXHigh:
+      return static_cast<uint8_t>(regs.X >> 8U);
+    case PushSrc::kY8:
+      return static_cast<uint8_t>(regs.Y);
+    case PushSrc::kYHigh:
+      return static_cast<uint8_t>(regs.Y >> 8U);
+    case PushSrc::kPcl:
+      return static_cast<uint8_t>(regs.PC);
+    case PushSrc::kPch:
+      return static_cast<uint8_t>(regs.PC >> 8U);
+    case PushSrc::kPbr:
+      return regs.PBR;
+    case PushSrc::kDbr:
+      return regs.DBR;
+    case PushSrc::kP:
+      return regs.P.ToByte();
+    case PushSrc::kDpLow:
+      return static_cast<uint8_t>(regs.DP);
+    case PushSrc::kDpHigh:
+      return static_cast<uint8_t>(regs.DP >> 8U);
+    case PushSrc::kAddrLow:
+      return static_cast<uint8_t>(addr & 0xFFU);
+    case PushSrc::kAddrHigh:
+      return static_cast<uint8_t>((addr >> 8U) & 0xFFU);
+  }
+  __builtin_unreachable();
+}
+
 // When e=1 the m and x flags are forced to 1, XH/YH forced to $00, and the
 // stack is forced onto page 1 (SH = $01). Called after any op that can
 // change P or e.
@@ -1047,36 +1089,11 @@ TickResult CPU::PerformBusAction(MicroBusAction action, [[maybe_unused]] uint8_t
       return BusWrite(addr_, static_cast<uint8_t>(regs_.X >> 8U), cycle_time);
     case MicroBusAction::kWriteYHighAddr:
       return BusWrite(addr_, static_cast<uint8_t>(regs_.Y >> 8U), cycle_time);
-    case MicroBusAction::kPushA8:
-      return BusWrite(StackAddr(regs_), static_cast<uint8_t>(regs_.A), cycle_time);
-    case MicroBusAction::kPushAHigh:
-      return BusWrite(StackAddr(regs_), static_cast<uint8_t>(regs_.A >> 8U), cycle_time);
-    case MicroBusAction::kPushDbr:
-      return BusWrite(StackAddr(regs_), regs_.DBR, cycle_time);
-    case MicroBusAction::kPushPch:
-      return BusWrite(StackAddr(regs_), static_cast<uint8_t>(regs_.PC >> 8U), cycle_time);
-    case MicroBusAction::kPushPcl:
-      return BusWrite(StackAddr(regs_), static_cast<uint8_t>(regs_.PC), cycle_time);
-    case MicroBusAction::kPushPbr:
-      return BusWrite(StackAddr(regs_), regs_.PBR, cycle_time);
-    case MicroBusAction::kPushP:
-      return BusWrite(StackAddr(regs_), regs_.P.ToByte(), cycle_time);
-    case MicroBusAction::kPushX8:
-      return BusWrite(StackAddr(regs_), static_cast<uint8_t>(regs_.X), cycle_time);
-    case MicroBusAction::kPushXHigh:
-      return BusWrite(StackAddr(regs_), static_cast<uint8_t>(regs_.X >> 8U), cycle_time);
-    case MicroBusAction::kPushY8:
-      return BusWrite(StackAddr(regs_), static_cast<uint8_t>(regs_.Y), cycle_time);
-    case MicroBusAction::kPushYHigh:
-      return BusWrite(StackAddr(regs_), static_cast<uint8_t>(regs_.Y >> 8U), cycle_time);
-    case MicroBusAction::kPushDpLow:
-      return BusWrite(StackAddr(regs_), static_cast<uint8_t>(regs_.DP), cycle_time);
-    case MicroBusAction::kPushDpHigh:
-      return BusWrite(StackAddr(regs_), static_cast<uint8_t>(regs_.DP >> 8U), cycle_time);
-    case MicroBusAction::kPushAddrLow:
-      return BusWrite(StackAddr(regs_), static_cast<uint8_t>(addr_ & 0xFFU), cycle_time);
-    case MicroBusAction::kPushAddrHigh:
-      return BusWrite(StackAddr(regs_), static_cast<uint8_t>((addr_ >> 8U) & 0xFFU), cycle_time);
+    case MicroBusAction::kPushStack: {
+      const uint8_t byte = DispatchPushStackByte(
+          regs_, addr_, opcode_defs_internal::micro_op_params::UnpackPushStack(params));
+      return BusWrite(StackAddr(regs_), byte, cycle_time);
+    }
     case MicroBusAction::kPullStack:
       return BusRead(StackAddr(regs_), cycle_time);
     case MicroBusAction::kPreIncPullStack:
