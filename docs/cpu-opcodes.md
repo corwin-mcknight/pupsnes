@@ -59,7 +59,7 @@ It exists to provide the generic mechanism:
 * `Opcode(...)`
 * `FetchPc(...)`
 * `ReadAddr(...)`
-* `WriteA8Addr(...)`
+* `WriteRegByte(...)`
 * `Internal(...)`
 * `Always()`, `Condition(...)`, `Not(...)`, `AllOf(...)`, `AnyOf(...)`
 * lowering helpers and compile-time validation
@@ -95,7 +95,7 @@ Example: `STA long` reuses a local fragment:
 ```cpp
 Opcode(0x8F, "STA", "absolute long")
     .Then(FetchLongAddr())
-    .Then(WriteA8Addr(MicroInternalOp::kNone, Always(), "write A low"))
+    .Then(WriteRegByte(WriteSrc::kA, ByteSel::kLow, MicroInternalOp::kNone, Always(), "write A low"))
     .Build(),
 ```
 
@@ -128,7 +128,7 @@ Current authored helpers include:
 
 * `FetchPc(...)`: read `PBR:PC`, then increment `PC`
 * `ReadAddr(...)`: read from resolved effective address
-* `WriteA8Addr(...)`: write the low byte of `A` to resolved effective address
+* `WriteRegByte(WriteSrc, ByteSel, ...)`: write a register (or `fetch_data_`) byte to resolved effective address
 * `Internal(...)`: no bus access this cycle
 
 Operand fetches from the instruction stream should stay explicit. The opcode fetch itself is implicit in the main CPU execution loop.

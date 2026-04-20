@@ -87,27 +87,27 @@ TEST_CASE("Opcode specs lower into expected execution and metadata entries", "[c
   ExpectOpcode(0x8D, "STA", "absolute", 2,
                {{B::kFetchPc, M::kSetAddrLowFromFetch, 0, "fetch address low"},
                 {B::kFetchPc, M::kSetAddrHighFromFetchAndBankFromDbr, 0, "fetch address high"},
-                {B::kWriteA8Addr, M::kIncrementAddr, 0, "write A low"},
-                {B::kWriteAHighAddr, M::kNone, 1, "write A high"}});
+                {B::kWriteRegByte, M::kIncrementAddr, 0, "write A low"},
+                {B::kWriteRegByte, M::kNone, 1, "write A high"}});
 
   ExpectOpcode(0x8E, "STX", "absolute", 2,
                {{B::kFetchPc, M::kSetAddrLowFromFetch, 0, "fetch address low"},
                 {B::kFetchPc, M::kSetAddrHighFromFetchAndBankFromDbr, 0, "fetch address high"},
-                {B::kWriteX8Addr, M::kIncrementAddr, 0, "write X low"},
-                {B::kWriteXHighAddr, M::kNone, 1, "write X high"}});
+                {B::kWriteRegByte, M::kIncrementAddr, 0, "write X low"},
+                {B::kWriteRegByte, M::kNone, 1, "write X high"}});
 
   ExpectOpcode(0x8C, "STY", "absolute", 2,
                {{B::kFetchPc, M::kSetAddrLowFromFetch, 0, "fetch address low"},
                 {B::kFetchPc, M::kSetAddrHighFromFetchAndBankFromDbr, 0, "fetch address high"},
-                {B::kWriteY8Addr, M::kIncrementAddr, 0, "write Y low"},
-                {B::kWriteYHighAddr, M::kNone, 1, "write Y high"}});
+                {B::kWriteRegByte, M::kIncrementAddr, 0, "write Y low"},
+                {B::kWriteRegByte, M::kNone, 1, "write Y high"}});
 
   ExpectOpcode(0x8F, "STA", "absolute long", 2,
                {{B::kFetchPc, M::kSetAddrLowFromFetch, 0, "fetch address low"},
                 {B::kFetchPc, M::kSetAddrHighFromFetch, 0, "fetch address high"},
                 {B::kFetchPc, M::kSetAddrBankFromFetch, 0, "fetch address bank"},
-                {B::kWriteA8Addr, M::kIncrementAddr, 0, "write A low"},
-                {B::kWriteAHighAddr, M::kNone, 1, "write A high"}});
+                {B::kWriteRegByte, M::kIncrementAddr, 0, "write A low"},
+                {B::kWriteRegByte, M::kNone, 1, "write A high"}});
 
   ExpectOpcode(0x80, "BRA", "relative", 3,
                {{B::kFetchPc, M::kSetBranchTakenCond, 0, "fetch displacement"},

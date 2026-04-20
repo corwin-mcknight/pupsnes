@@ -83,22 +83,25 @@ constexpr CycleFragment BranchSequence(BranchCond cond) {
 
 constexpr CycleFragment StoreAccumulator() {
   return Fragment()
-      .Then(WriteA8Addr(MicroInternalOp::kIncrementAddr, Always(), "write A low"))
-      .Then(WriteAHighAddr(MicroInternalOp::kNone, Condition(TimingCondition::kAccumulator16), "write A high"))
+      .Then(WriteRegByte(WriteSrc::kA, ByteSel::kLow, MicroInternalOp::kIncrementAddr, Always(), "write A low"))
+      .Then(WriteRegByte(WriteSrc::kA, ByteSel::kHigh, MicroInternalOp::kNone,
+                         Condition(TimingCondition::kAccumulator16), "write A high"))
       .Build();
 }
 
 constexpr CycleFragment StoreIndexX() {
   return Fragment()
-      .Then(WriteX8Addr(MicroInternalOp::kIncrementAddr, Always(), "write X low"))
-      .Then(WriteXHighAddr(MicroInternalOp::kNone, Condition(TimingCondition::kIndex16), "write X high"))
+      .Then(WriteRegByte(WriteSrc::kX, ByteSel::kLow, MicroInternalOp::kIncrementAddr, Always(), "write X low"))
+      .Then(WriteRegByte(WriteSrc::kX, ByteSel::kHigh, MicroInternalOp::kNone, Condition(TimingCondition::kIndex16),
+                         "write X high"))
       .Build();
 }
 
 constexpr CycleFragment StoreIndexY() {
   return Fragment()
-      .Then(WriteY8Addr(MicroInternalOp::kIncrementAddr, Always(), "write Y low"))
-      .Then(WriteYHighAddr(MicroInternalOp::kNone, Condition(TimingCondition::kIndex16), "write Y high"))
+      .Then(WriteRegByte(WriteSrc::kY, ByteSel::kLow, MicroInternalOp::kIncrementAddr, Always(), "write Y low"))
+      .Then(WriteRegByte(WriteSrc::kY, ByteSel::kHigh, MicroInternalOp::kNone, Condition(TimingCondition::kIndex16),
+                         "write Y high"))
       .Build();
 }
 

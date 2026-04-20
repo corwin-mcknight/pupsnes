@@ -87,6 +87,22 @@ inline constexpr uint8_t PackPushStack(PushSrc src) {
 inline constexpr PushSrc UnpackPushStack(uint8_t params) {
   return static_cast<PushSrc>(params & 0x0FU);
 }
+
+// Write bus action (kWriteRegByte): bits [1:0] = WriteSrc (kFetchData/kA/kX/kY),
+// bits [3:2] = ByteSel (kLow/kHigh; kBank is accepted but unused by writes).
+// For the generic fetch_data writer, WriteSrc::kFetchData + ByteSel::kLow is
+// the canonical encoding (the ByteSel is ignored for fetch_data). Dispatch
+// lives in DispatchWriteByte in cpu.cpp.
+inline constexpr uint8_t PackWriteAddr(WriteSrc src, ByteSel byte_sel) {
+  return static_cast<uint8_t>((static_cast<uint32_t>(src) & 0x03U)
+                              | ((static_cast<uint32_t>(byte_sel) & 0x03U) << 2U));
+}
+inline constexpr WriteSrc UnpackWriteAddrSrc(uint8_t params) {
+  return static_cast<WriteSrc>(params & 0x03U);
+}
+inline constexpr ByteSel UnpackWriteAddrByteSel(uint8_t params) {
+  return static_cast<ByteSel>((params >> 2U) & 0x03U);
+}
 }  // namespace micro_op_params
 
 struct CycleSlotSpec {
@@ -220,34 +236,21 @@ constexpr CycleSlotSpec ReadAddr(MicroInternalOp internal_op = MicroInternalOp::
   return CycleSlotSpec{MicroBusAction::kReadAddr, internal_op, rule, label};
 }
 
-constexpr CycleSlotSpec WriteA8Addr(MicroInternalOp internal_op = MicroInternalOp::kNone,
-                                    TimingRuleExpr rule = Always(), std::string_view label = {}) {
-  return CycleSlotSpec{MicroBusAction::kWriteA8Addr, internal_op, rule, label};
-}
-
-constexpr CycleSlotSpec WriteX8Addr(MicroInternalOp internal_op = MicroInternalOp::kNone,
-                                    TimingRuleExpr rule = Always(), std::string_view label = {}) {
-  return CycleSlotSpec{MicroBusAction::kWriteX8Addr, internal_op, rule, label};
-}
-
-constexpr CycleSlotSpec WriteY8Addr(MicroInternalOp internal_op = MicroInternalOp::kNone,
-                                    TimingRuleExpr rule = Always(), std::string_view label = {}) {
-  return CycleSlotSpec{MicroBusAction::kWriteY8Addr, internal_op, rule, label};
-}
-
-constexpr CycleSlotSpec WriteAHighAddr(MicroInternalOp internal_op = MicroInternalOp::kNone,
-                                       TimingRuleExpr rule = Always(), std::string_view label = {}) {
-  return CycleSlotSpec{MicroBusAction::kWriteAHighAddr, internal_op, rule, label};
-}
-
-constexpr CycleSlotSpec WriteXHighAddr(MicroInternalOp internal_op = MicroInternalOp::kNone,
-                                       TimingRuleExpr rule = Always(), std::string_view label = {}) {
-  return CycleSlotSpec{MicroBusAction::kWriteXHighAddr, internal_op, rule, label};
-}
-
-constexpr CycleSlotSpec WriteYHighAddr(MicroInternalOp internal_op = MicroInternalOp::kNone,
-                                       TimingRuleExpr rule = Always(), std::string_view label = {}) {
-  return CycleSlotSpec{MicroBusAction::kWriteYHighAddr, internal_op, rule, label};
+// Parameterized write of a register (or fetch_data_) byte to the effective
+// address (addr_). Packs (WriteSrc, ByteSel) into CycleSlotSpec::params for
+// the unified kWriteRegByte bus action. Dispatch lives in DispatchWriteByte
+// in cpu.cpp. For the generic fetch_data writer, pass
+// WriteSrc::kFetchData + ByteSel::kLow (ByteSel is ignored in that case).
+constexpr CycleSlotSpec WriteRegByte(WriteSrc src, ByteSel byte_sel,
+                                     MicroInternalOp internal_op = MicroInternalOp::kNone,
+                                     TimingRuleExpr rule = Always(), std::string_view label = {}) {
+  return CycleSlotSpec{
+      MicroBusAction::kWriteRegByte,
+      internal_op,
+      rule,
+      label,
+      micro_op_params::PackWriteAddr(src, byte_sel),
+  };
 }
 
 // Parameterized push to the stack. Packs PushSrc into CycleSlotSpec::params

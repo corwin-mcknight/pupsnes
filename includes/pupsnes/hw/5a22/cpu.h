@@ -28,13 +28,10 @@ enum class MicroBusAction : uint8_t {
   kNone,            // Internal cycle — no bus transaction
   kFetchPc,         // Read byte from PBR:PC, increment PC
   kReadAddr,        // Read byte from effective address (addr_)
-  kWriteAddr,       // Write fetch_data_ to effective address (addr_)
-  kWriteA8Addr,     // Write A low byte to effective address (addr_)
-  kWriteX8Addr,     // Write X low byte to effective address (addr_)
-  kWriteY8Addr,     // Write Y low byte to effective address (addr_)
-  kWriteAHighAddr,  // Write A high byte to effective address (addr_)
-  kWriteXHighAddr,  // Write X high byte to effective address (addr_)
-  kWriteYHighAddr,  // Write Y high byte to effective address (addr_)
+  kWriteRegByte,    // Write a byte to effective address (addr_); byte source
+                    // selected by (WriteSrc, ByteSel) packed in
+                    // CycleSlotSpec::params (see micro_op_params::PackWriteAddr).
+                    // Dispatch lives in DispatchWriteByte in cpu.cpp.
   kPushStack,       // Write a byte to stack ($00:SP); byte source selected by
                     // PushSrc packed in CycleSlotSpec::params[3:0] (see
                     // micro_op_params::PackPushStack). Dispatch lives in

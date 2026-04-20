@@ -10,20 +10,8 @@ std::string_view ToString(MicroBusAction action) {
       return "FetchPc";
     case MicroBusAction::kReadAddr:
       return "ReadAddr";
-    case MicroBusAction::kWriteAddr:
-      return "WriteAddr";
-    case MicroBusAction::kWriteA8Addr:
-      return "WriteA8Addr";
-    case MicroBusAction::kWriteX8Addr:
-      return "WriteX8Addr";
-    case MicroBusAction::kWriteY8Addr:
-      return "WriteY8Addr";
-    case MicroBusAction::kWriteAHighAddr:
-      return "WriteAHighAddr";
-    case MicroBusAction::kWriteXHighAddr:
-      return "WriteXHighAddr";
-    case MicroBusAction::kWriteYHighAddr:
-      return "WriteYHighAddr";
+    case MicroBusAction::kWriteRegByte:
+      return "WriteRegByte";
     case MicroBusAction::kPushStack:
       return "PushStack";
     case MicroBusAction::kPullStack:

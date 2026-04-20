@@ -11,7 +11,7 @@ TEST_CASE("MicroOpStrings - KnownBusActions", "[microop]") {
   CHECK(ToString(MicroBusAction::kNone) == std::string_view{"None"});
   CHECK(ToString(MicroBusAction::kFetchPc) == std::string_view{"FetchPc"});
   CHECK(ToString(MicroBusAction::kReadAddr) == std::string_view{"ReadAddr"});
-  CHECK(ToString(MicroBusAction::kWriteAddr) == std::string_view{"WriteAddr"});
+  CHECK(ToString(MicroBusAction::kWriteRegByte) == std::string_view{"WriteRegByte"});
   CHECK(ToString(MicroBusAction::kPullStack) == std::string_view{"PullStack"});
 }
 

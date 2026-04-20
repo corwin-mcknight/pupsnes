@@ -415,6 +415,26 @@ namespace {
   __builtin_unreachable();
 }
 
+// Dispatch a parameterized write-to-addr_ to the concrete byte-extraction
+// logic for each (WriteSrc, ByteSel). Mirrors the per-variant kWriteXxxAddr
+// byte math from the old PerformBusAction switch. Because (src, byte_sel) is
+// a compile-time constant at every WriteRegByte call site, the switch
+// collapses to a direct byte computation on the hot path.
+[[gnu::always_inline]] inline uint8_t DispatchWriteByte(const CpuRegs& regs, uint8_t fetch_data, WriteSrc src,
+                                                        ByteSel byte_sel) {
+  switch (src) {
+    case WriteSrc::kFetchData:
+      return fetch_data;
+    case WriteSrc::kA:
+      return (byte_sel == ByteSel::kLow) ? static_cast<uint8_t>(regs.A) : static_cast<uint8_t>(regs.A >> 8U);
+    case WriteSrc::kX:
+      return (byte_sel == ByteSel::kLow) ? static_cast<uint8_t>(regs.X) : static_cast<uint8_t>(regs.X >> 8U);
+    case WriteSrc::kY:
+      return (byte_sel == ByteSel::kLow) ? static_cast<uint8_t>(regs.Y) : static_cast<uint8_t>(regs.Y >> 8U);
+  }
+  __builtin_unreachable();
+}
+
 // When e=1 the m and x flags are forced to 1, XH/YH forced to $00, and the
 // stack is forced onto page 1 (SH = $01). Called after any op that can
 // change P or e.
@@ -1075,20 +1095,12 @@ TickResult CPU::PerformBusAction(MicroBusAction action, [[maybe_unused]] uint8_t
     }
     case MicroBusAction::kReadAddr:
       return BusRead(addr_, cycle_time);
-    case MicroBusAction::kWriteAddr:
-      return BusWrite(addr_, fetch_data_, cycle_time);
-    case MicroBusAction::kWriteA8Addr:
-      return BusWrite(addr_, static_cast<uint8_t>(regs_.A), cycle_time);
-    case MicroBusAction::kWriteX8Addr:
-      return BusWrite(addr_, static_cast<uint8_t>(regs_.X), cycle_time);
-    case MicroBusAction::kWriteY8Addr:
-      return BusWrite(addr_, static_cast<uint8_t>(regs_.Y), cycle_time);
-    case MicroBusAction::kWriteAHighAddr:
-      return BusWrite(addr_, static_cast<uint8_t>(regs_.A >> 8U), cycle_time);
-    case MicroBusAction::kWriteXHighAddr:
-      return BusWrite(addr_, static_cast<uint8_t>(regs_.X >> 8U), cycle_time);
-    case MicroBusAction::kWriteYHighAddr:
-      return BusWrite(addr_, static_cast<uint8_t>(regs_.Y >> 8U), cycle_time);
+    case MicroBusAction::kWriteRegByte: {
+      const uint8_t byte = DispatchWriteByte(
+          regs_, fetch_data_, opcode_defs_internal::micro_op_params::UnpackWriteAddrSrc(params),
+          opcode_defs_internal::micro_op_params::UnpackWriteAddrByteSel(params));
+      return BusWrite(addr_, byte, cycle_time);
+    }
     case MicroBusAction::kPushStack: {
       const uint8_t byte = DispatchPushStackByte(
           regs_, addr_, opcode_defs_internal::micro_op_params::UnpackPushStack(params));
