@@ -17,7 +17,7 @@ TEST_CASE("MicroOpStrings - KnownBusActions", "[microop]") {
 
 TEST_CASE("MicroOpStrings - KnownInternalOps", "[microop]") {
   CHECK(ToString(MicroInternalOp::kNone) == std::string_view{"None"});
-  CHECK(ToString(MicroInternalOp::kLoadA8UpdateNz) == std::string_view{"LoadA8UpdateNz"});
+  CHECK(ToString(MicroInternalOp::kLoadReg) == std::string_view{"LoadReg"});
   CHECK(ToString(MicroInternalOp::kBranchRelative8) == std::string_view{"BranchRelative8"});
   CHECK(ToString(MicroInternalOp::kLoadDbrUpdateNz) == std::string_view{"LoadDbrUpdateNz"});
 }

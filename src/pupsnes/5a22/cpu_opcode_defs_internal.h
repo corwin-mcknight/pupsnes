@@ -57,6 +57,26 @@ inline constexpr uint8_t PackBranchCond(BranchCond cond) {
 inline constexpr BranchCond UnpackBranchCond(uint8_t params) {
   return static_cast<BranchCond>(params & 0x0FU);
 }
+
+// Register load from fetch_data_ (kLoadReg): bits [3:0] = Reg (A/X/Y only),
+// bits [5:4] = ByteSel (kLow = 0, kHigh = 1), bit 6 = update_nz. Dispatch
+// lives in DispatchLoadReg in cpu.cpp. On kHigh, update_nz must be true
+// (that's the only high-byte variant the concrete helpers implement); the
+// builder enforces this.
+inline constexpr uint8_t PackLoadReg(Reg reg, ByteSel byte_sel, bool update_nz) {
+  return static_cast<uint8_t>((static_cast<uint32_t>(reg) & 0x0FU) |
+                              ((static_cast<uint32_t>(byte_sel) & 0x03U) << 4U) |
+                              ((update_nz ? 1U : 0U) << 6U));
+}
+inline constexpr Reg UnpackLoadRegReg(uint8_t params) {
+  return static_cast<Reg>(params & 0x0FU);
+}
+inline constexpr ByteSel UnpackLoadRegByteSel(uint8_t params) {
+  return static_cast<ByteSel>((params >> 4U) & 0x03U);
+}
+inline constexpr bool UnpackLoadRegNz(uint8_t params) {
+  return (params & 0x40U) != 0U;
+}
 }  // namespace micro_op_params
 
 struct CycleSlotSpec {
@@ -285,6 +305,38 @@ constexpr CycleSlotSpec SetFlag(Flag flag, bool value, TimingRuleExpr rule = Alw
       rule,
       label,
       micro_op_params::PackSetFlag(flag, value),
+  };
+}
+
+// Parameterized load of a register byte from fetch_data_ (FetchPc bus action).
+// Packs (reg, byte_sel, update_nz) into CycleSlotSpec::params for the unified
+// kLoadReg internal op. Dispatch lives in DispatchLoadReg in cpu.cpp. Used by
+// LDA/LDX/LDY immediate and any other opcode that completes a register via a
+// PC-side fetch.
+constexpr CycleSlotSpec LoadRegFromFetch(Reg reg, ByteSel byte_sel, bool update_nz,
+                                         TimingRuleExpr rule = Always(),
+                                         std::string_view label = {}) {
+  return CycleSlotSpec{
+      MicroBusAction::kFetchPc,
+      MicroInternalOp::kLoadReg,
+      rule,
+      label,
+      micro_op_params::PackLoadReg(reg, byte_sel, update_nz),
+  };
+}
+
+// Parameterized load of a register byte from a pre-incremented stack pull
+// (kPreIncPullStack bus action). Same param encoding as LoadRegFromFetch;
+// used by PLA/PLX/PLY.
+constexpr CycleSlotSpec PullPreIncLoadReg(Reg reg, ByteSel byte_sel, bool update_nz,
+                                          TimingRuleExpr rule = Always(),
+                                          std::string_view label = {}) {
+  return CycleSlotSpec{
+      MicroBusAction::kPreIncPullStack,
+      MicroInternalOp::kLoadReg,
+      rule,
+      label,
+      micro_op_params::PackLoadReg(reg, byte_sel, update_nz),
   };
 }
 

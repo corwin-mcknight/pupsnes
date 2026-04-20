@@ -66,24 +66,8 @@ std::string_view ToString(MicroInternalOp op) {
   switch (op) {
     case MicroInternalOp::kNone:
       return "None";
-    case MicroInternalOp::kLoadA8UpdateNz:
-      return "LoadA8UpdateNz";
-    case MicroInternalOp::kLoadALow:
-      return "LoadALow";
-    case MicroInternalOp::kLoadAHighUpdateNz:
-      return "LoadAHighUpdateNz";
-    case MicroInternalOp::kLoadX8UpdateNz:
-      return "LoadX8UpdateNz";
-    case MicroInternalOp::kLoadXLow:
-      return "LoadXLow";
-    case MicroInternalOp::kLoadXHighUpdateNz:
-      return "LoadXHighUpdateNz";
-    case MicroInternalOp::kLoadY8UpdateNz:
-      return "LoadY8UpdateNz";
-    case MicroInternalOp::kLoadYLow:
-      return "LoadYLow";
-    case MicroInternalOp::kLoadYHighUpdateNz:
-      return "LoadYHighUpdateNz";
+    case MicroInternalOp::kLoadReg:
+      return "LoadReg";
     case MicroInternalOp::kSetBranchTakenCond:
       return "SetBranchTakenCond";
     case MicroInternalOp::kBranchRelative8:

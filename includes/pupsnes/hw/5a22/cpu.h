@@ -57,15 +57,10 @@ enum class MicroBusAction : uint8_t {
 // Internal register operations performed after the bus action completes.
 enum class MicroInternalOp : uint8_t {
   kNone,
-  kLoadA8UpdateNz,                      // A_lo = fetch_data_; update N/Z using effective 8-bit accumulator width
-  kLoadALow,                            // A_lo = fetch_data_
-  kLoadAHighUpdateNz,                   // A_hi = fetch_data_; update N/Z using effective 16-bit accumulator width
-  kLoadX8UpdateNz,                      // X_lo = fetch_data_; update N/Z using effective 8-bit index width
-  kLoadXLow,                            // X_lo = fetch_data_
-  kLoadXHighUpdateNz,                   // X_hi = fetch_data_; update N/Z using effective 16-bit index width
-  kLoadY8UpdateNz,                      // Y_lo = fetch_data_; update N/Z using effective 8-bit index width
-  kLoadYLow,                            // Y_lo = fetch_data_
-  kLoadYHighUpdateNz,                   // Y_hi = fetch_data_; update N/Z using effective 16-bit index width
+  kLoadReg,                             // reg_byte = fetch_data_; width/flag semantics per (reg, byte_sel,
+                                        // update_nz); params packs Reg (A/X/Y) in bits [3:0], ByteSel
+                                        // (kLow/kHigh) in bits [5:4], and update_nz in bit 6 (see
+                                        // micro_op_params::PackLoadReg). Dispatch via DispatchLoadReg.
   kSetBranchTakenCond,                  // branch_taken = <BranchCond(params[3:0])>; params packs the
                                         // BranchCond (kAlways/kZ/kNotZ/kC/kNotC/kN/kNotN/kV/kNotV)
                                         // in bits [3:0] (see micro_op_params::PackBranchCond)

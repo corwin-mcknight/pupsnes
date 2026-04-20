@@ -80,13 +80,13 @@ Example: immediate loads are authored directly in `MakeLoadSpecs()`:
 
 ```cpp
 Opcode(0xA9, "LDA", "immediate")
-    .Then(FetchPc(MicroInternalOp::kLoadALowUpdateNz, Always(),
-                  "fetch immediate"))
+    .Then(LoadRegFromFetch(Reg::kA, ByteSel::kLow, /*update_nz=*/true,
+                           Always(), "fetch immediate"))
     .Build(),
 
 Opcode(0xA2, "LDX", "immediate")
-    .Then(FetchPc(MicroInternalOp::kLoadXLowUpdateNz, Always(),
-                  "fetch immediate"))
+    .Then(LoadRegFromFetch(Reg::kX, ByteSel::kLow, /*update_nz=*/true,
+                           Always(), "fetch immediate"))
     .Build(),
 ```
 
@@ -139,8 +139,7 @@ Internal ops mutate CPU state after the bus action completes.
 
 Examples:
 
-* `kLoadALowUpdateNz`
-* `kLoadXLowUpdateNz`
+* `kLoadReg` (parameterized: Reg × ByteSel × update_nz)
 * `kSetAddrLowFromFetch`
 * `kSetBranchTakenCond`
 * `kBranchRelative8`

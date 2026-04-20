@@ -21,19 +21,23 @@ constexpr CycleFragment FetchAbsoluteAddr() {
 
 constexpr CycleFragment LoadAccumulatorImmediate() {
   return Fragment()
-      .Then(FetchPc(MicroInternalOp::kLoadA8UpdateNz, Not(Condition(TimingCondition::kAccumulator16)),
-                    "fetch immediate low"))
-      .Then(FetchPc(MicroInternalOp::kLoadALow, Condition(TimingCondition::kAccumulator16), "fetch immediate low"))
-      .Then(FetchPc(MicroInternalOp::kLoadAHighUpdateNz, Condition(TimingCondition::kAccumulator16),
-                    "fetch immediate high"))
+      .Then(LoadRegFromFetch(Reg::kA, ByteSel::kLow, true, Not(Condition(TimingCondition::kAccumulator16)),
+                             "fetch immediate low"))
+      .Then(LoadRegFromFetch(Reg::kA, ByteSel::kLow, false, Condition(TimingCondition::kAccumulator16),
+                             "fetch immediate low"))
+      .Then(LoadRegFromFetch(Reg::kA, ByteSel::kHigh, true, Condition(TimingCondition::kAccumulator16),
+                             "fetch immediate high"))
       .Build();
 }
 
 constexpr CycleFragment LoadIndexXImmediate() {
   return Fragment()
-      .Then(FetchPc(MicroInternalOp::kLoadX8UpdateNz, Not(Condition(TimingCondition::kIndex16)), "fetch immediate low"))
-      .Then(FetchPc(MicroInternalOp::kLoadXLow, Condition(TimingCondition::kIndex16), "fetch immediate low"))
-      .Then(FetchPc(MicroInternalOp::kLoadXHighUpdateNz, Condition(TimingCondition::kIndex16), "fetch immediate high"))
+      .Then(LoadRegFromFetch(Reg::kX, ByteSel::kLow, true, Not(Condition(TimingCondition::kIndex16)),
+                             "fetch immediate low"))
+      .Then(LoadRegFromFetch(Reg::kX, ByteSel::kLow, false, Condition(TimingCondition::kIndex16),
+                             "fetch immediate low"))
+      .Then(LoadRegFromFetch(Reg::kX, ByteSel::kHigh, true, Condition(TimingCondition::kIndex16),
+                             "fetch immediate high"))
       .Build();
 }
 
@@ -58,9 +62,12 @@ constexpr CycleFragment AluImmediateIndex(MicroInternalOp op8, MicroInternalOp o
 
 constexpr CycleFragment LoadIndexYImmediate() {
   return Fragment()
-      .Then(FetchPc(MicroInternalOp::kLoadY8UpdateNz, Not(Condition(TimingCondition::kIndex16)), "fetch immediate low"))
-      .Then(FetchPc(MicroInternalOp::kLoadYLow, Condition(TimingCondition::kIndex16), "fetch immediate low"))
-      .Then(FetchPc(MicroInternalOp::kLoadYHighUpdateNz, Condition(TimingCondition::kIndex16), "fetch immediate high"))
+      .Then(LoadRegFromFetch(Reg::kY, ByteSel::kLow, true, Not(Condition(TimingCondition::kIndex16)),
+                             "fetch immediate low"))
+      .Then(LoadRegFromFetch(Reg::kY, ByteSel::kLow, false, Condition(TimingCondition::kIndex16),
+                             "fetch immediate low"))
+      .Then(LoadRegFromFetch(Reg::kY, ByteSel::kHigh, true, Condition(TimingCondition::kIndex16),
+                             "fetch immediate high"))
       .Build();
 }
 
@@ -185,11 +192,12 @@ constexpr CycleFragment PullAccumulator() {
   return Fragment()
       .Then(Internal(MicroInternalOp::kNone, Always(), "internal"))
       .Then(Internal(MicroInternalOp::kNone, Always(), "internal"))
-      .Then(PullPreIncSlot(MicroInternalOp::kLoadA8UpdateNz, Not(Condition(TimingCondition::kAccumulator16)),
-                           "pull A (8-bit)"))
-      .Then(PullPreIncSlot(MicroInternalOp::kLoadALow, Condition(TimingCondition::kAccumulator16), "pull A low"))
-      .Then(PullPreIncSlot(MicroInternalOp::kLoadAHighUpdateNz, Condition(TimingCondition::kAccumulator16),
-                           "pull A high"))
+      .Then(PullPreIncLoadReg(Reg::kA, ByteSel::kLow, true, Not(Condition(TimingCondition::kAccumulator16)),
+                              "pull A (8-bit)"))
+      .Then(PullPreIncLoadReg(Reg::kA, ByteSel::kLow, false, Condition(TimingCondition::kAccumulator16),
+                              "pull A low"))
+      .Then(PullPreIncLoadReg(Reg::kA, ByteSel::kHigh, true, Condition(TimingCondition::kAccumulator16),
+                              "pull A high"))
       .Build();
 }
 
@@ -197,9 +205,9 @@ constexpr CycleFragment PullIndexX() {
   return Fragment()
       .Then(Internal(MicroInternalOp::kNone, Always(), "internal"))
       .Then(Internal(MicroInternalOp::kNone, Always(), "internal"))
-      .Then(PullPreIncSlot(MicroInternalOp::kLoadX8UpdateNz, Not(Condition(TimingCondition::kIndex16)),
-                           "pull X (8-bit)"))
-      .Then(PullPreIncSlot(MicroInternalOp::kLoadXLow, Condition(TimingCondition::kIndex16), "pull X low"))
+      .Then(PullPreIncLoadReg(Reg::kX, ByteSel::kLow, true, Not(Condition(TimingCondition::kIndex16)),
+                              "pull X (8-bit)"))
+      .Then(PullPreIncLoadReg(Reg::kX, ByteSel::kLow, false, Condition(TimingCondition::kIndex16), "pull X low"))
       .Then(PullPreIncSlot(MicroInternalOp::kLoadXHighFromFetchUpdateNz, Condition(TimingCondition::kIndex16),
                            "pull X high"))
       .Build();
@@ -209,9 +217,9 @@ constexpr CycleFragment PullIndexY() {
   return Fragment()
       .Then(Internal(MicroInternalOp::kNone, Always(), "internal"))
       .Then(Internal(MicroInternalOp::kNone, Always(), "internal"))
-      .Then(PullPreIncSlot(MicroInternalOp::kLoadY8UpdateNz, Not(Condition(TimingCondition::kIndex16)),
-                           "pull Y (8-bit)"))
-      .Then(PullPreIncSlot(MicroInternalOp::kLoadYLow, Condition(TimingCondition::kIndex16), "pull Y low"))
+      .Then(PullPreIncLoadReg(Reg::kY, ByteSel::kLow, true, Not(Condition(TimingCondition::kIndex16)),
+                              "pull Y (8-bit)"))
+      .Then(PullPreIncLoadReg(Reg::kY, ByteSel::kLow, false, Condition(TimingCondition::kIndex16), "pull Y low"))
       .Then(PullPreIncSlot(MicroInternalOp::kLoadYHighFromFetchUpdateNz, Condition(TimingCondition::kIndex16),
                            "pull Y high"))
       .Build();

@@ -324,6 +324,55 @@ namespace {
   __builtin_unreachable();
 }
 
+// Dispatch a parameterized register load from fetch_data_ to the concrete
+// per-(reg, byte, update_nz) helper above. The switch collapses at compile
+// time when all three axes are compile-time constants (true for every
+// LoadRegFromFetch / PullPreIncLoadReg call site in the opcode specs), so
+// the hot path is a direct call — no runtime table lookup. Only (reg, kHigh,
+// update_nz=true) is a valid high-byte combo for A/X/Y; the builder packs
+// update_nz=true on every high-byte emission.
+[[gnu::always_inline]] inline void DispatchLoadReg(CpuRegs& regs, uint8_t fetch_data, Reg reg, ByteSel byte_sel,
+                                                  bool update_nz) {
+  switch (reg) {
+    case Reg::kA:
+      if (byte_sel == ByteSel::kLow) {
+        if (update_nz) {
+          LoadA8UpdateNz(regs, fetch_data);
+        } else {
+          LoadALow(regs, fetch_data);
+        }
+      } else {
+        LoadAHighUpdateNz(regs, fetch_data);
+      }
+      return;
+    case Reg::kX:
+      if (byte_sel == ByteSel::kLow) {
+        if (update_nz) {
+          LoadX8UpdateNz(regs, fetch_data);
+        } else {
+          LoadXLow(regs, fetch_data);
+        }
+      } else {
+        LoadXHighUpdateNz(regs, fetch_data);
+      }
+      return;
+    case Reg::kY:
+      if (byte_sel == ByteSel::kLow) {
+        if (update_nz) {
+          LoadY8UpdateNz(regs, fetch_data);
+        } else {
+          LoadYLow(regs, fetch_data);
+        }
+      } else {
+        LoadYHighUpdateNz(regs, fetch_data);
+      }
+      return;
+    default:
+      break;
+  }
+  __builtin_unreachable();
+}
+
 // When e=1 the m and x flags are forced to 1, XH/YH forced to $00, and the
 // stack is forced onto page 1 (SH = $01). Called after any op that can
 // change P or e.
@@ -749,32 +798,11 @@ void CPU::ExecuteInternalOp(MicroInternalOp op, [[maybe_unused]] uint8_t params)
   switch (op) {
     case MicroInternalOp::kNone:
       break;
-    case MicroInternalOp::kLoadA8UpdateNz:
-      LoadA8UpdateNz(regs_, fetch_data_);
-      break;
-    case MicroInternalOp::kLoadALow:
-      LoadALow(regs_, fetch_data_);
-      break;
-    case MicroInternalOp::kLoadAHighUpdateNz:
-      LoadAHighUpdateNz(regs_, fetch_data_);
-      break;
-    case MicroInternalOp::kLoadX8UpdateNz:
-      LoadX8UpdateNz(regs_, fetch_data_);
-      break;
-    case MicroInternalOp::kLoadXLow:
-      LoadXLow(regs_, fetch_data_);
-      break;
-    case MicroInternalOp::kLoadXHighUpdateNz:
-      LoadXHighUpdateNz(regs_, fetch_data_);
-      break;
-    case MicroInternalOp::kLoadY8UpdateNz:
-      LoadY8UpdateNz(regs_, fetch_data_);
-      break;
-    case MicroInternalOp::kLoadYLow:
-      LoadYLow(regs_, fetch_data_);
-      break;
-    case MicroInternalOp::kLoadYHighUpdateNz:
-      LoadYHighUpdateNz(regs_, fetch_data_);
+    case MicroInternalOp::kLoadReg:
+      DispatchLoadReg(regs_, fetch_data_,
+                      opcode_defs_internal::micro_op_params::UnpackLoadRegReg(params),
+                      opcode_defs_internal::micro_op_params::UnpackLoadRegByteSel(params),
+                      opcode_defs_internal::micro_op_params::UnpackLoadRegNz(params));
       break;
     case MicroInternalOp::kSetBranchTakenCond:
       timing_context_.branch_taken =
