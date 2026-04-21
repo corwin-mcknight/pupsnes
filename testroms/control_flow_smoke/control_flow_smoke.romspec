@@ -2,7 +2,7 @@ rom_name = "control_flow_smoke"
 title = "Control flow: BEQ, BCC, JSR/RTS, ALU immediates"
 purpose = "Exercise branches (BEQ, BCC), JSR/RTS round trip, and the ALU immediate set (ADC/AND/ORA/EOR/CMP/CPX) by driving a small computation whose WRAM footprint can be inspected."
 why_expected_to_fail = "This ROM previously failed before conditional branches, JSR/RTS, and the ALU immediate batch were implemented."
-cycle_budget = 100
+cycle_budget = 800
 expected_current_status = "pass"
 
 [goal]

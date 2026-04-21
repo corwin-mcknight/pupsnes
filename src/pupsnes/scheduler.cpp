@@ -87,7 +87,13 @@ void Scheduler::RecordZeroProgressRun(DeviceRunState& state, const Device& devic
 }
 
 void Scheduler::ValidateTickResult(const Device& device, const TickResult& result, TimeMasterDeltaT budget) const {
-  if (result.completed_cycles > budget) {
+  // Devices retire whole micro-ops; under variable-cost timing a bus access
+  // (up to 12 master cycles for joypad regs) can push completed_cycles past
+  // the budget the scheduler handed out. Tolerate the overshoot up to the
+  // cost of one worst-case bus cycle — anything larger indicates a scheduling
+  // bug (e.g. a device running multiple micro-ops after budget exhaustion).
+  constexpr TimeMasterDeltaT kMaxMicroOpOvershoot = 12;
+  if (result.completed_cycles > budget + kMaxMicroOpOvershoot) {
     FailScheduler("Device tick exceeded scheduler budget");
   }
 

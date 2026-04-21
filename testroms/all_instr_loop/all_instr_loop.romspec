@@ -2,7 +2,7 @@ rom_name = "all_instr_loop"
 title = "All Instructions + BNE Loop"
 purpose = "Exercise the full implemented 65C816 opcode set so far, both in a one-time features block (flag ops, ALU immediate, transfers, JSR/RTS, PHP/PLP, PHX/PLX, PEA/PLX/PLY, BEQ/BCC) and in a BNE-driven inner loop, then BRA back to the top of the main work block so the ROM runs continuously."
 why_expected_to_fail = "This ROM previously failed before the full baseline opcode set and real branch looping were implemented."
-cycle_budget = 320
+cycle_budget = 3200
 expected_current_status = "pass"
 
 [goal]

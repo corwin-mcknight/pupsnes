@@ -45,6 +45,12 @@ BusPlan SystemBus::Plan(SnesAddrT address, BusAccessType type, uint8_t write_dat
 
   if (entry.kind == PageDeviceKind::kUnmapped) {
     plan.outcome = BusPlanOutcome::kRejected;
+    // Unmapped accesses still consume a full slow bus cycle on real hardware
+    // (8 master cycles at standard CPU speed) — the CPU drives the address,
+    // no device responds, and the data lines float with the last-driven value.
+    // Charge the same 8-cycle cost so time advances and Tick loops terminate
+    // even when fetching from garbage.
+    plan.access_cycles = 8;
     return plan;
   }
 

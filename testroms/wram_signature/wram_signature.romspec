@@ -2,7 +2,7 @@ rom_name = "wram_signature"
 title = "WRAM Signature"
 purpose = "Verify the ROM can store a known signature into WRAM after reset."
 why_expected_to_fail = "This ROM previously failed before STA long support existed."
-cycle_budget = 10
+cycle_budget = 80
 expected_current_status = "pass"
 
 [goal]

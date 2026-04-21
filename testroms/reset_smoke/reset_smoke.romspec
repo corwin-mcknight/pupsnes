@@ -2,7 +2,7 @@ rom_name = "reset_smoke"
 title = "Reset Smoke"
 purpose = "Verify reset-vector boot, immediate load, and a self-loop at the loop label."
 why_expected_to_fail = "This ROM previously failed before BRA support existed."
-cycle_budget = 10
+cycle_budget = 94
 expected_current_status = "pass"
 
 [goal]

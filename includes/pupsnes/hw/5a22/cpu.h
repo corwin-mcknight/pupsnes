@@ -21,6 +21,12 @@ inline constexpr TimeMasterDeltaT kMasterCyclesPerScanline = 1364;
 inline constexpr TimeMasterDeltaT kDramRefreshStartCycle = 538;
 inline constexpr TimeMasterDeltaT kDramRefreshDurationCycles = 40;
 
+// Master-cycle cost of a CPU-internal (non-bus) cycle. Bus cycles charge
+// access_speed from the page table (6 for FASTROM, 8 for slow ROM/WRAM/MMIO,
+// 12 for joypad). Internal cycles always run at the CPU's intrinsic 6-cycle
+// pace — the MEMSEL speed only affects bus transactions.
+inline constexpr TimeMasterDeltaT kInternalCpuCycleMaster = 6;
+
 class SNES;
 
 // Bus actions a micro-op can perform in a single master clock cycle.
@@ -278,7 +284,13 @@ class CPU : public Device {
   };
 
   struct StepResult {
-    bool consumed_cycle = false;
+    // Master-cycle cost of the micro-op that just retired. 0 means no
+    // micro-op was consumed (blocked / breakpoint / fault-before-retire); a
+    // caller deciding whether to advance debugger state checks master_cycles
+    // > 0. When the step has a stop reason other than kContinue, `stop`
+    // propagates that reason; master_cycles may still be non-zero for stops
+    // that retired a micro-op (e.g. kFaulted from a successful opcode fetch).
+    TimeMasterDeltaT master_cycles = 0;
     TickResult stop{0, TickStopReason::kContinue};
   };
 
@@ -314,6 +326,13 @@ class CPU : public Device {
   // Cached at Reset() from snes_->system_bus.get(). Lets the inline BusRead /
   // BusWrite fast path skip the unique_ptr<> deref (non-trivial in debug).
   SystemBus* system_bus_raw_ = nullptr;
+
+  // Master-cycle cost of the most recent bus access (BusRead / BusWrite).
+  // Populated by both the fast pointer path and the slow Plan+Follow path so
+  // the micro-op retirement code in Tick can advance cycle_time by the real
+  // access_speed (6 for FASTROM, 8 for slow ROM/WRAM/MMIO, 12 for joypad).
+  // Meaningless for micro-ops that don't issue a bus access.
+  TimeMasterDeltaT last_access_cycles_ = 0;
 
   // DRAM refresh state. next_refresh_time_ is the absolute master time at
   // which the next 40-cycle refresh window begins. refresh_cycles_remaining_

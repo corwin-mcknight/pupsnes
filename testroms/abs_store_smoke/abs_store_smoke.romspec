@@ -2,7 +2,7 @@ rom_name = "abs_store_smoke"
 title = "Absolute Store Smoke"
 purpose = "Verify STA/STX/STY absolute route through DBR set via PLB and land in WRAM."
 why_expected_to_fail = "This ROM previously failed before STA/STX/STY absolute and PLB were implemented."
-cycle_budget = 30
+cycle_budget = 254
 expected_current_status = "pass"
 
 [goal]

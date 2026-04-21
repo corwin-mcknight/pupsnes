@@ -2,7 +2,7 @@ rom_name = "instruction_smoke"
 title = "Instruction Smoke"
 purpose = "Verify two immediate loads execute in sequence and execution eventually stabilizes in the loop."
 why_expected_to_fail = "This ROM previously failed before BRA support existed."
-cycle_budget = 14
+cycle_budget = 126
 expected_current_status = "pass"
 
 [goal]

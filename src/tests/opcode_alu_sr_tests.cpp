@@ -69,9 +69,9 @@ TEST_CASE("ADC stack-relative 8-bit adds from bank-0 SP+offset", "[unit][opcode]
   f.cpu.SetRegs(regs);
   f.wram.WriteRegister(0x01F4, 0x05);
 
-  TickResult r = f.cpu.Tick(4);
+  TickResult r = f.cpu.Tick(38);
 
-  REQUIRE(r.completed_cycles == 4);
+  REQUIRE(r.completed_cycles == 38);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x06);
   REQUIRE(f.cpu.GetRegs().P.C == false);
 }
@@ -90,9 +90,9 @@ TEST_CASE("SBC stack-relative 8-bit subtracts from stack", "[unit][opcode][cpu][
   f.cpu.SetRegs(regs);
   f.wram.WriteRegister(0x01F4, 0x01);
 
-  TickResult r = f.cpu.Tick(4);
+  TickResult r = f.cpu.Tick(38);
 
-  REQUIRE(r.completed_cycles == 4);
+  REQUIRE(r.completed_cycles == 38);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x0F);
   REQUIRE(f.cpu.GetRegs().P.C == true);
 }
@@ -110,9 +110,9 @@ TEST_CASE("AND stack-relative 8-bit", "[unit][opcode][cpu][sr]") {
   f.cpu.SetRegs(regs);
   f.wram.WriteRegister(0x01F4, 0xF0);
 
-  TickResult r = f.cpu.Tick(4);
+  TickResult r = f.cpu.Tick(38);
 
-  REQUIRE(r.completed_cycles == 4);
+  REQUIRE(r.completed_cycles == 38);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0xF0);
   REQUIRE(f.cpu.GetRegs().P.N == true);
   REQUIRE(f.cpu.GetRegs().P.Z == false);
@@ -131,9 +131,9 @@ TEST_CASE("ORA stack-relative 8-bit", "[unit][opcode][cpu][sr]") {
   f.cpu.SetRegs(regs);
   f.wram.WriteRegister(0x01F4, 0x0F);
 
-  TickResult r = f.cpu.Tick(4);
+  TickResult r = f.cpu.Tick(38);
 
-  REQUIRE(r.completed_cycles == 4);
+  REQUIRE(r.completed_cycles == 38);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0xFF);
   REQUIRE(f.cpu.GetRegs().P.N == true);
 }
@@ -151,9 +151,9 @@ TEST_CASE("EOR stack-relative 8-bit clears to zero", "[unit][opcode][cpu][sr]") 
   f.cpu.SetRegs(regs);
   f.wram.WriteRegister(0x01F4, 0xFF);
 
-  TickResult r = f.cpu.Tick(4);
+  TickResult r = f.cpu.Tick(38);
 
-  REQUIRE(r.completed_cycles == 4);
+  REQUIRE(r.completed_cycles == 38);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x00);
   REQUIRE(f.cpu.GetRegs().P.Z == true);
 }
@@ -171,9 +171,9 @@ TEST_CASE("CMP stack-relative 8-bit equal result", "[unit][opcode][cpu][sr]") {
   f.cpu.SetRegs(regs);
   f.wram.WriteRegister(0x01F4, 0x10);
 
-  TickResult r = f.cpu.Tick(4);
+  TickResult r = f.cpu.Tick(38);
 
-  REQUIRE(r.completed_cycles == 4);
+  REQUIRE(r.completed_cycles == 38);
   REQUIRE(f.cpu.GetRegs().P.Z == true);
   REQUIRE(f.cpu.GetRegs().P.C == true);
   // A is unchanged by CMP.
@@ -200,9 +200,9 @@ TEST_CASE("ADC stack-relative 16-bit uses 5 cycles", "[unit][opcode][cpu][sr]") 
   f.wram.WriteRegister(0x01F4, 0x34);
   f.wram.WriteRegister(0x01F5, 0x12);
 
-  TickResult r = f.cpu.Tick(5);
+  TickResult r = f.cpu.Tick(46);
 
-  REQUIRE(r.completed_cycles == 5);
+  REQUIRE(r.completed_cycles == 46);
   REQUIRE(f.cpu.GetRegs().A == 0x2234);
 }
 
@@ -221,9 +221,9 @@ TEST_CASE("SBC stack-relative 16-bit", "[unit][opcode][cpu][sr]") {
   f.wram.WriteRegister(0x01F4, 0x01);
   f.wram.WriteRegister(0x01F5, 0x00);
 
-  TickResult r = f.cpu.Tick(5);
+  TickResult r = f.cpu.Tick(46);
 
-  REQUIRE(r.completed_cycles == 5);
+  REQUIRE(r.completed_cycles == 46);
   REQUIRE(f.cpu.GetRegs().A == 0x0001);
   REQUIRE(f.cpu.GetRegs().P.C == true);
 }
@@ -242,9 +242,9 @@ TEST_CASE("AND stack-relative 16-bit", "[unit][opcode][cpu][sr]") {
   f.wram.WriteRegister(0x01F4, 0x00);
   f.wram.WriteRegister(0x01F5, 0xFF);
 
-  TickResult r = f.cpu.Tick(5);
+  TickResult r = f.cpu.Tick(46);
 
-  REQUIRE(r.completed_cycles == 5);
+  REQUIRE(r.completed_cycles == 46);
   REQUIRE(f.cpu.GetRegs().A == 0xFF00);
   REQUIRE(f.cpu.GetRegs().P.N == true);
 }
@@ -263,9 +263,9 @@ TEST_CASE("ORA stack-relative 16-bit", "[unit][opcode][cpu][sr]") {
   f.wram.WriteRegister(0x01F4, 0xFF);
   f.wram.WriteRegister(0x01F5, 0x00);
 
-  TickResult r = f.cpu.Tick(5);
+  TickResult r = f.cpu.Tick(46);
 
-  REQUIRE(r.completed_cycles == 5);
+  REQUIRE(r.completed_cycles == 46);
   REQUIRE(f.cpu.GetRegs().A == 0x00FF);
   REQUIRE(f.cpu.GetRegs().P.N == false);
 }
@@ -284,9 +284,9 @@ TEST_CASE("EOR stack-relative 16-bit sets Z", "[unit][opcode][cpu][sr]") {
   f.wram.WriteRegister(0x01F4, 0xFF);
   f.wram.WriteRegister(0x01F5, 0xFF);
 
-  TickResult r = f.cpu.Tick(5);
+  TickResult r = f.cpu.Tick(46);
 
-  REQUIRE(r.completed_cycles == 5);
+  REQUIRE(r.completed_cycles == 46);
   REQUIRE(f.cpu.GetRegs().A == 0x0000);
   REQUIRE(f.cpu.GetRegs().P.Z == true);
 }
@@ -305,9 +305,9 @@ TEST_CASE("CMP stack-relative 16-bit equal", "[unit][opcode][cpu][sr]") {
   f.wram.WriteRegister(0x01F4, 0x34);
   f.wram.WriteRegister(0x01F5, 0x12);
 
-  TickResult r = f.cpu.Tick(5);
+  TickResult r = f.cpu.Tick(46);
 
-  REQUIRE(r.completed_cycles == 5);
+  REQUIRE(r.completed_cycles == 46);
   REQUIRE(f.cpu.GetRegs().P.Z == true);
   REQUIRE(f.cpu.GetRegs().P.C == true);
   // A unchanged.
@@ -334,8 +334,8 @@ TEST_CASE("ADC stack-relative does not pay DL-nonzero penalty", "[unit][opcode][
   f.cpu.SetRegs(regs);
   f.wram.WriteRegister(0x01F4, 0x05);
 
-  TickResult r = f.cpu.Tick(4);
+  TickResult r = f.cpu.Tick(38);
 
-  REQUIRE(r.completed_cycles == 4);
+  REQUIRE(r.completed_cycles == 38);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x06);
 }

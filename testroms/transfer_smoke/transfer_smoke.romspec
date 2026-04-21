@@ -2,7 +2,7 @@ rom_name = "transfer_smoke"
 title = "TAX/TAY/TSX/TXA/TXS/TXY/TYA/TYX/TCD/TCS/TDC/TSC"
 purpose = "Exercise every 65C816 register transfer in 16-bit native mode, verify the target registers receive the source value, and confirm TXS/TCS behavior plus emulation-mode re-entry."
 why_expected_to_fail = "This ROM previously failed before any register-transfer opcodes were implemented -- the first TAX after the native-mode transition would have faulted."
-cycle_budget = 200
+cycle_budget = 1600
 expected_current_status = "pass"
 
 [goal]

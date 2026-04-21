@@ -484,7 +484,12 @@ TEST_CASE(
 
     REQUIRE(result.status == scenario.expected_current_status);
     REQUIRE_FALSE(result.goal_results.empty());
-    REQUIRE(result.snapshot.cpu_time == scenario.cycle_budget);
+    // Under variable-cost master-cycle timing a whole micro-op can push the
+    // CPU a handful of cycles past the requested budget; the scheduler
+    // tolerates up to 12 master cycles of overshoot (one worst-case bus
+    // access), and this assertion does the same.
+    REQUIRE(result.snapshot.cpu_time >= scenario.cycle_budget);
+    REQUIRE(result.snapshot.cpu_time <= scenario.cycle_budget + 12);
     if (scenario.expected_current_status == RomStatus::kPass) {
       REQUIRE(result.matched_goals == result.goal_results.size());
     } else {

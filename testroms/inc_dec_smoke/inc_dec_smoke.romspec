@@ -2,7 +2,7 @@ rom_name = "inc_dec_smoke"
 title = "INC/DEC/INX/INY/DEX/DEY Smoke"
 purpose = "Verify 8-bit INX/INY/DEX/DEY and INC A / DEC A land correct values (with wraparound) in WRAM via absolute stores."
 why_expected_to_fail = "This ROM previously failed before INC/DEC/INX/INY/DEX/DEY support existed."
-cycle_budget = 80
+cycle_budget = 640
 expected_current_status = "pass"
 
 [goal]

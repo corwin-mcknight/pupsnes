@@ -69,9 +69,9 @@ TEST_CASE("ADC direct page indexed X 8-bit adds (DP+offset+X)", "[unit][opcode][
   regs.P.C = false;
   f.cpu.SetRegs(regs);
 
-  TickResult r = f.cpu.Tick(4);
+  TickResult r = f.cpu.Tick(38);
 
-  REQUIRE(r.completed_cycles == 4);
+  REQUIRE(r.completed_cycles == 38);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x13);
 }
 
@@ -89,9 +89,9 @@ TEST_CASE("SBC direct page indexed X 8-bit subtracts with carry-in", "[unit][opc
   regs.P.C = true;
   f.cpu.SetRegs(regs);
 
-  TickResult r = f.cpu.Tick(4);
+  TickResult r = f.cpu.Tick(38);
 
-  REQUIRE(r.completed_cycles == 4);
+  REQUIRE(r.completed_cycles == 38);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x0F);
   REQUIRE(f.cpu.GetRegs().P.C == true);
 }
@@ -109,9 +109,9 @@ TEST_CASE("AND direct page indexed X 8-bit masks with memory", "[unit][opcode][c
   regs.X = 0x0005;
   f.cpu.SetRegs(regs);
 
-  TickResult r = f.cpu.Tick(4);
+  TickResult r = f.cpu.Tick(38);
 
-  REQUIRE(r.completed_cycles == 4);
+  REQUIRE(r.completed_cycles == 38);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0xF0);
   REQUIRE(f.cpu.GetRegs().P.N == true);
   REQUIRE(f.cpu.GetRegs().P.Z == false);
@@ -130,9 +130,9 @@ TEST_CASE("ORA direct page indexed X 8-bit combines with memory", "[unit][opcode
   regs.X = 0x0005;
   f.cpu.SetRegs(regs);
 
-  TickResult r = f.cpu.Tick(4);
+  TickResult r = f.cpu.Tick(38);
 
-  REQUIRE(r.completed_cycles == 4);
+  REQUIRE(r.completed_cycles == 38);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0xFF);
   REQUIRE(f.cpu.GetRegs().P.N == true);
 }
@@ -150,9 +150,9 @@ TEST_CASE("EOR direct page indexed X 8-bit sets Z when equal", "[unit][opcode][c
   regs.X = 0x0005;
   f.cpu.SetRegs(regs);
 
-  TickResult r = f.cpu.Tick(4);
+  TickResult r = f.cpu.Tick(38);
 
-  REQUIRE(r.completed_cycles == 4);
+  REQUIRE(r.completed_cycles == 38);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x00);
   REQUIRE(f.cpu.GetRegs().P.Z == true);
 }
@@ -170,9 +170,9 @@ TEST_CASE("CMP direct page indexed X 8-bit equal sets Z and C", "[unit][opcode][
   regs.X = 0x0005;
   f.cpu.SetRegs(regs);
 
-  TickResult r = f.cpu.Tick(4);
+  TickResult r = f.cpu.Tick(38);
 
-  REQUIRE(r.completed_cycles == 4);
+  REQUIRE(r.completed_cycles == 38);
   REQUIRE(f.cpu.GetRegs().P.Z == true);
   REQUIRE(f.cpu.GetRegs().P.C == true);
   // A unchanged by CMP
@@ -199,9 +199,9 @@ TEST_CASE("ADC direct page indexed X 16-bit takes 5 cycles", "[unit][opcode][cpu
   regs.P.C = false;
   f.cpu.SetRegs(regs);
 
-  TickResult r = f.cpu.Tick(5);
+  TickResult r = f.cpu.Tick(46);
 
-  REQUIRE(r.completed_cycles == 5);
+  REQUIRE(r.completed_cycles == 46);
   REQUIRE(f.cpu.GetRegs().A == 0x2234);
 }
 
@@ -220,9 +220,9 @@ TEST_CASE("SBC direct page indexed X 16-bit", "[unit][opcode][cpu][dpx]") {
   regs.P.C = true;
   f.cpu.SetRegs(regs);
 
-  TickResult r = f.cpu.Tick(5);
+  TickResult r = f.cpu.Tick(46);
 
-  REQUIRE(r.completed_cycles == 5);
+  REQUIRE(r.completed_cycles == 46);
   REQUIRE(f.cpu.GetRegs().A == 0x0001);
   REQUIRE(f.cpu.GetRegs().P.C == true);
 }
@@ -241,9 +241,9 @@ TEST_CASE("AND direct page indexed X 16-bit", "[unit][opcode][cpu][dpx]") {
   regs.X = 0x0005;
   f.cpu.SetRegs(regs);
 
-  TickResult r = f.cpu.Tick(5);
+  TickResult r = f.cpu.Tick(46);
 
-  REQUIRE(r.completed_cycles == 5);
+  REQUIRE(r.completed_cycles == 46);
   REQUIRE(f.cpu.GetRegs().A == 0xFF00);
   REQUIRE(f.cpu.GetRegs().P.N == true);
 }
@@ -262,9 +262,9 @@ TEST_CASE("ORA direct page indexed X 16-bit", "[unit][opcode][cpu][dpx]") {
   regs.X = 0x0005;
   f.cpu.SetRegs(regs);
 
-  TickResult r = f.cpu.Tick(5);
+  TickResult r = f.cpu.Tick(46);
 
-  REQUIRE(r.completed_cycles == 5);
+  REQUIRE(r.completed_cycles == 46);
   REQUIRE(f.cpu.GetRegs().A == 0x00FF);
   // N=0 (bit 15 of 0x00FF is 0), Z=0
   REQUIRE(f.cpu.GetRegs().P.N == false);
@@ -285,9 +285,9 @@ TEST_CASE("EOR direct page indexed X 16-bit sets Z", "[unit][opcode][cpu][dpx]")
   regs.X = 0x0005;
   f.cpu.SetRegs(regs);
 
-  TickResult r = f.cpu.Tick(5);
+  TickResult r = f.cpu.Tick(46);
 
-  REQUIRE(r.completed_cycles == 5);
+  REQUIRE(r.completed_cycles == 46);
   REQUIRE(f.cpu.GetRegs().A == 0x0000);
   REQUIRE(f.cpu.GetRegs().P.Z == true);
 }
@@ -306,9 +306,9 @@ TEST_CASE("CMP direct page indexed X 16-bit equal", "[unit][opcode][cpu][dpx]") 
   regs.X = 0x0005;
   f.cpu.SetRegs(regs);
 
-  TickResult r = f.cpu.Tick(5);
+  TickResult r = f.cpu.Tick(46);
 
-  REQUIRE(r.completed_cycles == 5);
+  REQUIRE(r.completed_cycles == 46);
   REQUIRE(f.cpu.GetRegs().P.Z == true);
   REQUIRE(f.cpu.GetRegs().P.C == true);
   // A unchanged by CMP
@@ -336,9 +336,9 @@ TEST_CASE("ADC direct page indexed X pays DL-nonzero penalty", "[unit][opcode][c
   f.cpu.SetRegs(regs);
   f.wram.WriteRegister(0x0134, 0x02);
 
-  TickResult r = f.cpu.Tick(5);
+  TickResult r = f.cpu.Tick(44);
 
-  REQUIRE(r.completed_cycles == 5);
+  REQUIRE(r.completed_cycles == 44);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x03);
 }
 
@@ -361,9 +361,9 @@ TEST_CASE("BIT direct page indexed X sets N and V from memory", "[unit][opcode][
   regs.X = 0x0005;
   f.cpu.SetRegs(regs);
 
-  TickResult r = f.cpu.Tick(4);  // m=1,w=0: 5-m+w = 4
+  TickResult r = f.cpu.Tick(38);  // m=1,w=0: 5-m+w = 4
 
-  REQUIRE(r.completed_cycles == 4);
+  REQUIRE(r.completed_cycles == 38);
   REQUIRE(f.cpu.GetRegs().P.N == true);  // bit 7 of $C0
   REQUIRE(f.cpu.GetRegs().P.V == true);  // bit 6 of $C0
   REQUIRE(f.cpu.GetRegs().P.Z == true);  // A AND $C0 == 0
@@ -385,9 +385,9 @@ TEST_CASE("BIT direct page indexed X 16-bit reads N V from bit 15 and 14", "[uni
   regs.X = 0x0005;
   f.cpu.SetRegs(regs);
 
-  TickResult r = f.cpu.Tick(5);  // m=0,w=0: 5-m+w = 5
+  TickResult r = f.cpu.Tick(46);  // m=0,w=0: 5-m+w = 5
 
-  REQUIRE(r.completed_cycles == 5);
+  REQUIRE(r.completed_cycles == 46);
   REQUIRE(f.cpu.GetRegs().P.N == true);  // bit 15 of $C000
   REQUIRE(f.cpu.GetRegs().P.V == true);  // bit 14 of $C000
   REQUIRE(f.cpu.GetRegs().P.Z == true);  // A AND $C000 == 0

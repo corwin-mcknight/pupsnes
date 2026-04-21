@@ -2,7 +2,7 @@ rom_name = "stack_push"
 title = "Stack Push"
 purpose = "Verify PHA and PHB push the accumulator and data-bank register onto LowRAM-mirrored stack memory with SP decrementing correctly."
 why_expected_to_fail = "This ROM previously failed before PHA and PHB were implemented and before the LowRAM mirror exposed the stack to WRAM."
-cycle_budget = 14
+cycle_budget = 126
 expected_current_status = "pass"
 initial_dbr = 0x7E
 

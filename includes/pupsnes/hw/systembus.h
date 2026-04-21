@@ -130,7 +130,11 @@ class SystemBus {
   // caller must fall back to Plan+Follow (unmapped page, MMIO, arbitrated, or
   // test device with no fast pointer). Semantics match the kMemory branch of
   // FollowInline exactly.
-  [[nodiscard]] bool TryFastRead(SnesAddrT address, uint8_t& out_data) {
+  //
+  // out_access_cycles receives the page's access_speed (6/8/12 master cycles)
+  // so the caller can advance its time cursor. Only written when the fast path
+  // succeeds; unspecified on false.
+  [[nodiscard]] bool TryFastRead(SnesAddrT address, uint8_t& out_data, TimeMasterDeltaT& out_access_cycles) {
     const SnesAddrT addr = address & 0xFFFFFFU;
     const PageTableEntry& entry =
         page_table_[static_cast<uint8_t>(addr >> 16)][static_cast<uint8_t>((addr >> 8) & 0xFF)];
@@ -140,12 +144,13 @@ class SystemBus {
     const uint8_t data = entry.fast_read_ptr[addr & 0xFFU];
     last_data_bus_value_ = data;
     out_data = data;
+    out_access_cycles = entry.access_speed;
     if (event_sink_ != nullptr) {
       NotifyEvent(BusEventKind::kFastRead, addr, data);
     }
     return true;
   }
-  [[nodiscard]] bool TryFastWrite(SnesAddrT address, uint8_t data) {
+  [[nodiscard]] bool TryFastWrite(SnesAddrT address, uint8_t data, TimeMasterDeltaT& out_access_cycles) {
     const SnesAddrT addr = address & 0xFFFFFFU;
     const PageTableEntry& entry =
         page_table_[static_cast<uint8_t>(addr >> 16)][static_cast<uint8_t>((addr >> 8) & 0xFF)];
@@ -154,6 +159,7 @@ class SystemBus {
     }
     entry.fast_write_ptr[addr & 0xFFU] = data;
     last_data_bus_value_ = data;
+    out_access_cycles = entry.access_speed;
     if (event_sink_ != nullptr) {
       NotifyEvent(BusEventKind::kFastWrite, addr, data);
     }

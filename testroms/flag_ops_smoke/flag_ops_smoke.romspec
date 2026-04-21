@@ -2,7 +2,7 @@ rom_name = "flag_ops_smoke"
 title = "CLC/SEC/CLI/SEI/CLD/SED/CLV/REP/SEP/XCE Smoke"
 purpose = "Drive XCE, REP, and SEP to switch between emulation and native mode and confirm that M/X width changes take effect (16-bit LDA/STA/LDX/STX), then narrow back on return to emulation."
 why_expected_to_fail = "This ROM previously failed before XCE, REP, SEP, CLC, and SEC were implemented -- without XCE the CPU could not leave emulation mode, so M and X could not clear and 16-bit stores would write wrong byte counts."
-cycle_budget = 96
+cycle_budget = 782
 expected_current_status = "pass"
 
 [goal]
