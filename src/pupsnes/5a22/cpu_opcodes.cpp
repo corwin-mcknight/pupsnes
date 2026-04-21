@@ -611,13 +611,114 @@ constexpr auto MakeJumpSpecs() {
   };
 }
 
+constexpr auto MakeAluAbsSpecs() {
+  return std::array{
+      // ALU absolute (kAccumulator16 gating for M flag) — 6 ALU mnemonics
+      Opcode(0x6D, "ADC", "absolute")
+          .Then(FetchAbsolute())
+          .Then(AluFromAddr(AluOp::kAdc, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0xED, "SBC", "absolute")
+          .Then(FetchAbsolute())
+          .Then(AluFromAddr(AluOp::kSbc, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0x2D, "AND", "absolute")
+          .Then(FetchAbsolute())
+          .Then(AluFromAddr(AluOp::kAnd, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0x0D, "ORA", "absolute")
+          .Then(FetchAbsolute())
+          .Then(AluFromAddr(AluOp::kOra, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0x4D, "EOR", "absolute")
+          .Then(FetchAbsolute())
+          .Then(AluFromAddr(AluOp::kEor, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0xCD, "CMP", "absolute")
+          .Then(FetchAbsolute())
+          .Then(AluFromAddr(AluOp::kCmp, TimingCondition::kAccumulator16))
+          .Build(),
+      // BIT abs — memory BIT: uses kBitMem for correct N/V/Z semantics (Bruce Clark §6.1.2.2).
+      Opcode(0x2C, "BIT", "absolute")
+          .Then(FetchAbsolute())
+          .Then(AluFromAddr(AluOp::kBitMem, TimingCondition::kAccumulator16))
+          .Build(),
+      // ALU absolute long (kAccumulator16) — 6 ALU mnemonics (no BIT long per Bruce Clark).
+      Opcode(0x6F, "ADC", "absolute long")
+          .Then(FetchAbsoluteLong())
+          .Then(AluFromAddr(AluOp::kAdc, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0xEF, "SBC", "absolute long")
+          .Then(FetchAbsoluteLong())
+          .Then(AluFromAddr(AluOp::kSbc, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0x2F, "AND", "absolute long")
+          .Then(FetchAbsoluteLong())
+          .Then(AluFromAddr(AluOp::kAnd, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0x0F, "ORA", "absolute long")
+          .Then(FetchAbsoluteLong())
+          .Then(AluFromAddr(AluOp::kOra, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0x4F, "EOR", "absolute long")
+          .Then(FetchAbsoluteLong())
+          .Then(AluFromAddr(AluOp::kEor, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0xCF, "CMP", "absolute long")
+          .Then(FetchAbsoluteLong())
+          .Then(AluFromAddr(AluOp::kCmp, TimingCondition::kAccumulator16))
+          .Build(),
+      // Load absolute (A: kAccumulator16; X/Y: kIndex16).
+      Opcode(0xAD, "LDA", "absolute")
+          .Then(FetchAbsolute())
+          .Then(LoadRegFromAddr(Reg::kA, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0xAF, "LDA", "absolute long")
+          .Then(FetchAbsoluteLong())
+          .Then(LoadRegFromAddr(Reg::kA, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0xAE, "LDX", "absolute")
+          .Then(FetchAbsolute())
+          .Then(LoadRegFromAddr(Reg::kX, TimingCondition::kIndex16))
+          .Build(),
+      Opcode(0xAC, "LDY", "absolute")
+          .Then(FetchAbsolute())
+          .Then(LoadRegFromAddr(Reg::kY, TimingCondition::kIndex16))
+          .Build(),
+      // Compare absolute (CPX/CPY: kIndex16 per D-07).
+      Opcode(0xEC, "CPX", "absolute")
+          .Then(FetchAbsolute())
+          .Then(AluFromAddr(AluOp::kCpx, TimingCondition::kIndex16))
+          .Build(),
+      Opcode(0xCC, "CPY", "absolute")
+          .Then(FetchAbsolute())
+          .Then(AluFromAddr(AluOp::kCpy, TimingCondition::kIndex16))
+          .Build(),
+  };
+}
+
+// BIT dp,X (0x34) — registered here alongside other kBitMem opcodes. kBitMem
+// is defined in this plan (01-02), so this belongs with MakeAluAbsSpecs. The
+// dp,X tests live in the ALU dp,X test file (plan 01-03). Cycle formula
+// 5-m+w is identical to ADC dp,X per Bruce Clark §6.1.2.2 / §6.1.1.1.
+constexpr auto MakeBitDpxSpec() {
+  return std::array{
+      Opcode(0x34, "BIT", "direct page indexed X")
+          .Then(FetchDirectPageIndexed(Reg::kX))
+          .Then(AluFromAddr(AluOp::kBitMem, TimingCondition::kAccumulator16))
+          .Build(),
+  };
+}
+
 constexpr auto kExplicitOpcodeSpecs = ConcatArrays(
-    ConcatArrays(ConcatArrays(MakeMiscSpecs(), MakeLoadSpecs()), ConcatArrays(MakeStoreSpecs(), MakeBranchSpecs())),
     ConcatArrays(
-        ConcatArrays(ConcatArrays(ConcatArrays(ConcatArrays(MakeStackSpecs(), MakeIncDecSpecs()), MakeFlagSpecs()),
-                                  MakeTransferSpecs()),
-                     MakeJumpSpecs()),
-        ConcatArrays(MakeAluSpecs(), MakeShiftSpecs())));
+        ConcatArrays(ConcatArrays(MakeMiscSpecs(), MakeLoadSpecs()), ConcatArrays(MakeStoreSpecs(), MakeBranchSpecs())),
+        ConcatArrays(
+            ConcatArrays(ConcatArrays(ConcatArrays(ConcatArrays(MakeStackSpecs(), MakeIncDecSpecs()), MakeFlagSpecs()),
+                                      MakeTransferSpecs()),
+                         MakeJumpSpecs()),
+            ConcatArrays(MakeAluSpecs(), MakeShiftSpecs()))),
+    ConcatArrays(MakeAluAbsSpecs(), MakeBitDpxSpec()));
 
 static_assert(ValidateOpcodeSpecs(kExplicitOpcodeSpecs), "Opcode specification validation failed");
 
