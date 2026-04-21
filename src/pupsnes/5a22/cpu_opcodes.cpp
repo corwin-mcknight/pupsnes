@@ -313,6 +313,20 @@ constexpr auto MakeLoadSpecs() {
           .Then(FetchDirectPageIndexed(Reg::kY))
           .Then(LoadRegFromAddr(Reg::kX, TimingCondition::kIndex16))
           .Build(),
+      Opcode(0xA3, "LDA", "stack relative")
+          .Then(FetchStackRelative())
+          .Then(LoadRegFromAddr(Reg::kA, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0xB2, "LDA", "direct indirect")
+          .Then(FetchDirectPage())
+          .Then(FetchDirectIndirect())
+          .Then(LoadRegFromAddr(Reg::kA, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0xA7, "LDA", "direct indirect long")
+          .Then(FetchDirectPage())
+          .Then(FetchDirectIndirectLong())
+          .Then(LoadRegFromAddr(Reg::kA, TimingCondition::kAccumulator16))
+          .Build(),
   };
 }
 
@@ -353,6 +367,36 @@ constexpr auto MakeStoreSpecs() {
       Opcode(0x74, "STZ", "direct page indexed X")
           .Then(FetchDirectPageIndexed(Reg::kX))
           .Then(StoreRegToAddr(WriteSrc::kZero, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0x9C, "STZ", "absolute")
+          .Then(FetchAbsoluteAddr())
+          .Then(StoreRegToAddr(WriteSrc::kZero, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0x9E, "STZ", "absolute indexed X")
+          .Then(FetchAbsoluteIndexed(Reg::kX))
+          .Then(StoreRegToAddr(WriteSrc::kZero, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0x9D, "STA", "absolute indexed X")
+          .Then(FetchAbsoluteIndexed(Reg::kX))
+          .Then(StoreRegToAddr(WriteSrc::kA, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0x99, "STA", "absolute indexed Y")
+          .Then(FetchAbsoluteIndexed(Reg::kY))
+          .Then(StoreRegToAddr(WriteSrc::kA, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0x83, "STA", "stack relative")
+          .Then(FetchStackRelative())
+          .Then(StoreRegToAddr(WriteSrc::kA, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0x92, "STA", "direct indirect")
+          .Then(FetchDirectPage())
+          .Then(FetchDirectIndirect())
+          .Then(StoreRegToAddr(WriteSrc::kA, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0x87, "STA", "direct indirect long")
+          .Then(FetchDirectPage())
+          .Then(FetchDirectIndirectLong())
+          .Then(StoreRegToAddr(WriteSrc::kA, TimingCondition::kAccumulator16))
           .Build(),
   };
 }
@@ -602,6 +646,21 @@ constexpr OpcodeAddressingMode MapAddressingMode(std::string_view mode) {
   if (mode == "direct page indexed Y") {
     return OpcodeAddressingMode::kDirectPageIndexedY;
   }
+  if (mode == "stack relative") {
+    return OpcodeAddressingMode::kStackRelative;
+  }
+  if (mode == "absolute indexed X") {
+    return OpcodeAddressingMode::kAbsoluteIndexedX;
+  }
+  if (mode == "absolute indexed Y") {
+    return OpcodeAddressingMode::kAbsoluteIndexedY;
+  }
+  if (mode == "direct indirect") {
+    return OpcodeAddressingMode::kDirectIndirect;
+  }
+  if (mode == "direct indirect long") {
+    return OpcodeAddressingMode::kDirectIndirectLong;
+  }
   return OpcodeAddressingMode::kUnknown;
 }
 
@@ -630,7 +689,12 @@ constexpr OpcodeMetadataView LowerPublicMetadata(const opcode_defs_internal::Opc
     case OpcodeAddressingMode::kRelative16: view.base_length = 3; break;
     case OpcodeAddressingMode::kDirectPage:
     case OpcodeAddressingMode::kDirectPageIndexedX:
-    case OpcodeAddressingMode::kDirectPageIndexedY: view.base_length = 2; break;
+    case OpcodeAddressingMode::kDirectPageIndexedY:
+    case OpcodeAddressingMode::kStackRelative: view.base_length = 2; break;
+    case OpcodeAddressingMode::kAbsoluteIndexedX:
+    case OpcodeAddressingMode::kAbsoluteIndexedY: view.base_length = 3; break;
+    case OpcodeAddressingMode::kDirectIndirect:
+    case OpcodeAddressingMode::kDirectIndirectLong: view.base_length = 2; break;
   }
 
   return view;
@@ -678,6 +742,11 @@ std::string_view GetAddressingModeName(OpcodeAddressingMode mode) {
     case OpcodeAddressingMode::kDirectPage: return "direct page";
     case OpcodeAddressingMode::kDirectPageIndexedX: return "direct page indexed X";
     case OpcodeAddressingMode::kDirectPageIndexedY: return "direct page indexed Y";
+    case OpcodeAddressingMode::kStackRelative: return "stack relative";
+    case OpcodeAddressingMode::kAbsoluteIndexedX: return "absolute indexed X";
+    case OpcodeAddressingMode::kAbsoluteIndexedY: return "absolute indexed Y";
+    case OpcodeAddressingMode::kDirectIndirect: return "direct indirect";
+    case OpcodeAddressingMode::kDirectIndirectLong: return "direct indirect long";
   }
   return "unknown";
 }

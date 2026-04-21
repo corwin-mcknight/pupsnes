@@ -26,6 +26,7 @@ constexpr auto kOversizedSpec = Opcode(0x01, "OVR", "test")
                                     .Then(Internal(MicroInternalOp::kNone, Always(), "c5"))
                                     .Then(Internal(MicroInternalOp::kNone, Always(), "c6"))
                                     .Then(Internal(MicroInternalOp::kNone, Always(), "c7"))
+                                    .Then(Internal(MicroInternalOp::kNone, Always(), "c8"))
                                     .Build();
 
 static_assert(!ValidateUniqueOpcodes(kDuplicateOpcodeSpecs));

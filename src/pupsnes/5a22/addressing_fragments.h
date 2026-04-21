@@ -34,8 +34,8 @@ constexpr CycleFragment FetchDirectPage() {
           "fetch DP offset, compute addr",
           0,
       })
-      .Then(Internal(MicroInternalOp::kNone, Condition(TimingCondition::kDirectPageLowNonzero),
-                     "DP-low-nonzero penalty"))
+      .Then(
+          Internal(MicroInternalOp::kNone, Condition(TimingCondition::kDirectPageLowNonzero), "DP-low-nonzero penalty"))
       .Build();
 }
 
@@ -53,8 +53,8 @@ constexpr CycleFragment FetchDirectPageIndexed(Reg index_reg) {
           "fetch DP offset, compute addr",
           0,
       })
-      .Then(Internal(MicroInternalOp::kNone, Condition(TimingCondition::kDirectPageLowNonzero),
-                     "DP-low-nonzero penalty"))
+      .Then(
+          Internal(MicroInternalOp::kNone, Condition(TimingCondition::kDirectPageLowNonzero), "DP-low-nonzero penalty"))
       .Then(CycleSlotSpec{
           MicroBusAction::kNone,
           MicroInternalOp::kAddIndexToAddr,
@@ -62,6 +62,86 @@ constexpr CycleFragment FetchDirectPageIndexed(Reg index_reg) {
           "add index",
           micro_op_params::PackAddIndex(index_reg),
       })
+      .Build();
+}
+
+// Absolute-indexed effective address: fetch the 2-byte absolute operand (with
+// bank from DBR), then add the chosen index register. The index-add is
+// unconditional (always 1 cycle) — this matches the 65C816's behavior for
+// indexed *stores*, which pay the extra cycle regardless of page crossing.
+// Caller fragments emit a FetchPc-style op first; this helper re-uses the
+// existing FetchAddrByte cycle pattern laid out in cpu_opcodes.cpp. Three
+// fixed cycles. index_reg must be Reg::kX or Reg::kY.
+//
+// Note: emitted inline as CycleSlotSpecs rather than calling FetchAbsoluteAddr
+// (which lives in the anonymous namespace of cpu_opcodes.cpp) to keep this
+// header standalone.
+constexpr CycleFragment FetchAbsoluteIndexed(Reg index_reg) {
+  return Fragment()
+      .Then(CycleSlotSpec{
+          MicroBusAction::kFetchPc,
+          MicroInternalOp::kSetAddrByteFromFetch,
+          Always(),
+          "fetch address low",
+          micro_op_params::PackSetAddrByte(ByteSel::kLow, /*from_dbr=*/false),
+      })
+      .Then(CycleSlotSpec{
+          MicroBusAction::kFetchPc,
+          MicroInternalOp::kSetAddrByteFromFetch,
+          Always(),
+          "fetch address high",
+          micro_op_params::PackSetAddrByte(ByteSel::kHigh, /*from_dbr=*/true),
+      })
+      .Then(CycleSlotSpec{
+          MicroBusAction::kNone,
+          MicroInternalOp::kAddIndexToAddr,
+          Always(),
+          "add index",
+          micro_op_params::PackAddIndex(index_reg, /*bank_wrap=*/false),
+      })
+      .Build();
+}
+
+// Stack-relative effective address: addr_ = bank 0, (SP + offset) & 0xFFFF.
+// Two cycles: fetch offset + compute, then an internal "add" cycle. Used by
+// sr,S addressing (e.g. LDA $nn,S). No DL penalty because no DP math.
+constexpr CycleFragment FetchStackRelative() {
+  return Fragment()
+      .Then(CycleSlotSpec{
+          MicroBusAction::kFetchPc,
+          MicroInternalOp::kSetAddrFromSp,
+          Always(),
+          "fetch SR offset, compute addr",
+          0,
+      })
+      .Then(Internal(MicroInternalOp::kNone, Always(), "internal add"))
+      .Build();
+}
+
+// Direct indirect: read a 2-byte pointer from bank 0 at the DP-derived addr,
+// assemble into DBR:(high:low). Leaves addr_ at the effective operand address.
+// Two additional cycles on top of FetchDirectPage (which must be Then()'d
+// first). Used by (dp) addressing.
+constexpr CycleFragment FetchDirectIndirect() {
+  return Fragment()
+      .Then(
+          CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kStashIndirectLow, Always(), "read pointer low", 0})
+      .Then(CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kFormAddrFromScratchDbr, Always(),
+                          "read pointer high, assemble", 0})
+      .Build();
+}
+
+// Direct indirect long: read a 3-byte pointer from bank 0 and assemble into
+// bank:(high:low) using the bank byte from memory (not DBR). Three additional
+// cycles on top of FetchDirectPage. Used by [dp] addressing.
+constexpr CycleFragment FetchDirectIndirectLong() {
+  return Fragment()
+      .Then(
+          CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kStashIndirectLow, Always(), "read pointer low", 0})
+      .Then(CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kStashIndirectHigh, Always(), "read pointer high",
+                          0})
+      .Then(CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kFormAddrFromScratchBank, Always(),
+                          "read pointer bank, assemble", 0})
       .Build();
 }
 
@@ -82,12 +162,12 @@ constexpr CycleFragment LoadRegFromAddr(Reg reg, TimingCondition wide_cond) {
       micro_op_params::PackLoadReg(reg, ByteSel::kLow, /*update_nz=*/false, /*post_inc_addr=*/true);
   const uint8_t pack_high_16 = micro_op_params::PackLoadReg(reg, ByteSel::kHigh, /*update_nz=*/true);
   return Fragment()
-      .Then(CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kLoadReg,
-                          Not(Condition(wide_cond)), "read (8-bit)", pack_low_8})
-      .Then(CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kLoadReg,
-                          Condition(wide_cond), "read low", pack_low_16})
-      .Then(CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kLoadReg,
-                          Condition(wide_cond), "read high", pack_high_16})
+      .Then(CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kLoadReg, Not(Condition(wide_cond)),
+                          "read (8-bit)", pack_low_8})
+      .Then(CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kLoadReg, Condition(wide_cond), "read low",
+                          pack_low_16})
+      .Then(CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kLoadReg, Condition(wide_cond), "read high",
+                          pack_high_16})
       .Build();
 }
 

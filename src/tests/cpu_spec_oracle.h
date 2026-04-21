@@ -198,13 +198,18 @@ constexpr std::string_view NormalizeAddressing(std::string_view internal) {
   if (internal == "direct page") return "dir";
   if (internal == "direct page indexed X") return "dir,X";
   if (internal == "direct page indexed Y") return "dir,Y";
+  if (internal == "absolute indexed X") return "abs,X";
+  if (internal == "absolute indexed Y") return "abs,Y";
+  if (internal == "stack relative") return "stk,S";
+  if (internal == "direct indirect") return "(dir)";
+  if (internal == "direct indirect long") return "[dir]";
   return internal;
 }
 
 // One row per currently implemented opcode. Add rows as new opcodes land.
 // Columns lifted verbatim from docs/plans/6502opcodes.md. Flag masks built
 // with FlagsFrom() from Clark's nvmxdizc column.
-constexpr std::array<SpecEntry, 89> kSpec = {{
+constexpr std::array<SpecEntry, 99> kSpec = {{
     // Misc
     {0xEA, "NOP", "impl", "1", "2", FlagsFrom("........")},
 
@@ -234,6 +239,20 @@ constexpr std::array<SpecEntry, 89> kSpec = {{
     {0x8E, "STX", "abs", "3", "5-x", FlagsFrom("........")},
     {0x8C, "STY", "abs", "3", "5-x", FlagsFrom("........")},
     {0x8F, "STA", "long", "4", "6-m", FlagsFrom("........")},
+    {0x9C, "STZ", "abs", "3", "5-m", FlagsFrom("........")},
+    {0x9E, "STZ", "abs,X", "3", "6-m", FlagsFrom("........")},
+    {0x9D, "STA", "abs,X", "3", "6-m", FlagsFrom("........")},
+    {0x99, "STA", "abs,Y", "3", "6-m", FlagsFrom("........")},
+
+    // Stack relative
+    {0xA3, "LDA", "stk,S", "2", "5-m", FlagsFrom("n.....z.")},
+    {0x83, "STA", "stk,S", "2", "5-m", FlagsFrom("........")},
+
+    // Direct indirect
+    {0xB2, "LDA", "(dir)", "2", "6-m+w", FlagsFrom("n.....z."), 0U, true},
+    {0x92, "STA", "(dir)", "2", "6-m+w", FlagsFrom("........"), 0U, true},
+    {0xA7, "LDA", "[dir]", "2", "7-m+w", FlagsFrom("n.....z."), 0U, true},
+    {0x87, "STA", "[dir]", "2", "7-m+w", FlagsFrom("........"), 0U, true},
 
     // Direct page
     {0xA5, "LDA", "dir", "2", "4-m+w", FlagsFrom("n.....z."), 0U, true},

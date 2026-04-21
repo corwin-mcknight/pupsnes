@@ -124,6 +124,7 @@ void CPU::Reset() {
   micro_op_index_ = 0;
   fetch_data_ = 0;
   addr_ = 0;
+  addr_scratch_ = 0;
   timing_context_ = TimingContext{};
   fault_.reset();
   last_debugger_stop_.reset();
@@ -341,11 +342,46 @@ void CPU::ExecuteInternalOp(MicroInternalOp op, [[maybe_unused]] uint8_t params)
       return;
     }
 
+    case MicroInternalOp::kSetAddrFromSp: {
+      addr_ = (static_cast<uint32_t>(regs_.SP) + static_cast<uint32_t>(fetch_data_)) & 0x0000FFFFU;
+      return;
+    }
+
+    case MicroInternalOp::kStashIndirectLow: {
+      addr_scratch_ = static_cast<uint16_t>((addr_scratch_ & 0xFF00U) | fetch_data_);
+      addr_ = (addr_ + 1U) & 0x00FFFFFFU;
+      return;
+    }
+
+    case MicroInternalOp::kStashIndirectHigh: {
+      const uint32_t high = static_cast<uint32_t>(fetch_data_) << 8U;
+      addr_scratch_ = static_cast<uint16_t>((addr_scratch_ & 0x00FFU) | high);
+      addr_ = (addr_ + 1U) & 0x00FFFFFFU;
+      return;
+    }
+
+    case MicroInternalOp::kFormAddrFromScratchDbr: {
+      const uint32_t low = static_cast<uint32_t>(addr_scratch_ & 0x00FFU);
+      const uint32_t high = static_cast<uint32_t>(fetch_data_) << 8U;
+      const uint32_t bank = static_cast<uint32_t>(regs_.DBR) << 16U;
+      addr_ = bank | high | low;
+      return;
+    }
+
+    case MicroInternalOp::kFormAddrFromScratchBank: {
+      const uint32_t low = static_cast<uint32_t>(addr_scratch_ & 0x00FFU);
+      const uint32_t high = static_cast<uint32_t>(addr_scratch_ & 0xFF00U);
+      const uint32_t bank = static_cast<uint32_t>(fetch_data_) << 16U;
+      addr_ = bank | high | low;
+      return;
+    }
+
     case MicroInternalOp::kAddIndexToAddr: {
-      const Reg reg = static_cast<Reg>(params & 0x0FU);
+      const Reg reg = mp::UnpackAddIndex(params);
       const uint16_t index = (reg == Reg::kY) ? regs_.Y : regs_.X;
       const uint16_t masked = IsIndex16Bit(regs_) ? index : static_cast<uint16_t>(index & 0x00FFU);
-      addr_ = (addr_ + static_cast<uint32_t>(masked)) & 0x0000FFFFU;
+      const uint32_t sum = addr_ + static_cast<uint32_t>(masked);
+      addr_ = mp::UnpackAddIndexBankWrap(params) ? (sum & 0x0000FFFFU) : (sum & 0x00FFFFFFU);
       return;
     }
 
@@ -548,13 +584,14 @@ CPU::StepResult CPU::FetchOpcode(TimeMasterDeltaT cycle_time) {
   }
   regs_.PC = static_cast<uint16_t>(regs_.PC + 1U);
   timing_context_ = TimingContext{};
-  // Cache the DP-low-nonzero bit at opcode-fetch. EvaluateTimingRule folds it
-  // into the same truth-table slot as branch_page_crossed (see the
-  // kDirectPageLowNonzero alias in cpu_internal.h). No opcode both branches
-  // and touches the direct page, so the aliasing is safe.
-  timing_context_.dp_low_nonzero = (regs_.DP & 0x00FFU) != 0U;
 
   const InstructionEntry& entry = opcode_defs_internal::kOpcodeArtifacts.execution_table[fetch_data_];
+  // Seed the DP-low-nonzero bit only for DP-addressed opcodes. Branches share
+  // the same truth-table slot (bit 4) but mean branch_page_crossed there, so
+  // spurious seeding would fire the emulation-mode page-cross penalty.
+  if (entry.uses_dp_penalty) {
+    timing_context_.dp_low_nonzero = (regs_.DP & 0x00FFU) != 0U;
+  }
   if (entry.disposition == InstructionDisposition::kFaultUnimplemented) {
     RecordFault(Fault::Type::kUnimplementedOpcode, fetch_data_, opcode_address);
     return StepResult{true, TickResult{static_cast<TimeMasterDeltaT>(cycle_time + 1U), TickStopReason::kFaulted}};

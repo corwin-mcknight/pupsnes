@@ -43,62 +43,81 @@ enum class MicroBusAction : uint8_t {
 // Internal register operations performed after the bus action completes.
 enum class MicroInternalOp : uint8_t {
   kNone,
-  kLoadReg,                 // reg_byte = fetch_data_; width/flag semantics per (reg, byte_sel,
-                            // update_nz); params packs Reg (A/X/Y/Dp/Dbr/Pcl/Pch/Pbr/P) in
-                            // bits [3:0], ByteSel (kLow/kHigh) in bits [5:4], and update_nz in
-                            // bit 6 (see micro_op_params::PackLoadReg). Dispatch via
-                            // the kLoadReg case in ExecuteInternalOp. For Reg::kP, emulation-mode forcing is handled
-                            // by regs.P.FromByte(fetch, E); update_nz is ignored.
-  kSetBranchTakenCond,      // branch_taken = <BranchCond(params[3:0])>; params packs the
-                            // BranchCond (kAlways/kZ/kNotZ/kC/kNotC/kN/kNotN/kV/kNotV)
-                            // in bits [3:0] (see micro_op_params::PackBranchCond)
-  kBranchRelative,          // Apply signed branch offset to PC. Params bit 0 = wide: when 0,
-                            // uses signed 8-bit displacement from fetch_data_; when 1, uses
-                            // signed 16-bit displacement from addr_[15:0]. The 8-bit path also
-                            // updates timing_context_.branch_page_crossed.
-  kAddIndexToAddr,          // addr_ = (addr_ + index) & 0xFFFF (bank 0 preserved). Params[3:0]
-                            // selects Reg::kX or Reg::kY (see micro_op_params::PackAddIndex).
-                            // Index width follows P.X: full 16-bit when X=0, low 8 bits when
-                            // X=1. Used by direct-page-indexed addressing.
-  kSetAddrFromDp,           // addr_ = bank 0, (DP + fetch_data_) & 0xFFFF. Used by direct-page
-                            // addressing to turn the just-fetched DP offset into the effective
-                            // address. Always bank-0; never wraps the DP+offset inside a page.
-                            // The "DP low-byte nonzero" +1 cycle penalty is handled by the
-                            // instruction's timing rule (see kDirectPageLowNonzero alias).
-  kSetAddrByteFromFetch,    // addr_[byte] = fetch_data_. Params bits [1:0] = ByteSel (kLow,
-                            // kHigh, kBank), bit [2] = from_dbr. from_dbr is only meaningful
-                            // when byte_sel == kHigh: in that combination addr_[15:8] is set
-                            // from fetch and addr_[23:16] is set from DBR.
-  kModifyAddr,              // addr_ += 1 (bit 0 set) or addr_ -= 1 (bit 0 clear). Wraps at 24
-                            // bits. Only increment is currently used; decrement encoding is
-                            // reserved.
-  kModifySp,                // SP += 1 or SP -= 1 (bit 0 = increment). Wraps in page 1 when E=1.
-  kModifyPc,                // PC += 1 or PC -= 1 (bit 0 = increment). 16-bit wrap.
-  kIncDecReg,               // reg += 1 or reg -= 1; width/flag semantics per reg; params
-                            // packs decrement flag in bit 0 and Reg (A/X/Y) in bits [4:1]
-                            // (see micro_op_params::PackIncDec)
-  kSetFlag,                 // P.<flag> = value; params packs value in bit 0 and Flag
-                            // (C/D/I/V only) in bits [4:1] (see micro_op_params::PackSetFlag)
-  kMaskStatus,              // P mask update. Params bit 0: 1 = SEP (P |= fetch_data_), 0 = REP
-                            // (P &= ~fetch_data_). Both paths preserve the E-mode forcing of
-                            // M/X back to 1 via regs.P.FromByte + ApplyEmulationForcing.
-  kExchangeCarryEmulation,  // swap C and E; on E=1 force M,X=1, XH/YH=0, SH=$01
-  kTransferReg,             // dst = src; width/flag semantics per (src,dst) pair; params
-                            // packs src in [3:0] and dst in [7:4] (see micro_op_params::PackTransfer)
-  kSetPcFromAddr,           // PC = addr_[15:0]. Params bit 0 = with_pbr: when 1, also set
-                            // PBR = addr_[23:16].
-  kLoadAddrByteAndSetPc,    // Fused "set addr byte from fetch + set PC from addr". Params
-                            // bits [1:0] = ByteSel (kHigh for JMP abs; kBank for JML),
-                            // bit [2] = with_pbr (1 for JML: also set PBR from addr).
-  kAlu8Imm,                 // 8-bit ALU immediate: apply AluOp to fetch_data_ against
-                            // A/X/Y (or just update Z for BIT imm). Params pack AluOp in
-                            // bits [3:0] (see micro_op_params::PackAluOp). Dispatch lives
-                            // in the kAlu8Imm case in ExecuteInternalOp in cpu.cpp.
-  kAlu16Imm,                // 16-bit ALU immediate: apply AluOp to the 16-bit operand
-                            // formed from addr_[7:0] (low, stashed by a prior
-                            // kSetAddrByteFromFetch(kLow)) and fetch_data_ (high). Params
-                            // pack AluOp in bits [3:0]. Dispatch lives in the kAlu16Imm case in ExecuteInternalOp
-                            // in cpu.cpp.
+  kLoadReg,                  // reg_byte = fetch_data_; width/flag semantics per (reg, byte_sel,
+                             // update_nz); params packs Reg (A/X/Y/Dp/Dbr/Pcl/Pch/Pbr/P) in
+                             // bits [3:0], ByteSel (kLow/kHigh) in bits [5:4], and update_nz in
+                             // bit 6 (see micro_op_params::PackLoadReg). Dispatch via
+                             // the kLoadReg case in ExecuteInternalOp. For Reg::kP, emulation-mode forcing is handled
+                             // by regs.P.FromByte(fetch, E); update_nz is ignored.
+  kSetBranchTakenCond,       // branch_taken = <BranchCond(params[3:0])>; params packs the
+                             // BranchCond (kAlways/kZ/kNotZ/kC/kNotC/kN/kNotN/kV/kNotV)
+                             // in bits [3:0] (see micro_op_params::PackBranchCond)
+  kBranchRelative,           // Apply signed branch offset to PC. Params bit 0 = wide: when 0,
+                             // uses signed 8-bit displacement from fetch_data_; when 1, uses
+                             // signed 16-bit displacement from addr_[15:0]. The 8-bit path also
+                             // updates timing_context_.branch_page_crossed.
+  kAddIndexToAddr,           // addr_ += index, width follows P.X (full 16-bit when X=0, low 8
+                             // bits when X=1). Params[3:0] selects Reg::kX or Reg::kY;
+                             // params[4] = bank_wrap: when 1 addr_ is masked to 16 bits
+                             // (bank forced to 0, used by direct-page-indexed), when 0 the add
+                             // is 24-bit and carry can propagate into the bank byte (used by
+                             // absolute-indexed, where the effective address is DBR:(abs + idx)).
+                             // See micro_op_params::PackAddIndex.
+  kStashIndirectLow,         // addr_scratch_[7:0] = fetch_data_; addr_ = (addr_ + 1) & 0xFFFFFF.
+                             // First step of (dp) / [dp] / (dp),Y / [dp],Y: captures the low byte
+                             // of the indirect pointer while advancing addr_ to the next pointer
+                             // byte. Models AAL latch capture on the 65C816.
+  kStashIndirectHigh,        // addr_scratch_[15:8] = fetch_data_; addr_ = (addr_ + 1) & 0xFFFFFF.
+                             // Second step for [dp] / [dp],Y long-indirect: captures pointer
+                             // high byte before the bank-byte read clobbers fetch_data_.
+  kFormAddrFromScratchDbr,   // addr_ = DBR:(fetch_data_<<8 | addr_scratch_[7:0]). Completes
+                             // assembly for (dp) / (dp,X) / (dp),Y: the just-fetched byte is
+                             // the pointer high, scratch held the pointer low, and DBR supplies
+                             // the bank for the operand access.
+  kFormAddrFromScratchBank,  // addr_ = fetch_data_:(addr_scratch_[15:8]:addr_scratch_[7:0]).
+                             // Completes assembly for [dp] / [dp],Y: scratch held low+high of
+                             // the indirect and the just-fetched byte is the bank.
+  kSetAddrFromSp,            // addr_ = bank 0, (SP + fetch_data_) & 0xFFFF. Used by stack-relative
+                             // addressing (sr,S). Always bank-0.
+  kSetAddrFromDp,            // addr_ = bank 0, (DP + fetch_data_) & 0xFFFF. Used by direct-page
+                             // addressing to turn the just-fetched DP offset into the effective
+                             // address. Always bank-0; never wraps the DP+offset inside a page.
+                             // The "DP low-byte nonzero" +1 cycle penalty is handled by the
+                             // instruction's timing rule (see kDirectPageLowNonzero alias).
+  kSetAddrByteFromFetch,     // addr_[byte] = fetch_data_. Params bits [1:0] = ByteSel (kLow,
+                             // kHigh, kBank), bit [2] = from_dbr. from_dbr is only meaningful
+                             // when byte_sel == kHigh: in that combination addr_[15:8] is set
+                             // from fetch and addr_[23:16] is set from DBR.
+  kModifyAddr,               // addr_ += 1 (bit 0 set) or addr_ -= 1 (bit 0 clear). Wraps at 24
+                             // bits. Only increment is currently used; decrement encoding is
+                             // reserved.
+  kModifySp,                 // SP += 1 or SP -= 1 (bit 0 = increment). Wraps in page 1 when E=1.
+  kModifyPc,                 // PC += 1 or PC -= 1 (bit 0 = increment). 16-bit wrap.
+  kIncDecReg,                // reg += 1 or reg -= 1; width/flag semantics per reg; params
+                             // packs decrement flag in bit 0 and Reg (A/X/Y) in bits [4:1]
+                             // (see micro_op_params::PackIncDec)
+  kSetFlag,                  // P.<flag> = value; params packs value in bit 0 and Flag
+                             // (C/D/I/V only) in bits [4:1] (see micro_op_params::PackSetFlag)
+  kMaskStatus,               // P mask update. Params bit 0: 1 = SEP (P |= fetch_data_), 0 = REP
+                             // (P &= ~fetch_data_). Both paths preserve the E-mode forcing of
+                             // M/X back to 1 via regs.P.FromByte + ApplyEmulationForcing.
+  kExchangeCarryEmulation,   // swap C and E; on E=1 force M,X=1, XH/YH=0, SH=$01
+  kTransferReg,              // dst = src; width/flag semantics per (src,dst) pair; params
+                             // packs src in [3:0] and dst in [7:4] (see micro_op_params::PackTransfer)
+  kSetPcFromAddr,            // PC = addr_[15:0]. Params bit 0 = with_pbr: when 1, also set
+                             // PBR = addr_[23:16].
+  kLoadAddrByteAndSetPc,     // Fused "set addr byte from fetch + set PC from addr". Params
+                             // bits [1:0] = ByteSel (kHigh for JMP abs; kBank for JML),
+                             // bit [2] = with_pbr (1 for JML: also set PBR from addr).
+  kAlu8Imm,                  // 8-bit ALU immediate: apply AluOp to fetch_data_ against
+                             // A/X/Y (or just update Z for BIT imm). Params pack AluOp in
+                             // bits [3:0] (see micro_op_params::PackAluOp). Dispatch lives
+                             // in the kAlu8Imm case in ExecuteInternalOp in cpu.cpp.
+  kAlu16Imm,                 // 16-bit ALU immediate: apply AluOp to the 16-bit operand
+                             // formed from addr_[7:0] (low, stashed by a prior
+                             // kSetAddrByteFromFetch(kLow)) and fetch_data_ (high). Params
+                             // pack AluOp in bits [3:0]. Dispatch lives in the kAlu16Imm case in ExecuteInternalOp
+                             // in cpu.cpp.
 };
 
 // Typed enums for MicroOp::params packing. Populated in subsequent refactor
@@ -129,10 +148,12 @@ enum class PushSrc : uint8_t {
   kAddrHigh,
 };
 
-// Maximum micro-ops remaining after the opcode fetch (longest 65C816
-// instruction = 7 cycles). Used by MicroOpRecord-based debugger observers;
-// the matching InstructionEntry::ops size lives in cpu_internal.h.
-inline constexpr uint8_t kMaxRemainingOps = 7;
+// Maximum micro-ops remaining after the opcode fetch. LDA [dp] with 16-bit
+// accumulator needs 8 slots (fetch DP offset + DL-penalty + 3 indirect reads
+// + 3-slot LoadRegFromAddr), which bounds the limit. Used by MicroOpRecord
+// debugger observers; the matching InstructionEntry::ops size lives in
+// cpu_internal.h.
+inline constexpr uint8_t kMaxRemainingOps = 8;
 
 // Forward declaration only — the InstructionEntry layout lives in
 // src/pupsnes/5a22/cpu_internal.h. CPU::current_instr_ holds a pointer to
@@ -259,6 +280,12 @@ class CPU : public Device {
   uint8_t micro_op_index_ = 0;
   uint8_t fetch_data_ = 0;  // Last byte read from bus
   uint32_t addr_ = 0;       // Effective address accumulator
+  // Indirect-pointer scratch for multi-byte effective-address assembly.
+  // Models the 65C816's internal AAL/AAH latches: while addr_ points at the
+  // pointer being read, each pointer byte is stashed here so it survives the
+  // next bus-read that clobbers fetch_data_. Used by (dp), [dp], (dp,X),
+  // (dp),Y, [dp],Y, JMP (abs), JMP [abs], JMP (abs,X), JSR (abs,X).
+  uint16_t addr_scratch_ = 0;
   TimingContext timing_context_{};
   std::optional<Fault> fault_ = std::nullopt;
   uint64_t retired_instruction_count_ = 0;

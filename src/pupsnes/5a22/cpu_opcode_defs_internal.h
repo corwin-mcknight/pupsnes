@@ -209,12 +209,19 @@ inline constexpr bool UnpackLoadAddrByteAndSetPcWithPbr(uint8_t params) {
   return (params & 0x04U) != 0U;
 }
 
-// Add index to addr (kAddIndexToAddr): bits [3:0] = Reg (kX or kY).
-inline constexpr uint8_t PackAddIndex(Reg reg) {
-  return static_cast<uint8_t>(static_cast<uint32_t>(reg) & 0x0FU);
+// Add index to addr (kAddIndexToAddr): bits [3:0] = Reg (kX or kY), bit [4] =
+// bank_wrap. When bank_wrap is 1 (default), addr_ is masked to 16 bits after
+// the add (bank forced to 0) — used by direct-page-indexed addressing. When 0,
+// the add is 24-bit and carry can propagate into the bank byte — used by
+// absolute-indexed addressing where the effective address is DBR:(abs + idx).
+inline constexpr uint8_t PackAddIndex(Reg reg, bool bank_wrap = true) {
+  return static_cast<uint8_t>((static_cast<uint32_t>(reg) & 0x0FU) | (bank_wrap ? 0x10U : 0x00U));
 }
 inline constexpr Reg UnpackAddIndex(uint8_t params) {
   return static_cast<Reg>(params & 0x0FU);
+}
+inline constexpr bool UnpackAddIndexBankWrap(uint8_t params) {
+  return (params & 0x10U) != 0U;
 }
 
 // Mask status (kMaskStatus): bit 0 = or_bits (1 = SEP/OR, 0 = REP/AND-NOT).
@@ -841,6 +848,10 @@ constexpr uint8_t FindRuleIndex(const InstructionEntry& entry, uint32_t truth_ta
   return entry.rule_count;
 }
 
+constexpr bool AddressingModeUsesDpPenalty(std::string_view mode) {
+  return mode == "direct page" || mode == "direct page indexed X" || mode == "direct page indexed Y";
+}
+
 constexpr InstructionEntry LowerOpcode(const OpcodeSpec& spec) {
   InstructionEntry entry{};
   if (spec.disposition != OpcodeSpecDisposition::kImplemented) {
@@ -849,6 +860,7 @@ constexpr InstructionEntry LowerOpcode(const OpcodeSpec& spec) {
 
   entry.disposition = InstructionDisposition::kImplemented;
   entry.remaining_op_count = spec.cycle_count;
+  entry.uses_dp_penalty = AddressingModeUsesDpPenalty(spec.addressing_mode);
   entry.rule_count = 1;
   entry.rules[0] = ComputeTimingRuleTruthTable(Always());
 

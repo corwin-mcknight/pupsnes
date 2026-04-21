@@ -23,6 +23,11 @@ std::string_view ToString(MicroInternalOp op) {
     case MicroInternalOp::kBranchRelative: return "BranchRelative";
     case MicroInternalOp::kAddIndexToAddr: return "AddIndexToAddr";
     case MicroInternalOp::kSetAddrFromDp: return "SetAddrFromDp";
+    case MicroInternalOp::kSetAddrFromSp: return "SetAddrFromSp";
+    case MicroInternalOp::kStashIndirectLow: return "StashIndirectLow";
+    case MicroInternalOp::kStashIndirectHigh: return "StashIndirectHigh";
+    case MicroInternalOp::kFormAddrFromScratchDbr: return "FormAddrFromScratchDbr";
+    case MicroInternalOp::kFormAddrFromScratchBank: return "FormAddrFromScratchBank";
     case MicroInternalOp::kSetAddrByteFromFetch: return "SetAddrByteFromFetch";
     case MicroInternalOp::kModifyAddr: return "ModifyAddr";
     case MicroInternalOp::kModifySp: return "ModifySp";

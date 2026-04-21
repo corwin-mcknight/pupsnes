@@ -46,6 +46,13 @@ std::string FormatOperand(const OpcodeMetadataView& metadata, SnesAddrT pc, uint
     case OpcodeAddressingMode::kDirectPage: return std::format("${:02X}", static_cast<unsigned>(bytes[1]));
     case OpcodeAddressingMode::kDirectPageIndexedX: return std::format("${:02X},X", static_cast<unsigned>(bytes[1]));
     case OpcodeAddressingMode::kDirectPageIndexedY: return std::format("${:02X},Y", static_cast<unsigned>(bytes[1]));
+    case OpcodeAddressingMode::kStackRelative: return std::format("${:02X},S", static_cast<unsigned>(bytes[1]));
+    case OpcodeAddressingMode::kAbsoluteIndexedX:
+      return std::format("${:04X},X", static_cast<unsigned>(bytes[1] | (static_cast<uint16_t>(bytes[2]) << 8U)));
+    case OpcodeAddressingMode::kAbsoluteIndexedY:
+      return std::format("${:04X},Y", static_cast<unsigned>(bytes[1] | (static_cast<uint16_t>(bytes[2]) << 8U)));
+    case OpcodeAddressingMode::kDirectIndirect: return std::format("(${:02X})", static_cast<unsigned>(bytes[1]));
+    case OpcodeAddressingMode::kDirectIndirectLong: return std::format("[${:02X}]", static_cast<unsigned>(bytes[1]));
   }
   return "";
 }

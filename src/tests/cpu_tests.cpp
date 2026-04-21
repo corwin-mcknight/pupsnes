@@ -285,6 +285,29 @@ TEST_CASE("BRA supports negative displacements for tight loops", "[cpu]") {
   REQUIRE(f.cpu.GetRegs().PC == 0x8000);
 }
 
+TEST_CASE("BNE not taken in emulation with DP-low nonzero does not spuriously add cycle", "[cpu]") {
+  // Regression: bit 4 of the rule-eval truth table aliases kBranchPageCrossed
+  // and kDirectPageLowNonzero. If FetchOpcode seeds dp_low_nonzero for branch
+  // opcodes, branches that don't cross a page still trigger the emulation
+  // page-cross penalty when (DP & 0xFF) != 0.
+  ResetFixture f;
+  f.SetRomByte(0x0000U, 0xD0);
+  f.SetRomByte(0x0001U, 0x02);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  auto regs = f.cpu.GetRegs();
+  regs.P.Z = true;   // BNE not taken
+  regs.P.E = true;   // Emulation mode
+  regs.DP = 0x0055;  // DL nonzero would spuriously set bit 4 without the fix
+  f.cpu.SetRegs(regs);
+
+  TickResult r = f.cpu.Tick(2);
+
+  REQUIRE(r.completed_cycles == 2);
+  REQUIRE(f.cpu.GetRegs().PC == 0x8002);
+}
+
 TEST_CASE("BNE not taken falls through without the guarded branch cycle", "[cpu]") {
   ResetFixture f;
   f.SetRomByte(0x0000U, 0xD0);
@@ -801,6 +824,320 @@ TEST_CASE("STZ direct page indexed X clears bank 0 byte", "[cpu]") {
   REQUIRE(r.completed_cycles == 4);
   REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
   REQUIRE(f.wram.Peek(0x0034) == 0x00);
+}
+
+TEST_CASE("STZ absolute writes zero through DBR-banked effective address", "[cpu]") {
+  ResetFixture f;
+  // STZ $1234
+  f.SetRomByte(0x0000U, 0x9C);
+  f.SetRomByte(0x0001U, 0x34);
+  f.SetRomByte(0x0002U, 0x12);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  SetDataBank(f.cpu, 0x7E);
+  f.wram.WriteRegister(0x1234, 0xAB);
+
+  // 5-m with m=1 = 4 cycles.
+  TickResult r = f.cpu.Tick(4);
+
+  REQUIRE(r.completed_cycles == 4);
+  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(f.wram.Peek(0x1234) == 0x00);
+  REQUIRE(f.cpu.GetRegs().PC == 0x8003);
+}
+
+TEST_CASE("STZ absolute clears both bytes when M is clear", "[cpu]") {
+  ResetFixture f;
+  f.SetRomByte(0x0000U, 0x9C);
+  f.SetRomByte(0x0001U, 0x40);
+  f.SetRomByte(0x0002U, 0x00);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  SetDataBank(f.cpu, 0x7E);
+  SetAccumulator16(f.cpu, 0x1234);  // also clears M
+  f.wram.WriteRegister(0x0040, 0xAA);
+  f.wram.WriteRegister(0x0041, 0xBB);
+
+  // 5-m with m=0 = 5 cycles.
+  TickResult r = f.cpu.Tick(5);
+
+  REQUIRE(r.completed_cycles == 5);
+  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(f.wram.Peek(0x0040) == 0x00);
+  REQUIRE(f.wram.Peek(0x0041) == 0x00);
+}
+
+TEST_CASE("STZ absolute indexed X adds X into the DBR-banked effective address", "[cpu]") {
+  ResetFixture f;
+  // STZ $1200,X
+  f.SetRomByte(0x0000U, 0x9E);
+  f.SetRomByte(0x0001U, 0x00);
+  f.SetRomByte(0x0002U, 0x12);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  SetDataBank(f.cpu, 0x7E);
+  auto regs = f.cpu.GetRegs();
+  regs.X = 0x0034;  // 8-bit X
+  f.cpu.SetRegs(regs);
+  f.wram.WriteRegister(0x1234, 0x99);
+
+  // 6-m with m=1 = 5 cycles.
+  TickResult r = f.cpu.Tick(5);
+
+  REQUIRE(r.completed_cycles == 5);
+  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(f.wram.Peek(0x1234) == 0x00);
+  REQUIRE(f.cpu.GetRegs().PC == 0x8003);
+}
+
+TEST_CASE("STZ absolute indexed X carries across the bank boundary", "[cpu]") {
+  ResetFixture f;
+  // STZ $FFFF,X  with X=1  -> effective bank 0x7F:$0000
+  f.SetRomByte(0x0000U, 0x9E);
+  f.SetRomByte(0x0001U, 0xFF);
+  f.SetRomByte(0x0002U, 0xFF);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  SetDataBank(f.cpu, 0x7E);
+  SetIndex16X(f.cpu, 0x0001);
+  f.wram.WriteRegister(0xFFFF, 0xCC);  // not this one
+  // 0x7F:$0000 = WRAM linear offset 0x10000; poke via bank 0x7F mapping
+  auto regs = f.cpu.GetRegs();
+  regs.P.M = true;  // 8-bit store
+  f.cpu.SetRegs(regs);
+
+  // Prime WRAM $10000 (bank 0x7F:$0000) with nonzero so we can see the clear.
+  f.wram.WriteRegister(0x10000, 0xDD);
+
+  TickResult r = f.cpu.Tick(5);  // 6-m with m=1 = 5
+
+  REQUIRE(r.completed_cycles == 5);
+  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(f.wram.Peek(0xFFFF) == 0xCC);
+  REQUIRE(f.wram.Peek(0x10000) == 0x00);
+}
+
+TEST_CASE("LDA stack-relative reads bank-0 (SP + offset)", "[cpu]") {
+  ResetFixture f;
+  f.SetRomByte(0x0000U, 0xA3);
+  f.SetRomByte(0x0001U, 0x04);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  auto regs = f.cpu.GetRegs();
+  regs.SP = 0x01F0;
+  f.cpu.SetRegs(regs);
+  f.wram.WriteRegister(0x01F4, 0x66);
+
+  TickResult r = f.cpu.Tick(4);  // 5-m at m=1 = 4
+
+  REQUIRE(r.completed_cycles == 4);
+  REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x66);
+}
+
+TEST_CASE("STA stack-relative writes to bank-0 (SP + offset)", "[cpu]") {
+  ResetFixture f;
+  f.SetRomByte(0x0000U, 0x83);
+  f.SetRomByte(0x0001U, 0x03);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  auto regs = f.cpu.GetRegs();
+  regs.SP = 0x0200;
+  regs.A = 0x0088;
+  f.cpu.SetRegs(regs);
+
+  TickResult r = f.cpu.Tick(4);
+
+  REQUIRE(r.completed_cycles == 4);
+  REQUIRE(f.wram.Peek(0x0203) == 0x88);
+}
+
+TEST_CASE("STA absolute indexed X writes to DBR:(abs + X)", "[cpu]") {
+  ResetFixture f;
+  f.SetRomByte(0x0000U, 0x9D);
+  f.SetRomByte(0x0001U, 0x00);
+  f.SetRomByte(0x0002U, 0x00);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  auto regs = f.cpu.GetRegs();
+  regs.DBR = 0x7E;
+  regs.X = 0x0020;
+  regs.A = 0x0044;
+  f.cpu.SetRegs(regs);
+
+  TickResult r = f.cpu.Tick(5);  // 6-m at m=1 = 5
+
+  REQUIRE(r.completed_cycles == 5);
+  REQUIRE(f.wram.Peek(0x0020) == 0x44);
+}
+
+TEST_CASE("STA absolute indexed X can cross bank boundary", "[cpu]") {
+  ResetFixture f;
+  f.SetRomByte(0x0000U, 0x9D);
+  f.SetRomByte(0x0001U, 0xFE);
+  f.SetRomByte(0x0002U, 0xFF);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  auto regs = f.cpu.GetRegs();
+  regs.DBR = 0x7E;
+  regs.X = 0x0003;
+  regs.A = 0x005A;
+  f.cpu.SetRegs(regs);
+
+  TickResult r = f.cpu.Tick(5);
+
+  REQUIRE(r.completed_cycles == 5);
+  // DBR=$7E, addr = $7EFFFE + 3 = $7F0001 → WRAM offset 0x10001
+  REQUIRE(f.wram.Peek(0x10001) == 0x5A);
+}
+
+TEST_CASE("STZ absolute indexed X clears a bank-0 byte", "[cpu]") {
+  ResetFixture f;
+  f.SetRomByte(0x0000U, 0x9E);
+  f.SetRomByte(0x0001U, 0x40);
+  f.SetRomByte(0x0002U, 0x00);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  auto regs = f.cpu.GetRegs();
+  regs.DBR = 0x7E;
+  regs.X = 0x0004;
+  f.cpu.SetRegs(regs);
+  f.wram.WriteRegister(0x0044, 0x99);
+
+  TickResult r = f.cpu.Tick(5);
+
+  REQUIRE(r.completed_cycles == 5);
+  REQUIRE(f.wram.Peek(0x0044) == 0x00);
+}
+
+TEST_CASE("LDA direct indirect reads through pointer at DBR:(high:low)", "[cpu]") {
+  ResetFixture f;
+  f.SetRomByte(0x0000U, 0xB2);
+  f.SetRomByte(0x0001U, 0x10);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  auto regs = f.cpu.GetRegs();
+  regs.DBR = 0x7E;
+  f.cpu.SetRegs(regs);
+  f.wram.WriteRegister(0x0010, 0x34);
+  f.wram.WriteRegister(0x0011, 0x12);
+  f.wram.WriteRegister(0x1234, 0x99);
+
+  TickResult r = f.cpu.Tick(5);
+
+  REQUIRE(r.completed_cycles == 5);
+  REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x99);
+}
+
+TEST_CASE("LDA direct indirect reads 16 bits when M is clear", "[cpu]") {
+  ResetFixture f;
+  f.SetRomByte(0x0000U, 0xB2);
+  f.SetRomByte(0x0001U, 0x20);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  auto regs = f.cpu.GetRegs();
+  regs.P.E = false;
+  regs.P.M = false;
+  regs.DBR = 0x7E;
+  f.cpu.SetRegs(regs);
+  f.wram.WriteRegister(0x0020, 0x00);
+  f.wram.WriteRegister(0x0021, 0x20);
+  f.wram.WriteRegister(0x2000, 0xCD);
+  f.wram.WriteRegister(0x2001, 0xAB);
+
+  TickResult r = f.cpu.Tick(6);
+
+  REQUIRE(r.completed_cycles == 6);
+  REQUIRE(f.cpu.GetRegs().A == 0xABCD);
+}
+
+TEST_CASE("STA direct indirect writes through pointer", "[cpu]") {
+  ResetFixture f;
+  f.SetRomByte(0x0000U, 0x92);
+  f.SetRomByte(0x0001U, 0x30);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  auto regs = f.cpu.GetRegs();
+  regs.A = 0x0044;
+  regs.DBR = 0x7E;
+  f.cpu.SetRegs(regs);
+  f.wram.WriteRegister(0x0030, 0x00);
+  f.wram.WriteRegister(0x0031, 0x40);
+
+  TickResult r = f.cpu.Tick(5);
+
+  REQUIRE(r.completed_cycles == 5);
+  REQUIRE(f.wram.Peek(0x4000) == 0x44);
+}
+
+TEST_CASE("LDA direct indirect long reads through 24-bit pointer", "[cpu]") {
+  ResetFixture f;
+  f.SetRomByte(0x0000U, 0xA7);
+  f.SetRomByte(0x0001U, 0x40);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  f.wram.WriteRegister(0x0040, 0x10);
+  f.wram.WriteRegister(0x0041, 0x30);
+  f.wram.WriteRegister(0x0042, 0x7E);
+  f.wram.WriteRegister(0x3010, 0x11);
+
+  TickResult r = f.cpu.Tick(6);
+
+  REQUIRE(r.completed_cycles == 6);
+  REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x11);
+}
+
+TEST_CASE("STA direct indirect long writes through 24-bit pointer", "[cpu]") {
+  ResetFixture f;
+  f.SetRomByte(0x0000U, 0x87);
+  f.SetRomByte(0x0001U, 0x50);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  auto regs = f.cpu.GetRegs();
+  regs.A = 0x0077;
+  f.cpu.SetRegs(regs);
+  f.wram.WriteRegister(0x0050, 0x00);
+  f.wram.WriteRegister(0x0051, 0x50);
+  f.wram.WriteRegister(0x0052, 0x7E);
+
+  TickResult r = f.cpu.Tick(6);
+
+  REQUIRE(r.completed_cycles == 6);
+  REQUIRE(f.wram.Peek(0x5000) == 0x77);
+}
+
+TEST_CASE("LDA direct indirect with DP-nonzero adds DL penalty cycle", "[cpu]") {
+  ResetFixture f;
+  f.SetRomByte(0x0000U, 0xB2);
+  f.SetRomByte(0x0001U, 0x10);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  auto regs = f.cpu.GetRegs();
+  regs.DP = 0x0080;  // DL nonzero → +1 cycle
+  regs.DBR = 0x7E;
+  f.cpu.SetRegs(regs);
+  f.wram.WriteRegister(0x0090, 0x00);
+  f.wram.WriteRegister(0x0091, 0x60);
+  f.wram.WriteRegister(0x6000, 0x55);
+
+  TickResult r = f.cpu.Tick(6);
+
+  REQUIRE(r.completed_cycles == 6);
+  REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x55);
 }
 
 TEST_CASE("STA absolute 16-bit high-byte write carries into the next bank at $FFFF", "[cpu]") {

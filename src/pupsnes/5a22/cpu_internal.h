@@ -82,9 +82,17 @@ struct InstructionEntry {
   InstructionDisposition disposition = InstructionDisposition::kFaultUnimplemented;
   uint8_t remaining_op_count = 0;
   uint8_t rule_count = 0;
+  // True for opcodes whose bit-4 timing slot gates on kDirectPageLowNonzero
+  // rather than kBranchPageCrossed. Controls whether FetchOpcode seeds
+  // timing_context_.dp_low_nonzero from (DP & 0xFF) or leaves it cleared.
+  // Without this gate, branches executed with DP-low nonzero would spuriously
+  // trigger the emulation-mode page-cross penalty.
+  bool uses_dp_penalty = false;
   std::array<MicroOp, kMaxRemainingOps> ops{};
   std::array<uint32_t, kMaxInstructionRules> rules{};
 };
-static_assert(sizeof(InstructionEntry) <= 48, "InstructionEntry budget");
+// 52 bytes with kMaxRemainingOps=8 and the uses_dp_penalty flag: 4 header +
+// 32 ops + 16 rules. 256-entry table is 13 KiB, still L1i-resident.
+static_assert(sizeof(InstructionEntry) <= 56, "InstructionEntry budget");
 
 }  // namespace pupsnes
