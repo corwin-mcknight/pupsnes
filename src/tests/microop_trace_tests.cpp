@@ -58,11 +58,14 @@ namespace {
 TEST_CASE("MicroOpTrace records in-flight instruction", "[microop]") {
   MicroOpTrace trace;
   trace.OnInstructionBegin(0xA9, 0x008000);
-  REQUIRE(trace.Current().has_value());
-  CHECK(trace.Current()->opcode == 0xA9);
-  CHECK(trace.Current()->opcode_address == 0x008000U);
-  CHECK(trace.Current()->op_count == 0U);
-  CHECK(trace.Current()->completed == false);
+  if (auto cur = trace.Current()) {
+    CHECK(cur->opcode == 0xA9);
+    CHECK(cur->opcode_address == 0x008000U);
+    CHECK(cur->op_count == 0U);
+    CHECK(cur->completed == false);
+  } else {
+    FAIL("Current() should have value");
+  }
 
   MicroOpRecord rec;
   rec.index = 0;
@@ -71,8 +74,12 @@ TEST_CASE("MicroOpTrace records in-flight instruction", "[microop]") {
   rec.fetch_data = 0xA9;
   trace.OnMicroOp(rec);
 
-  CHECK(trace.Current()->op_count == 1U);
-  CHECK(trace.Current()->ops[0].bus_action == MicroBusAction::kFetchPc);
+  if (auto cur = trace.Current()) {
+    CHECK(cur->op_count == 1U);
+    CHECK(cur->ops[0].bus_action == MicroBusAction::kFetchPc);
+  } else {
+    FAIL("Current() should have value");
+  }
   CHECK(trace.RetiredSize() == 0U);
 }
 

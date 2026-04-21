@@ -146,14 +146,9 @@ bool RunControl::HandlePostStepState() {
 
   if (const auto stop = cpu.TakeLastDebuggerStop(); stop.has_value()) {
     switch (*stop) {
-      case TickStopReason::kDebuggerBreakpoint:
-        PauseForBreakpoint();
-        return false;
-      case TickStopReason::kDebuggerStepComplete:
-        Pause();
-        return false;
-      default:
-        break;
+      case TickStopReason::kDebuggerBreakpoint: PauseForBreakpoint(); return false;
+      case TickStopReason::kDebuggerStepComplete: Pause(); return false;
+      default: break;
     }
   }
 

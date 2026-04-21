@@ -16,36 +16,27 @@ namespace {
 
 const char* StatusLabel(MicroOpStatus s) {
   switch (s) {
-    case MicroOpStatus::kPending:
-      return "Pending";
-    case MicroOpStatus::kExecuted:
-      return "Executed";
-    case MicroOpStatus::kSkipped:
-      return "Skipped";
+    case MicroOpStatus::kPending: return "Pending";
+    case MicroOpStatus::kExecuted: return "Executed";
+    case MicroOpStatus::kSkipped: return "Skipped";
   }
   return "?";
 }
 
 const char* StatusGlyph(MicroOpStatus s) {
   switch (s) {
-    case MicroOpStatus::kExecuted:
-      return "v";
-    case MicroOpStatus::kSkipped:
-      return "-";
-    case MicroOpStatus::kPending:
-      return "?";
+    case MicroOpStatus::kExecuted: return "v";
+    case MicroOpStatus::kSkipped: return "-";
+    case MicroOpStatus::kPending: return "?";
   }
   return "?";
 }
 
 ImVec4 StatusColor(MicroOpStatus s) {
   switch (s) {
-    case MicroOpStatus::kExecuted:
-      return ImVec4(0.45F, 0.85F, 0.45F, 1.0F);
-    case MicroOpStatus::kSkipped:
-      return ImVec4(0.75F, 0.75F, 0.45F, 1.0F);
-    case MicroOpStatus::kPending:
-      return ImVec4(0.55F, 0.55F, 0.55F, 1.0F);
+    case MicroOpStatus::kExecuted: return ImVec4(0.45F, 0.85F, 0.45F, 1.0F);
+    case MicroOpStatus::kSkipped: return ImVec4(0.75F, 0.75F, 0.45F, 1.0F);
+    case MicroOpStatus::kPending: return ImVec4(0.55F, 0.55F, 0.55F, 1.0F);
   }
   return ImVec4(1.0F, 1.0F, 1.0F, 1.0F);
 }

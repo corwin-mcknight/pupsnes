@@ -17,22 +17,14 @@ struct KindInfo {
 
 KindInfo KindDisplay(BusEventKind kind) {
   switch (kind) {
-    case BusEventKind::kFastRead:
-      return {"FST R", ImVec4(0.60F, 0.85F, 0.60F, 1.0F)};
-    case BusEventKind::kFastWrite:
-      return {"FST W", ImVec4(0.85F, 0.70F, 0.50F, 1.0F)};
-    case BusEventKind::kInlineRead:
-      return {"INL R", ImVec4(0.55F, 0.80F, 0.95F, 1.0F)};
-    case BusEventKind::kInlineWrite:
-      return {"INL W", ImVec4(0.95F, 0.80F, 0.55F, 1.0F)};
-    case BusEventKind::kScheduledRead:
-      return {"SCH R", ImVec4(0.70F, 0.70F, 1.0F, 1.0F)};
-    case BusEventKind::kScheduledWrite:
-      return {"SCH W", ImVec4(1.0F, 0.75F, 0.75F, 1.0F)};
-    case BusEventKind::kRejectedRead:
-      return {"REJ R", ImVec4(0.85F, 0.45F, 0.45F, 1.0F)};
-    case BusEventKind::kRejectedWrite:
-      return {"REJ W", ImVec4(0.95F, 0.35F, 0.35F, 1.0F)};
+    case BusEventKind::kFastRead: return {"FST R", ImVec4(0.60F, 0.85F, 0.60F, 1.0F)};
+    case BusEventKind::kFastWrite: return {"FST W", ImVec4(0.85F, 0.70F, 0.50F, 1.0F)};
+    case BusEventKind::kInlineRead: return {"INL R", ImVec4(0.55F, 0.80F, 0.95F, 1.0F)};
+    case BusEventKind::kInlineWrite: return {"INL W", ImVec4(0.95F, 0.80F, 0.55F, 1.0F)};
+    case BusEventKind::kScheduledRead: return {"SCH R", ImVec4(0.70F, 0.70F, 1.0F, 1.0F)};
+    case BusEventKind::kScheduledWrite: return {"SCH W", ImVec4(1.0F, 0.75F, 0.75F, 1.0F)};
+    case BusEventKind::kRejectedRead: return {"REJ R", ImVec4(0.85F, 0.45F, 0.45F, 1.0F)};
+    case BusEventKind::kRejectedWrite: return {"REJ W", ImVec4(0.95F, 0.35F, 0.35F, 1.0F)};
   }
   return {"?", ImVec4(1.0F, 1.0F, 1.0F, 1.0F)};
 }
@@ -49,9 +41,9 @@ void RenderBusEventPanel(DebuggerApp& app) {
   ImGui::TextDisabled("%zu / %zu", log.Size(), log.Capacity());
 
   const auto snapshot = log.Snapshot();
-  if (ImGui::BeginTable("bus_events", 4,
-                        ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY |
-                            ImGuiTableFlags_SizingFixedFit)) {
+  if (ImGui::BeginTable(
+          "bus_events", 4,
+          ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingFixedFit)) {
     ImGui::TableSetupColumn("Time", ImGuiTableColumnFlags_WidthFixed);
     ImGui::TableSetupColumn("Kind", ImGuiTableColumnFlags_WidthFixed);
     ImGui::TableSetupColumn("Addr", ImGuiTableColumnFlags_WidthFixed);

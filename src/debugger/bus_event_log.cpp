@@ -1,6 +1,7 @@
 #include "pupsnes/debugger/bus_event_log.h"
 
 #include <algorithm>
+#include <vector>
 
 namespace pupsnes::debugger {
 

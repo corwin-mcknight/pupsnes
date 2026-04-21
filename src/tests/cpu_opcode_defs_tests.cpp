@@ -2,7 +2,9 @@
 #include <catch2/catch_test_macros.hpp>
 #include <cstddef>
 #include <initializer_list>
+#include <string_view>
 
+#include "cpu_spec_oracle.h"
 #include "pupsnes/5a22/cpu_opcode_defs_internal.h"
 
 using namespace pupsnes;                        // NOLINT(google-build-using-namespace)
@@ -123,9 +125,8 @@ TEST_CASE("Opcode specs lower into expected execution and metadata entries", "[c
   REQUIRE(bne_branch_rule == ComputeTimingRuleTruthTable(Condition(TimingCondition::kBranchTaken)));
 
   const uint32_t bne_penalty_rule = kOpcodeArtifacts.execution_table[0xD0].rules[2];
-  REQUIRE(bne_penalty_rule ==
-          ComputeTimingRuleTruthTable(
-              AllOf(Condition(TimingCondition::kEmulationMode), Condition(TimingCondition::kBranchPageCrossed))));
+  REQUIRE(bne_penalty_rule == ComputeTimingRuleTruthTable(AllOf(Condition(TimingCondition::kEmulationMode),
+                                                                Condition(TimingCondition::kBranchPageCrossed))));
 
   ExpectOpcode(0x48, "PHA", "implied", 2,
                {{B::kNone, M::kNone, 0, "internal"},
@@ -142,6 +143,80 @@ TEST_CASE("Opcode specs lower into expected execution and metadata entries", "[c
                {{B::kNone, M::kNone, 0, "internal"},
                 {B::kNone, M::kModifySp, 0, "increment SP"},
                 {B::kPullStack, M::kLoadReg, 0, "pull DBR"}});
+}
+
+TEST_CASE("Every implemented opcode matches the 65C816 spec", "[cpu][opcode-defs]") {
+  using cpu_spec_oracle::CountActiveCycles;
+  using cpu_spec_oracle::EvalFormula;
+  using cpu_spec_oracle::FindSpec;
+  using cpu_spec_oracle::FormulaInputs;
+  using cpu_spec_oracle::NormalizeAddressing;
+  using cpu_spec_oracle::PackConditionBits;
+  using cpu_spec_oracle::SpecEntry;
+
+  for (unsigned op = 0; op < 256; ++op) {
+    const auto& entry = kOpcodeArtifacts.execution_table[op];
+    const auto& meta = kOpcodeArtifacts.metadata_table[op];
+    if (entry.disposition != InstructionDisposition::kImplemented) {
+      continue;
+    }
+
+    CAPTURE(op);
+    const SpecEntry* spec = FindSpec(static_cast<uint8_t>(op));
+    INFO("opcode " << op << " implemented but missing from kSpec — add a row");
+    REQUIRE(spec != nullptr);
+
+    // Mnemonic is the 3-letter canonical form in both tables.
+    REQUIRE(meta.mnemonic == spec->mnemonic);
+
+    // Addressing: the lowered metadata stores the project's internal label
+    // (e.g. "immediate index"); the spec stores Clark's canonical token
+    // ("imm"). Route the metadata label through NormalizeAddressing and the
+    // two must agree.
+    const std::string_view normalized = NormalizeAddressing(meta.addressing_mode);
+    INFO("addressing normalize: '" << meta.addressing_mode << "' -> '" << normalized << "' vs spec '"
+                                   << spec->addressing << "'");
+    REQUIRE(normalized == spec->addressing);
+
+    // Cycle-formula conformance: evaluate Clark's formula at four
+    // representative mode configurations and verify the lowered table
+    // dispatches the same number of cycles (including the implicit opcode
+    // fetch). w is clamped to 0 because the implementation doesn't yet
+    // model the direct-page low-byte write penalty; any opcode whose
+    // formula depends on w gets a single-mode sanity check at w=0.
+    constexpr std::array<FormulaInputs, 4> kModes = {{
+        // m=1, x=1, native, no branch taken / not page-crossed
+        {.m = 1, .x = 1, .w = 0, .p = 0, .t = 0, .e = 0},
+        // m=0, x=0, native — exercise 16-bit cycle penalties
+        {.m = 0, .x = 0, .w = 0, .p = 0, .t = 0, .e = 0},
+        // branch taken, native, no page cross
+        {.m = 1, .x = 1, .w = 0, .p = 0, .t = 1, .e = 0},
+        // branch taken, emulation, page crossed — exercises t*e*p
+        {.m = 1, .x = 1, .w = 0, .p = 1, .t = 1, .e = 1},
+    }};
+
+    for (const FormulaInputs& in : kModes) {
+      CAPTURE(in.m, in.x, in.t, in.p, in.e);
+      const int expected = EvalFormula(spec->cycle_formula, in);
+      const int actual = CountActiveCycles(entry, PackConditionBits(in) | spec->forced_condition_bits);
+      INFO("cycle_formula '" << spec->cycle_formula << "' expected=" << expected << " actual=" << actual);
+      REQUIRE(expected == actual);
+    }
+  }
+}
+
+TEST_CASE("Opcodes absent from the spec oracle are marked unimplemented", "[cpu][opcode-defs]") {
+  using cpu_spec_oracle::FindSpec;
+
+  for (unsigned op = 0; op < 256; ++op) {
+    if (FindSpec(static_cast<uint8_t>(op)) != nullptr) {
+      continue;
+    }
+    CAPTURE(op);
+    const auto& entry = kOpcodeArtifacts.execution_table[op];
+    INFO("opcode " << op << " not in kSpec but implementation isn't a fault");
+    REQUIRE(entry.disposition == InstructionDisposition::kFaultUnimplemented);
+  }
 }
 
 TEST_CASE("Unimplemented opcodes lower to explicit fault entries", "[cpu][opcode-defs]") {

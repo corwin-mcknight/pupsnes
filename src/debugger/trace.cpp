@@ -1,6 +1,7 @@
 #include "pupsnes/debugger/trace.h"
 
 #include <algorithm>
+#include <vector>
 
 namespace pupsnes::debugger {
 

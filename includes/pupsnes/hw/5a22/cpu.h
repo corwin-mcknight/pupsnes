@@ -25,19 +25,19 @@ class SNES;
 
 // Bus actions a micro-op can perform in a single master clock cycle.
 enum class MicroBusAction : uint8_t {
-  kNone,            // Internal cycle — no bus transaction
-  kFetchPc,         // Read byte from PBR:PC, increment PC
-  kReadAddr,        // Read byte from effective address (addr_)
-  kWriteRegByte,    // Write a byte to effective address (addr_); byte source
-                    // selected by (WriteSrc, ByteSel) packed in
-                    // CycleSlotSpec::params (see micro_op_params::PackWriteAddr).
-                    // Dispatch lives in the kWriteRegByte case in PerformBusAction in cpu.cpp.
-  kPushStack,       // Write a byte to stack ($00:SP); byte source selected by
-                    // PushSrc packed in CycleSlotSpec::params[3:0] (see
-                    // micro_op_params::PackPushStack). Dispatch lives in
-                    // the kPushStack case in PerformBusAction in cpu.cpp.
-  kPullStack,       // Read byte from stack ($00:SP) into fetch_data_
-  kPreIncPullStack, // Increment SP then read from stack into fetch_data_
+  kNone,             // Internal cycle — no bus transaction
+  kFetchPc,          // Read byte from PBR:PC, increment PC
+  kReadAddr,         // Read byte from effective address (addr_)
+  kWriteRegByte,     // Write a byte to effective address (addr_); byte source
+                     // selected by (WriteSrc, ByteSel) packed in
+                     // CycleSlotSpec::params (see micro_op_params::PackWriteAddr).
+                     // Dispatch lives in the kWriteRegByte case in PerformBusAction in cpu.cpp.
+  kPushStack,        // Write a byte to stack ($00:SP); byte source selected by
+                     // PushSrc packed in CycleSlotSpec::params[3:0] (see
+                     // micro_op_params::PackPushStack). Dispatch lives in
+                     // the kPushStack case in PerformBusAction in cpu.cpp.
+  kPullStack,        // Read byte from stack ($00:SP) into fetch_data_
+  kPreIncPullStack,  // Increment SP then read from stack into fetch_data_
 };
 
 // Internal register operations performed after the bus action completes.

@@ -7,8 +7,7 @@ namespace {
 // FetchPc + SetAddrByteFromFetch is a compound: FetchPc brings the byte in via
 // bus action, kSetAddrByteFromFetch runs as the internal op. Since both live
 // in the same CycleSlotSpec we just synthesize the slot by hand.
-constexpr CycleSlotSpec FetchAddrByte(ByteSel byte_sel, bool from_dbr,
-                                      TimingRuleExpr rule, std::string_view label) {
+constexpr CycleSlotSpec FetchAddrByte(ByteSel byte_sel, bool from_dbr, TimingRuleExpr rule, std::string_view label) {
   return CycleSlotSpec{
       MicroBusAction::kFetchPc,
       MicroInternalOp::kSetAddrByteFromFetch,
@@ -48,10 +47,10 @@ constexpr CycleFragment LoadIndexXImmediate() {
   return Fragment()
       .Then(LoadRegFromFetch(Reg::kX, ByteSel::kLow, true, Not(Condition(TimingCondition::kIndex16)),
                              "fetch immediate low"))
-      .Then(LoadRegFromFetch(Reg::kX, ByteSel::kLow, false, Condition(TimingCondition::kIndex16),
-                             "fetch immediate low"))
-      .Then(LoadRegFromFetch(Reg::kX, ByteSel::kHigh, true, Condition(TimingCondition::kIndex16),
-                             "fetch immediate high"))
+      .Then(
+          LoadRegFromFetch(Reg::kX, ByteSel::kLow, false, Condition(TimingCondition::kIndex16), "fetch immediate low"))
+      .Then(
+          LoadRegFromFetch(Reg::kX, ByteSel::kHigh, true, Condition(TimingCondition::kIndex16), "fetch immediate high"))
       .Build();
 }
 
@@ -77,10 +76,10 @@ constexpr CycleFragment LoadIndexYImmediate() {
   return Fragment()
       .Then(LoadRegFromFetch(Reg::kY, ByteSel::kLow, true, Not(Condition(TimingCondition::kIndex16)),
                              "fetch immediate low"))
-      .Then(LoadRegFromFetch(Reg::kY, ByteSel::kLow, false, Condition(TimingCondition::kIndex16),
-                             "fetch immediate low"))
-      .Then(LoadRegFromFetch(Reg::kY, ByteSel::kHigh, true, Condition(TimingCondition::kIndex16),
-                             "fetch immediate high"))
+      .Then(
+          LoadRegFromFetch(Reg::kY, ByteSel::kLow, false, Condition(TimingCondition::kIndex16), "fetch immediate low"))
+      .Then(
+          LoadRegFromFetch(Reg::kY, ByteSel::kHigh, true, Condition(TimingCondition::kIndex16), "fetch immediate high"))
       .Build();
 }
 
@@ -145,7 +144,7 @@ constexpr CycleFragment PullDataBank() {
       .Then(Internal(MicroInternalOp::kNone, Always(), "internal"))
       .Then(ModifySp(true, Always(), "increment SP"))
       .Then(CycleSlotSpec{MicroBusAction::kPullStack, MicroInternalOp::kLoadReg, Always(), "pull DBR",
-                         micro_op_params::PackLoadReg(Reg::kDbr, ByteSel::kLow, true)})
+                          micro_op_params::PackLoadReg(Reg::kDbr, ByteSel::kLow, true)})
       .Build();
 }
 
@@ -220,10 +219,8 @@ constexpr CycleFragment PullAccumulator() {
       .Then(Internal(MicroInternalOp::kNone, Always(), "internal"))
       .Then(PullPreIncLoadReg(Reg::kA, ByteSel::kLow, true, Not(Condition(TimingCondition::kAccumulator16)),
                               "pull A (8-bit)"))
-      .Then(PullPreIncLoadReg(Reg::kA, ByteSel::kLow, false, Condition(TimingCondition::kAccumulator16),
-                              "pull A low"))
-      .Then(PullPreIncLoadReg(Reg::kA, ByteSel::kHigh, true, Condition(TimingCondition::kAccumulator16),
-                              "pull A high"))
+      .Then(PullPreIncLoadReg(Reg::kA, ByteSel::kLow, false, Condition(TimingCondition::kAccumulator16), "pull A low"))
+      .Then(PullPreIncLoadReg(Reg::kA, ByteSel::kHigh, true, Condition(TimingCondition::kAccumulator16), "pull A high"))
       .Build();
 }
 
@@ -231,8 +228,8 @@ constexpr CycleFragment PullIndexX() {
   return Fragment()
       .Then(Internal(MicroInternalOp::kNone, Always(), "internal"))
       .Then(Internal(MicroInternalOp::kNone, Always(), "internal"))
-      .Then(PullPreIncLoadReg(Reg::kX, ByteSel::kLow, true, Not(Condition(TimingCondition::kIndex16)),
-                              "pull X (8-bit)"))
+      .Then(
+          PullPreIncLoadReg(Reg::kX, ByteSel::kLow, true, Not(Condition(TimingCondition::kIndex16)), "pull X (8-bit)"))
       .Then(PullPreIncLoadReg(Reg::kX, ByteSel::kLow, false, Condition(TimingCondition::kIndex16), "pull X low"))
       .Then(PullPreIncLoadReg(Reg::kX, ByteSel::kHigh, true, Condition(TimingCondition::kIndex16), "pull X high"))
       .Build();
@@ -242,8 +239,8 @@ constexpr CycleFragment PullIndexY() {
   return Fragment()
       .Then(Internal(MicroInternalOp::kNone, Always(), "internal"))
       .Then(Internal(MicroInternalOp::kNone, Always(), "internal"))
-      .Then(PullPreIncLoadReg(Reg::kY, ByteSel::kLow, true, Not(Condition(TimingCondition::kIndex16)),
-                              "pull Y (8-bit)"))
+      .Then(
+          PullPreIncLoadReg(Reg::kY, ByteSel::kLow, true, Not(Condition(TimingCondition::kIndex16)), "pull Y (8-bit)"))
       .Then(PullPreIncLoadReg(Reg::kY, ByteSel::kLow, false, Condition(TimingCondition::kIndex16), "pull Y low"))
       .Then(PullPreIncLoadReg(Reg::kY, ByteSel::kHigh, true, Condition(TimingCondition::kIndex16), "pull Y high"))
       .Build();
@@ -551,9 +548,7 @@ constexpr OpcodeMetadataView LowerPublicMetadata(const opcode_defs_internal::Opc
 
   switch (view.addressing_mode) {
     case OpcodeAddressingMode::kImplied:
-    case OpcodeAddressingMode::kUnknown:
-      view.base_length = 1;
-      break;
+    case OpcodeAddressingMode::kUnknown: view.base_length = 1; break;
     case OpcodeAddressingMode::kImmediateAccumulator:
       view.base_length = 2;
       view.accumulator_width_dependent = true;
@@ -562,19 +557,11 @@ constexpr OpcodeMetadataView LowerPublicMetadata(const opcode_defs_internal::Opc
       view.base_length = 2;
       view.index_width_dependent = true;
       break;
-    case OpcodeAddressingMode::kAbsolute:
-      view.base_length = 3;
-      break;
-    case OpcodeAddressingMode::kAbsoluteLong:
-      view.base_length = 4;
-      break;
+    case OpcodeAddressingMode::kAbsolute: view.base_length = 3; break;
+    case OpcodeAddressingMode::kAbsoluteLong: view.base_length = 4; break;
     case OpcodeAddressingMode::kRelative8:
-    case OpcodeAddressingMode::kImmediateByte:
-      view.base_length = 2;
-      break;
-    case OpcodeAddressingMode::kRelative16:
-      view.base_length = 3;
-      break;
+    case OpcodeAddressingMode::kImmediateByte: view.base_length = 2; break;
+    case OpcodeAddressingMode::kRelative16: view.base_length = 3; break;
   }
 
   return view;
@@ -610,24 +597,15 @@ uint8_t ComputeInstructionLength(const OpcodeMetadataView& metadata, const CpuFl
 
 std::string_view GetAddressingModeName(OpcodeAddressingMode mode) {
   switch (mode) {
-    case OpcodeAddressingMode::kUnknown:
-      return "unknown";
-    case OpcodeAddressingMode::kImplied:
-      return "implied";
-    case OpcodeAddressingMode::kImmediateAccumulator:
-      return "immediate";
-    case OpcodeAddressingMode::kImmediateIndex:
-      return "immediate index";
-    case OpcodeAddressingMode::kAbsolute:
-      return "absolute";
-    case OpcodeAddressingMode::kAbsoluteLong:
-      return "absolute long";
-    case OpcodeAddressingMode::kRelative8:
-      return "relative";
-    case OpcodeAddressingMode::kImmediateByte:
-      return "immediate byte";
-    case OpcodeAddressingMode::kRelative16:
-      return "relative long";
+    case OpcodeAddressingMode::kUnknown: return "unknown";
+    case OpcodeAddressingMode::kImplied: return "implied";
+    case OpcodeAddressingMode::kImmediateAccumulator: return "immediate";
+    case OpcodeAddressingMode::kImmediateIndex: return "immediate index";
+    case OpcodeAddressingMode::kAbsolute: return "absolute";
+    case OpcodeAddressingMode::kAbsoluteLong: return "absolute long";
+    case OpcodeAddressingMode::kRelative8: return "relative";
+    case OpcodeAddressingMode::kImmediateByte: return "immediate byte";
+    case OpcodeAddressingMode::kRelative16: return "relative long";
   }
   return "unknown";
 }

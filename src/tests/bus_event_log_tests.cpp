@@ -8,8 +8,8 @@
 #include "pupsnes/hw/snes.h"
 #include "pupsnes/hw/systembus.h"
 
-using namespace pupsnes;              // NOLINT(google-build-using-namespace)
-using namespace pupsnes::debugger;    // NOLINT(google-build-using-namespace)
+using namespace pupsnes;            // NOLINT(google-build-using-namespace)
+using namespace pupsnes::debugger;  // NOLINT(google-build-using-namespace)
 
 TEST_CASE("BusEventLog stores and snapshots pushes", "[unit][bus_event]") {
   BusEventLog log(4);
@@ -42,8 +42,7 @@ TEST_CASE("BusEventLog Clear drops all entries", "[unit][bus_event]") {
   REQUIRE(log.Size() == 0);
 }
 
-TEST_CASE("SystemBus fast-path reads and writes emit bus events when a sink is attached",
-          "[unit][bus_event]") {
+TEST_CASE("SystemBus fast-path reads and writes emit bus events when a sink is attached", "[unit][bus_event]") {
   SNES snes;
   BusEventLog log(32);
   snes.GetSystemBus().SetEventSink(&log);

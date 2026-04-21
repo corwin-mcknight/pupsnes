@@ -270,99 +270,68 @@ TickResult CPU::BusWriteSlow(SnesAddrT addr, uint8_t data, TimeMasterDeltaT cycl
 void CPU::ExecuteInternalOp(MicroInternalOp op, [[maybe_unused]] uint8_t params) {
   namespace mp = opcode_defs_internal::micro_op_params;
   switch (op) {
-    case MicroInternalOp::kNone:
-      return;
+    case MicroInternalOp::kNone: return;
 
     case MicroInternalOp::kLoadReg: {
       const Reg reg = mp::UnpackLoadRegReg(params);
       const ByteSel sel = mp::UnpackLoadRegByteSel(params);
       const bool nz = mp::UnpackLoadRegNz(params);
       const uint8_t fetch = fetch_data_;
-      switch (reg) {
-        case Reg::kA:
-        case Reg::kX:
-        case Reg::kY: {
-          uint16_t& r = RegRef(regs_, reg);
-          if (sel == ByteSel::kLow) {
-            r = static_cast<uint16_t>((r & 0xFF00U) | fetch);
-            if (nz) {
-              regs_.P.Z = (static_cast<uint8_t>(r) == 0U);
-              regs_.P.N = (r & 0x0080U) != 0U;
-            }
-          } else {  // kHigh — always updates NZ for A/X/Y.
-            const uint16_t high = static_cast<uint16_t>(static_cast<uint16_t>(fetch) << 8U);
-            r = static_cast<uint16_t>((r & 0x00FFU) | high);
-            regs_.P.Z = (r == 0U);
-            regs_.P.N = (r & 0x8000U) != 0U;
-          }
-          return;
-        }
-        case Reg::kDp:
-          // DP low never updates NZ; DP high always does. nz param is ignored.
-          if (sel == ByteSel::kLow) {
-            regs_.DP = static_cast<uint16_t>((regs_.DP & 0xFF00U) | fetch);
-          } else {
-            const uint16_t high = static_cast<uint16_t>(static_cast<uint16_t>(fetch) << 8U);
-            regs_.DP = static_cast<uint16_t>((regs_.DP & 0x00FFU) | high);
-            regs_.P.Z = (regs_.DP == 0U);
-            regs_.P.N = (regs_.DP & 0x8000U) != 0U;
-          }
-          return;
-        case Reg::kDbr:
-          regs_.DBR = fetch;
-          regs_.P.Z = (regs_.DBR == 0U);
-          regs_.P.N = (regs_.DBR & 0x80U) != 0U;
-          return;
-        case Reg::kPcl:
-          regs_.PC = static_cast<uint16_t>((regs_.PC & 0xFF00U) | fetch);
-          return;
-        case Reg::kPch: {
-          const uint16_t high = static_cast<uint16_t>(static_cast<uint16_t>(fetch) << 8U);
-          regs_.PC = static_cast<uint16_t>((regs_.PC & 0x00FFU) | high);
-          return;
-        }
-        case Reg::kPbr:
-          regs_.PBR = fetch;
-          return;
-        case Reg::kP:
-          // P.FromByte handles emulation-mode forcing of M/X back to 1. nz is ignored.
-          regs_.P.FromByte(fetch, regs_.P.E);
-          return;
-        default:
-          break;
+
+      if (reg == Reg::kPbr) {
+        regs_.PBR = fetch;
+        return;
       }
-      __builtin_unreachable();
+      if (reg == Reg::kP) {
+        regs_.P.FromByte(fetch, regs_.P.E);
+        return;
+      }
+      if (reg == Reg::kDbr) {
+        regs_.DBR = fetch;
+        regs_.P.Z = (fetch == 0U);
+        regs_.P.N = (fetch & 0x80U) != 0U;
+        return;
+      }
+
+      const bool is_pc = (reg == Reg::kPcl || reg == Reg::kPch);
+      uint16_t& r = is_pc ? regs_.PC : RegRef(regs_, reg);
+      const bool high = (sel == ByteSel::kHigh) || reg == Reg::kPch;
+      const unsigned shift = high ? 8U : 0U;
+      const uint32_t keep = high ? 0x00FFU : 0xFF00U;
+      r = static_cast<uint16_t>((r & keep) | (uint32_t{fetch} << shift));
+      // NZ: PC never updates. On high, A/X/Y/DP always update (16-bit). On low, DP
+      // never updates; A/X/Y update only when nz is set (8-bit).
+      const bool skip_nz = is_pc || (!high && (reg == Reg::kDp || !nz));
+      if (!skip_nz) SetNzFromWidth(regs_, r, high);
+      return;
     }
 
     case MicroInternalOp::kSetBranchTakenCond: {
-      bool taken = false;
-      switch (mp::UnpackBranchCond(params)) {
-        case BranchCond::kAlways: taken = true; break;
-        case BranchCond::kZ:      taken = regs_.P.Z; break;
-        case BranchCond::kNotZ:   taken = !regs_.P.Z; break;
-        case BranchCond::kC:      taken = regs_.P.C; break;
-        case BranchCond::kNotC:   taken = !regs_.P.C; break;
-        case BranchCond::kN:      taken = regs_.P.N; break;
-        case BranchCond::kNotN:   taken = !regs_.P.N; break;
-        case BranchCond::kV:      taken = regs_.P.V; break;
-        case BranchCond::kNotV:   taken = !regs_.P.V; break;
-      }
-      timing_context_.branch_taken = taken;
+      const BranchCond cond = mp::UnpackBranchCond(params);
+      bool t = (cond == BranchCond::kAlways);
+      if (cond == BranchCond::kZ) t = regs_.P.Z;
+      if (cond == BranchCond::kNotZ) t = !regs_.P.Z;
+      if (cond == BranchCond::kC) t = regs_.P.C;
+      if (cond == BranchCond::kNotC) t = !regs_.P.C;
+      if (cond == BranchCond::kN) t = regs_.P.N;
+      if (cond == BranchCond::kNotN) t = !regs_.P.N;
+      if (cond == BranchCond::kV) t = regs_.P.V;
+      if (cond == BranchCond::kNotV) t = !regs_.P.V;
+      timing_context_.branch_taken = t;
       return;
     }
 
-    case MicroInternalOp::kBranchRelative:
-      if (mp::UnpackBranchRelativeWide(params)) {
-        // BRL: 16-bit displacement stashed in addr_[15:0].
-        const int16_t displacement = static_cast<int16_t>(static_cast<uint16_t>(addr_ & 0xFFFFU));
-        regs_.PC = static_cast<uint16_t>(regs_.PC + displacement);
-      } else {
-        const int8_t displacement = static_cast<int8_t>(fetch_data_);
-        const uint16_t old_pc = regs_.PC;
-        regs_.PC = static_cast<uint16_t>(regs_.PC + displacement);
-        timing_context_.branch_page_crossed = ((old_pc ^ regs_.PC) & 0xFF00U) != 0U;
-      }
+    case MicroInternalOp::kBranchRelative: {
+      // BRL uses a 16-bit signed displacement stashed in addr_[15:0]; the 8-bit
+      // path also updates branch_page_crossed.
+      const bool wide = mp::UnpackBranchRelativeWide(params);
+      const int32_t displacement =
+          wide ? static_cast<int16_t>(static_cast<uint16_t>(addr_ & 0xFFFFU)) : static_cast<int8_t>(fetch_data_);
+      const uint16_t old_pc = regs_.PC;
+      regs_.PC = static_cast<uint16_t>(static_cast<int32_t>(old_pc) + displacement);
+      if (!wide) timing_context_.branch_page_crossed = ((old_pc ^ regs_.PC) & 0xFF00U) != 0U;
       return;
+    }
 
     case MicroInternalOp::kSetAddrByteFromFetch: {
       const ByteSel sel = mp::UnpackSetAddrByteSel(params);
@@ -383,13 +352,9 @@ void CPU::ExecuteInternalOp(MicroInternalOp op, [[maybe_unused]] uint8_t params)
     }
 
     case MicroInternalOp::kModifySp: {
-      const bool inc = mp::UnpackModifySpIncrement(params);
-      if (regs_.P.E) {
-        const uint8_t sp_lo = static_cast<uint8_t>(static_cast<uint8_t>(regs_.SP) + (inc ? 1U : 0xFFU));
-        regs_.SP = static_cast<uint16_t>(0x0100U | sp_lo);
-      } else {
-        regs_.SP = static_cast<uint16_t>(regs_.SP + (inc ? 1U : 0xFFFFU));
-      }
+      const uint16_t delta = mp::UnpackModifySpIncrement(params) ? 0x0001U : 0xFFFFU;
+      regs_.SP = regs_.P.E ? static_cast<uint16_t>(0x0100U | static_cast<uint8_t>(regs_.SP + delta))
+                           : static_cast<uint16_t>(regs_.SP + delta);
       return;
     }
 
@@ -399,49 +364,38 @@ void CPU::ExecuteInternalOp(MicroInternalOp op, [[maybe_unused]] uint8_t params)
 
     case MicroInternalOp::kIncDecReg: {
       const Reg reg = mp::UnpackIncDecReg(params);
-      const bool dec = mp::UnpackIncDecDecrement(params);
+      const uint16_t delta = mp::UnpackIncDecDecrement(params) ? 0xFFFFU : 0x0001U;
       const bool wide = (reg == Reg::kA) ? IsAccumulator16Bit(regs_) : IsIndex16Bit(regs_);
       uint16_t& r = RegRef(regs_, reg);
-      if (wide) {
-        r = static_cast<uint16_t>(r + (dec ? 0xFFFFU : 0x0001U));
-        regs_.P.Z = (r == 0U);
-        regs_.P.N = (r & 0x8000U) != 0U;
-      } else {
-        const uint8_t lo = static_cast<uint8_t>(static_cast<uint8_t>(r) + (dec ? 0xFFU : 0x01U));
-        r = static_cast<uint16_t>((r & 0xFF00U) | lo);
-        regs_.P.Z = (lo == 0U);
-        regs_.P.N = (lo & 0x80U) != 0U;
-      }
+      r = wide ? static_cast<uint16_t>(r + delta)
+               : static_cast<uint16_t>((r & 0xFF00U) | static_cast<uint8_t>(r + delta));
+      SetNzFromWidth(regs_, r, wide);
       return;
     }
 
     case MicroInternalOp::kSetFlag: {
-      const bool value = mp::UnpackSetFlagValue(params);
-      switch (mp::UnpackSetFlagFlag(params)) {
-        case Flag::kC: regs_.P.C = value; return;
-        case Flag::kD: regs_.P.D = value; return;
-        case Flag::kI: regs_.P.I = value; return;
-        case Flag::kV: regs_.P.V = value; return;
-        default: break;
-      }
-      __builtin_unreachable();
+      const bool v = mp::UnpackSetFlagValue(params);
+      const Flag f = mp::UnpackSetFlagFlag(params);
+      if (f == Flag::kC) regs_.P.C = v;
+      if (f == Flag::kD) regs_.P.D = v;
+      if (f == Flag::kI) regs_.P.I = v;
+      if (f == Flag::kV) regs_.P.V = v;
+      return;
     }
 
     case MicroInternalOp::kMaskStatus: {
       const uint8_t p = regs_.P.ToByte();
-      const uint8_t next = mp::UnpackMaskStatusOr(params)
-                               ? static_cast<uint8_t>(p | fetch_data_)
-                               : static_cast<uint8_t>(p & ~fetch_data_);
+      const uint8_t next = mp::UnpackMaskStatusOr(params) ? static_cast<uint8_t>(p | fetch_data_)
+                                                          : static_cast<uint8_t>(p & ~fetch_data_);
       regs_.P.FromByte(next, regs_.P.E);
       ApplyEmulationForcing(regs_);
       return;
     }
 
     case MicroInternalOp::kExchangeCarryEmulation: {
-      const bool new_e = regs_.P.C;
-      const bool new_c = regs_.P.E;
-      regs_.P.E = new_e;
-      regs_.P.C = new_c;
+      const bool tmp = regs_.P.C;
+      regs_.P.C = regs_.P.E;
+      regs_.P.E = tmp;
       ApplyEmulationForcing(regs_);
       return;
     }
@@ -464,8 +418,7 @@ void CPU::ExecuteInternalOp(MicroInternalOp op, [[maybe_unused]] uint8_t params)
       //   dst∈{X,Y}                              → index-sized (TAX/TAY/TXY/TYX/TSX).
       const bool wide =
           (dst == Reg::kDp) ||
-          (dst == Reg::kA ? (src == Reg::kDp || src == Reg::kSp || IsAccumulator16Bit(regs_))
-                          : IsIndex16Bit(regs_));
+          (dst == Reg::kA ? (src == Reg::kDp || src == Reg::kSp || IsAccumulator16Bit(regs_)) : IsIndex16Bit(regs_));
       uint16_t& d = RegRef(regs_, dst);
       const uint16_t s = RegRef(regs_, src);
       d = wide ? s : static_cast<uint16_t>((d & 0xFF00U) | (s & 0x00FFU));
@@ -499,17 +452,13 @@ void CPU::ExecuteInternalOp(MicroInternalOp op, [[maybe_unused]] uint8_t params)
       // addr_[7:0] (low, stashed by a prior kSetAddrByteFromFetch(kLow)).
       const bool wide = (op == MicroInternalOp::kAlu16Imm);
       const uint16_t fetch_high = static_cast<uint16_t>(static_cast<uint16_t>(fetch_data_) << 8U);
-      const uint16_t operand = wide
-          ? static_cast<uint16_t>((addr_ & 0xFFU) | fetch_high)
-          : static_cast<uint16_t>(fetch_data_);
+      const uint16_t operand =
+          wide ? static_cast<uint16_t>((addr_ & 0xFFU) | fetch_high) : static_cast<uint16_t>(fetch_data_);
       const uint16_t mask = wide ? 0xFFFFU : 0x00FFU;
       const uint16_t sign = wide ? 0x8000U : 0x0080U;
       const uint32_t carry = wide ? 0x10000U : 0x0100U;
       const AluOp alu = mp::UnpackAluOp(params);
-
-      auto store_a = [&](uint16_t result) {
-        regs_.A = wide ? result : static_cast<uint16_t>((regs_.A & 0xFF00U) | (result & 0xFFU));
-      };
+      const uint16_t a_keep = wide ? 0x0000U : 0xFF00U;
 
       switch (alu) {
         case AluOp::kAdc:
@@ -523,7 +472,7 @@ void CPU::ExecuteInternalOp(MicroInternalOp op, [[maybe_unused]] uint8_t params)
           regs_.P.C = (sum & carry) != 0U;
           regs_.P.Z = (result == 0U);
           regs_.P.N = (result & sign) != 0U;
-          store_a(result);
+          regs_.A = static_cast<uint16_t>((regs_.A & a_keep) | (result & mask));
           return;
         }
         case AluOp::kAnd:
@@ -535,16 +484,15 @@ void CPU::ExecuteInternalOp(MicroInternalOp op, [[maybe_unused]] uint8_t params)
                                                          : static_cast<uint16_t>(a_val ^ operand);
           regs_.P.Z = (result == 0U);
           regs_.P.N = (result & sign) != 0U;
-          store_a(result);
+          regs_.A = static_cast<uint16_t>((regs_.A & a_keep) | (result & mask));
           return;
         }
         case AluOp::kCmp:
         case AluOp::kCpx:
         case AluOp::kCpy: {
-          const uint16_t reg_val =
-              (alu == AluOp::kCmp)   ? static_cast<uint16_t>(regs_.A & mask)
-              : (alu == AluOp::kCpx) ? static_cast<uint16_t>(regs_.X & mask)
-                                     : static_cast<uint16_t>(regs_.Y & mask);
+          const uint16_t reg_val = (alu == AluOp::kCmp)   ? static_cast<uint16_t>(regs_.A & mask)
+                                   : (alu == AluOp::kCpx) ? static_cast<uint16_t>(regs_.X & mask)
+                                                          : static_cast<uint16_t>(regs_.Y & mask);
           const uint32_t diff = static_cast<uint32_t>(reg_val) - static_cast<uint32_t>(operand);
           regs_.P.C = reg_val >= operand;
           regs_.P.Z = ((diff & mask) == 0U);
@@ -612,28 +560,23 @@ CPU::StepResult CPU::FetchOpcode(TimeMasterDeltaT cycle_time) {
   return StepResult{true, TickResult{0, TickStopReason::kContinue}};
 }
 
-TickResult CPU::PerformBusAction(MicroBusAction action, [[maybe_unused]] uint8_t params,
-                                 TimeMasterDeltaT cycle_time) {
+TickResult CPU::PerformBusAction(MicroBusAction action, [[maybe_unused]] uint8_t params, TimeMasterDeltaT cycle_time) {
   namespace mp = opcode_defs_internal::micro_op_params;
   switch (action) {
-    case MicroBusAction::kNone:
-      return TickResult{0, TickStopReason::kContinue};
+    case MicroBusAction::kNone: return TickResult{0, TickStopReason::kContinue};
     case MicroBusAction::kFetchPc: {
       TickResult blocked = BusRead(PcAddr(regs_), cycle_time);
       if (blocked.reason != TickStopReason::kContinue) return blocked;
       regs_.PC = static_cast<uint16_t>(regs_.PC + 1U);
       return TickResult{0, TickStopReason::kContinue};
     }
-    case MicroBusAction::kReadAddr:
-      return BusRead(addr_, cycle_time);
+    case MicroBusAction::kReadAddr: return BusRead(addr_, cycle_time);
     case MicroBusAction::kWriteRegByte: {
       const WriteSrc src = mp::UnpackWriteAddrSrc(params);
       const ByteSel sel = mp::UnpackWriteAddrByteSel(params);
       uint8_t byte = 0;
       switch (src) {
-        case WriteSrc::kFetchData:
-          byte = fetch_data_;
-          break;
+        case WriteSrc::kFetchData: byte = fetch_data_; break;
         case WriteSrc::kA:
           byte = (sel == ByteSel::kLow) ? static_cast<uint8_t>(regs_.A) : static_cast<uint8_t>(regs_.A >> 8U);
           break;
@@ -649,26 +592,25 @@ TickResult CPU::PerformBusAction(MicroBusAction action, [[maybe_unused]] uint8_t
     case MicroBusAction::kPushStack: {
       uint8_t byte = 0;
       switch (mp::UnpackPushStack(params)) {
-        case PushSrc::kA8:       byte = static_cast<uint8_t>(regs_.A); break;
-        case PushSrc::kAHigh:    byte = static_cast<uint8_t>(regs_.A >> 8U); break;
-        case PushSrc::kX8:       byte = static_cast<uint8_t>(regs_.X); break;
-        case PushSrc::kXHigh:    byte = static_cast<uint8_t>(regs_.X >> 8U); break;
-        case PushSrc::kY8:       byte = static_cast<uint8_t>(regs_.Y); break;
-        case PushSrc::kYHigh:    byte = static_cast<uint8_t>(regs_.Y >> 8U); break;
-        case PushSrc::kPcl:      byte = static_cast<uint8_t>(regs_.PC); break;
-        case PushSrc::kPch:      byte = static_cast<uint8_t>(regs_.PC >> 8U); break;
-        case PushSrc::kPbr:      byte = regs_.PBR; break;
-        case PushSrc::kDbr:      byte = regs_.DBR; break;
-        case PushSrc::kP:        byte = regs_.P.ToByte(); break;
-        case PushSrc::kDpLow:    byte = static_cast<uint8_t>(regs_.DP); break;
-        case PushSrc::kDpHigh:   byte = static_cast<uint8_t>(regs_.DP >> 8U); break;
-        case PushSrc::kAddrLow:  byte = static_cast<uint8_t>(addr_ & 0xFFU); break;
+        case PushSrc::kA8: byte = static_cast<uint8_t>(regs_.A); break;
+        case PushSrc::kAHigh: byte = static_cast<uint8_t>(regs_.A >> 8U); break;
+        case PushSrc::kX8: byte = static_cast<uint8_t>(regs_.X); break;
+        case PushSrc::kXHigh: byte = static_cast<uint8_t>(regs_.X >> 8U); break;
+        case PushSrc::kY8: byte = static_cast<uint8_t>(regs_.Y); break;
+        case PushSrc::kYHigh: byte = static_cast<uint8_t>(regs_.Y >> 8U); break;
+        case PushSrc::kPcl: byte = static_cast<uint8_t>(regs_.PC); break;
+        case PushSrc::kPch: byte = static_cast<uint8_t>(regs_.PC >> 8U); break;
+        case PushSrc::kPbr: byte = regs_.PBR; break;
+        case PushSrc::kDbr: byte = regs_.DBR; break;
+        case PushSrc::kP: byte = regs_.P.ToByte(); break;
+        case PushSrc::kDpLow: byte = static_cast<uint8_t>(regs_.DP); break;
+        case PushSrc::kDpHigh: byte = static_cast<uint8_t>(regs_.DP >> 8U); break;
+        case PushSrc::kAddrLow: byte = static_cast<uint8_t>(addr_ & 0xFFU); break;
         case PushSrc::kAddrHigh: byte = static_cast<uint8_t>((addr_ >> 8U) & 0xFFU); break;
       }
       return BusWrite(StackAddr(regs_), byte, cycle_time);
     }
-    case MicroBusAction::kPullStack:
-      return BusRead(StackAddr(regs_), cycle_time);
+    case MicroBusAction::kPullStack: return BusRead(StackAddr(regs_), cycle_time);
     case MicroBusAction::kPreIncPullStack:
       // Stack pulls: SP must point at the top of the stack before reading.
       if (regs_.P.E) {
@@ -737,8 +679,7 @@ TickResult CPU::Tick(TimeMasterDeltaT budget) {
     // scheduled refresh start, arm the window and arrange the next one.
     if (refresh_cycles_remaining_ > 0) {
       const TimeMasterDeltaT available = budget - cycle_time;
-      const TimeMasterDeltaT take =
-          (refresh_cycles_remaining_ < available) ? refresh_cycles_remaining_ : available;
+      const TimeMasterDeltaT take = (refresh_cycles_remaining_ < available) ? refresh_cycles_remaining_ : available;
       cycle_time += take;
       refresh_cycles_remaining_ -= take;
       retired_refresh_cycles_ += take;

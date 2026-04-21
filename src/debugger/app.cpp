@@ -26,7 +26,10 @@ namespace pupsnes::debugger {
 DebuggerApp* DebuggerApp::current_app_ = nullptr;
 
 DebuggerApp::DebuggerApp()
-    : trace_log_(512), bus_event_log_(2048), error_log_(2048), run_control_(snes_, breakpoints_, trace_log_, error_log_) {
+    : trace_log_(512),
+      bus_event_log_(2048),
+      error_log_(2048),
+      run_control_(snes_, breakpoints_, trace_log_, error_log_) {
   snes_.GetSystemBus().SetEventSink(&bus_event_log_);
 }
 

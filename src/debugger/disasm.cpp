@@ -17,16 +17,14 @@ std::string FormatOperand(const OpcodeMetadataView& metadata, SnesAddrT pc, uint
                           const std::array<uint8_t, 4>& bytes) {
   switch (metadata.addressing_mode) {
     case OpcodeAddressingMode::kImplied:
-    case OpcodeAddressingMode::kUnknown:
-      return "";
+    case OpcodeAddressingMode::kUnknown: return "";
     case OpcodeAddressingMode::kImmediateAccumulator:
     case OpcodeAddressingMode::kImmediateIndex:
       if (length >= 3) {
         return std::format("#${:04X}", static_cast<unsigned>(bytes[1] | (static_cast<uint16_t>(bytes[2]) << 8U)));
       }
       return std::format("#${:02X}", static_cast<unsigned>(bytes[1]));
-    case OpcodeAddressingMode::kImmediateByte:
-      return std::format("#${:02X}", static_cast<unsigned>(bytes[1]));
+    case OpcodeAddressingMode::kImmediateByte: return std::format("#${:02X}", static_cast<unsigned>(bytes[1]));
     case OpcodeAddressingMode::kAbsolute:
       return std::format("${:04X}", static_cast<unsigned>(bytes[1] | (static_cast<uint16_t>(bytes[2]) << 8U)));
     case OpcodeAddressingMode::kAbsoluteLong:
@@ -39,8 +37,8 @@ std::string FormatOperand(const OpcodeMetadataView& metadata, SnesAddrT pc, uint
       return std::format("${:04X}", static_cast<unsigned>(target));
     }
     case OpcodeAddressingMode::kRelative16: {
-      const int16_t displacement = static_cast<int16_t>(
-          static_cast<uint16_t>(bytes[1] | (static_cast<uint16_t>(bytes[2]) << 8U)));
+      const int16_t displacement =
+          static_cast<int16_t>(static_cast<uint16_t>(bytes[1] | (static_cast<uint16_t>(bytes[2]) << 8U)));
       const uint16_t next_pc = static_cast<uint16_t>((pc + 3U) & 0xFFFFU);
       const uint16_t target = static_cast<uint16_t>(next_pc + displacement);
       return std::format("${:04X}", static_cast<unsigned>(target));

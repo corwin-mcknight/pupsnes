@@ -10,30 +10,21 @@ namespace {
 
 const char* SeverityLabel(ErrorSeverity severity) {
   switch (severity) {
-    case ErrorSeverity::kInfo:
-      return "Info";
-    case ErrorSeverity::kWarning:
-      return "Warn";
-    case ErrorSeverity::kError:
-      return "Error";
-    case ErrorSeverity::kFatal:
-      return "Fatal";
+    case ErrorSeverity::kInfo: return "Info";
+    case ErrorSeverity::kWarning: return "Warn";
+    case ErrorSeverity::kError: return "Error";
+    case ErrorSeverity::kFatal: return "Fatal";
   }
   return "?";
 }
 
 const char* SourceLabel(ErrorSource source) {
   switch (source) {
-    case ErrorSource::kCpu:
-      return "CPU";
-    case ErrorSource::kBus:
-      return "Bus";
-    case ErrorSource::kScheduler:
-      return "Scheduler";
-    case ErrorSource::kRomLoader:
-      return "ROM";
-    case ErrorSource::kHost:
-      return "Host";
+    case ErrorSource::kCpu: return "CPU";
+    case ErrorSource::kBus: return "Bus";
+    case ErrorSource::kScheduler: return "Scheduler";
+    case ErrorSource::kRomLoader: return "ROM";
+    case ErrorSource::kHost: return "Host";
   }
   return "?";
 }

@@ -198,8 +198,7 @@ void Scheduler::HandleRunResult(Device* device, const TickResult& result) {
       ResetZeroProgressGuard(state);
       return;
     case TickStopReason::kBudgetExhausted:
-    case TickStopReason::kReachedLocalBoundary:
-      break;
+    case TickStopReason::kReachedLocalBoundary: break;
     case TickStopReason::kContinue:
       FailScheduler("kContinue is an internal sentinel and must not escape Tick()");
       return;
@@ -381,9 +380,7 @@ void Scheduler::CatchUpDevice(DeviceIdT device_id, TimeMasterT target_time) {
         }
         AlignDeviceTime(device, result.next_wake_time);
         break;
-      case TickStopReason::kBlockedOnToken:
-        FailScheduler("Same-clock catch-up cannot block on a token");
-        break;
+      case TickStopReason::kBlockedOnToken: FailScheduler("Same-clock catch-up cannot block on a token"); break;
       case TickStopReason::kNoWork:
         if (!reached_target) {
           FailScheduler(
@@ -394,9 +391,7 @@ void Scheduler::CatchUpDevice(DeviceIdT device_id, TimeMasterT target_time) {
         break;
       case TickStopReason::kFaulted:
       case TickStopReason::kDebuggerBreakpoint:
-      case TickStopReason::kDebuggerStepComplete:
-        HandleRunResult(device, result);
-        return;
+      case TickStopReason::kDebuggerStepComplete: HandleRunResult(device, result); return;
       case TickStopReason::kContinue:
         FailScheduler("kContinue is an internal sentinel and must not escape Tick()");
         return;

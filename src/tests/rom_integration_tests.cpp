@@ -337,16 +337,11 @@ std::vector<RomScenario> LoadScenarioSpecs() {
 
 uint32_t ReadObservationValue(const GoalSpec& goal, const CPU& cpu, const WRAM& wram) {
   switch (goal.kind) {
-    case GoalObservationKind::kCpuA8:
-      return static_cast<uint8_t>(cpu.GetRegs().A);
-    case GoalObservationKind::kCpuPc:
-      return cpu.GetRegs().PC;
-    case GoalObservationKind::kWramByte:
-      return wram.Peek(goal.address);
-    case GoalObservationKind::kCpuSp:
-      return cpu.GetRegs().SP;
-    case GoalObservationKind::kCpuDbr:
-      return cpu.GetRegs().DBR;
+    case GoalObservationKind::kCpuA8: return static_cast<uint8_t>(cpu.GetRegs().A);
+    case GoalObservationKind::kCpuPc: return cpu.GetRegs().PC;
+    case GoalObservationKind::kWramByte: return wram.Peek(goal.address);
+    case GoalObservationKind::kCpuSp: return cpu.GetRegs().SP;
+    case GoalObservationKind::kCpuDbr: return cpu.GetRegs().DBR;
   }
 
   return 0;
@@ -354,19 +349,15 @@ uint32_t ReadObservationValue(const GoalSpec& goal, const CPU& cpu, const WRAM& 
 
 std::string ObservationLabel(const GoalSpec& goal) {
   switch (goal.kind) {
-    case GoalObservationKind::kCpuA8:
-      return "cpu.a.low";
-    case GoalObservationKind::kCpuPc:
-      return "cpu.pc";
+    case GoalObservationKind::kCpuA8: return "cpu.a.low";
+    case GoalObservationKind::kCpuPc: return "cpu.pc";
     case GoalObservationKind::kWramByte: {
       std::ostringstream out;
       out << "wram[$" << std::hex << std::uppercase << goal.address << "]";
       return out.str();
     }
-    case GoalObservationKind::kCpuSp:
-      return "cpu.sp";
-    case GoalObservationKind::kCpuDbr:
-      return "cpu.dbr";
+    case GoalObservationKind::kCpuSp: return "cpu.sp";
+    case GoalObservationKind::kCpuDbr: return "cpu.dbr";
   }
 
   return "unknown";
@@ -380,12 +371,9 @@ std::string FormatHex(uint32_t value) {
 
 std::string StatusLabel(RomStatus status) {
   switch (status) {
-    case RomStatus::kPass:
-      return "pass";
-    case RomStatus::kFail:
-      return "fail";
-    case RomStatus::kHarnessError:
-      return "harness_error";
+    case RomStatus::kPass: return "pass";
+    case RomStatus::kFail: return "fail";
+    case RomStatus::kHarnessError: return "harness_error";
   }
 
   return "unknown";

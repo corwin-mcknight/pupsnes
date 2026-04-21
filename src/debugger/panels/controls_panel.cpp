@@ -11,14 +11,10 @@ namespace {
 
 const char* RunStateLabel(RunState state) {
   switch (state) {
-    case RunState::kPaused:
-      return "Paused";
-    case RunState::kStepOne:
-      return "Step One";
-    case RunState::kStepN:
-      return "Step N";
-    case RunState::kRunUntilBreak:
-      return "Running";
+    case RunState::kPaused: return "Paused";
+    case RunState::kStepOne: return "Step One";
+    case RunState::kStepN: return "Step N";
+    case RunState::kRunUntilBreak: return "Running";
   }
   return "Unknown";
 }

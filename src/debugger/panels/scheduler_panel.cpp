@@ -13,45 +13,34 @@ const char* DeviceName(DeviceIdT id) {
   // Registration order in SNES constructor: CPU, Cartridge, WRAM.
   // Scheduler and SystemBus are not Devices.
   switch (id) {
-    case 0:
-      return "CPU";
-    case 1:
-      return "Cartridge";
-    case 2:
-      return "WRAM";
-    default:
-      return nullptr;
+    case 0: return "CPU";
+    case 1: return "Cartridge";
+    case 2: return "WRAM";
+    default: return nullptr;
   }
 }
 
 const char* PhaseName(SchedulerPhase phase) {
   switch (phase) {
-    case SchedulerPhase::kCommitComplete:
-      return "CommitComplete";
-    case SchedulerPhase::kWakeSample:
-      return "WakeSample";
-    case SchedulerPhase::kRun:
-      return "Run";
+    case SchedulerPhase::kCommitComplete: return "CommitComplete";
+    case SchedulerPhase::kWakeSample: return "WakeSample";
+    case SchedulerPhase::kRun: return "Run";
   }
   return "?";
 }
 
 const char* TypeName(EventType type) {
   switch (type) {
-    case EventType::kDeviceRun:
-      return "DeviceRun";
-    case EventType::kDeviceBoundary:
-      return "Boundary";
+    case EventType::kDeviceRun: return "DeviceRun";
+    case EventType::kDeviceBoundary: return "Boundary";
   }
   return "?";
 }
 
 ImU32 TypeColor(EventType type) {
   switch (type) {
-    case EventType::kDeviceRun:
-      return IM_COL32(120, 180, 255, 255);
-    case EventType::kDeviceBoundary:
-      return IM_COL32(255, 200, 120, 255);
+    case EventType::kDeviceRun: return IM_COL32(120, 180, 255, 255);
+    case EventType::kDeviceBoundary: return IM_COL32(255, 200, 120, 255);
   }
   return IM_COL32(200, 200, 200, 255);
 }
@@ -85,9 +74,8 @@ void RenderSchedulerPanel(DebuggerApp& app) {
     return;
   }
 
-  constexpr ImGuiTableFlags kFlags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
-                                     ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingFixedFit |
-                                     ImGuiTableFlags_Resizable;
+  constexpr ImGuiTableFlags kFlags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY |
+                                     ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_Resizable;
   if (ImGui::BeginTable("scheduler_table", 5, kFlags)) {
     ImGui::TableSetupScrollFreeze(0, 1);
     ImGui::TableSetupColumn("Time");
