@@ -596,6 +596,16 @@ void CPU::ExecuteInternalOp(MicroInternalOp op, [[maybe_unused]] uint8_t params)
           regs_.P.Z = (result == 0U);
           return;
         }
+        case AluOp::kBitMem: {
+          // Memory BIT: N = operand bit 7/15, V = operand bit 6/14, Z = (A & operand == 0).
+          // Bruce Clark §6.1.2.2. Distinct from immediate BIT (kBit) which only sets Z.
+          // A register is NOT modified.
+          const uint16_t v_bit = wide ? 0x4000U : 0x0040U;
+          regs_.P.N = (operand & sign) != 0U;
+          regs_.P.V = (operand & v_bit) != 0U;
+          regs_.P.Z = ((regs_.A & mask & operand) == 0U);
+          return;
+        }
       }
       __builtin_unreachable();
     }

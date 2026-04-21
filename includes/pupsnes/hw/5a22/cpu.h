@@ -132,7 +132,12 @@ enum class Width : uint8_t { kByMFlag, kByXFlag, kForce8, kForce16 };
 enum class ByteSel : uint8_t { kLow, kHigh, kBank };
 enum class Flag : uint8_t { kC, kD, kI, kV, kZ, kN, kM, kX };
 enum class BranchCond : uint8_t { kAlways, kZ, kNotZ, kC, kNotC, kN, kNotN, kV, kNotV };
-enum class AluOp : uint8_t { kAdc, kSbc, kAnd, kOra, kEor, kCmp, kCpx, kCpy, kBit };
+// kBitMem: memory BIT — sets N from bit 7/15 and V from bit 6/14 of the memory
+// operand, Z from (A & operand). Distinct from kBit (immediate BIT, Z-only).
+// Ripple audit (2026-04-21): PackAluOp packs into bits [3:0] (4 bits, capacity 16);
+// kBitMem = 9 fits. The only exhaustive AluOp switch is in cpu.cpp's
+// kAlu8Imm/kAlu16Imm dispatch (updated to handle kBitMem).
+enum class AluOp : uint8_t { kAdc, kSbc, kAnd, kOra, kEor, kCmp, kCpx, kCpy, kBit, kBitMem };
 enum class ShiftOp : uint8_t { kAsl, kLsr, kRol, kRor };
 enum class WriteSrc : uint8_t { kFetchData, kA, kX, kY, kZero };
 enum class PushSrc : uint8_t {

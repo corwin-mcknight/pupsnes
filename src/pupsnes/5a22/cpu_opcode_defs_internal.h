@@ -112,8 +112,8 @@ inline constexpr ByteSel UnpackWriteAddrByteSel(uint8_t params) {
   return static_cast<ByteSel>((params >> 3U) & 0x01U);
 }
 
-// ALU immediate (kAlu8Imm / kAlu16Imm): bits [3:0] = AluOp (9 variants — Adc,
-// Sbc, And, Ora, Eor, Cmp, Cpx, Cpy, Bit). Bit 4 (kAlu16Imm only) = low byte
+// ALU immediate (kAlu8Imm / kAlu16Imm): bits [3:0] = AluOp (10 variants — Adc,
+// Sbc, And, Ora, Eor, Cmp, Cpx, Cpy, Bit, BitMem). Bit 4 (kAlu16Imm only) = low byte
 // source: 0 = addr_[7:0] (immediate path, stashed by a prior
 // kSetAddrByteFromFetch(kLow)); 1 = addr_scratch_[7:0] (memory path, stashed
 // by a prior kStashIndirectLow on the low-byte read).  Dispatch lives in the
