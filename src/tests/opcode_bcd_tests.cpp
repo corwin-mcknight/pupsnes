@@ -27,9 +27,7 @@ class TestROM : public Device {
 
   explicit TestROM(SNES* snes) : Device(snes) {}
 
-  TickResult Tick(TimeMasterDeltaT budget) override {
-    return {budget, TickStopReason::kBudgetExhausted};
-  }
+  TickResult Tick(TimeMasterDeltaT budget) override { return {budget, TickStopReason::kBudgetExhausted}; }
   void OnEvent(const SchedulerEvent&) override {}
 
   uint8_t ReadRegister(uint32_t offset) override { return mem[offset % kSize]; }
@@ -70,8 +68,7 @@ struct TestFixture {
 // Bruce Clark's 65C816 BCD reference: docs/external/6502opcodes.md §6.1.1.1.
 // ---------------------------------------------------------------------------
 
-TEST_CASE("BCD SBC 16-bit locked: A=$0001 - #$2003 D=1 C=1 -> A=$7998",
-          "[unit][opcode][cpu][bcd]") {
+TEST_CASE("BCD SBC 16-bit locked: A=$0001 - #$2003 D=1 C=1 -> A=$7998", "[unit][opcode][cpu][bcd]") {
   // Locked fixture SC #4 (ROADMAP). m=0, D=1, C=1.
   // ~$2003 & $FFFF = $DFFC; BcdAdd16(0x0001, 0xDFFC, true) -> $7998.
   // bin_sum = 0x0001 + 0xDFFC + 1 = 0xDFFE (no carry out of 16 bits).
@@ -94,8 +91,7 @@ TEST_CASE("BCD SBC 16-bit locked: A=$0001 - #$2003 D=1 C=1 -> A=$7998",
   REQUIRE(f.cpu.GetRegs().P.C == false);
 }
 
-TEST_CASE("BCD ADC 8-bit: $09 + $01 = $10 (unit-nibble carry)",
-          "[unit][opcode][cpu][bcd]") {
+TEST_CASE("BCD ADC 8-bit: $09 + $01 = $10 (unit-nibble carry)", "[unit][opcode][cpu][bcd]") {
   TestFixture f;
   f.LoadAt(0, {0x69, 0x01});  // ADC #$01
   auto regs = f.cpu.GetRegs();
@@ -112,8 +108,7 @@ TEST_CASE("BCD ADC 8-bit: $09 + $01 = $10 (unit-nibble carry)",
   REQUIRE(f.cpu.GetRegs().P.C == false);
 }
 
-TEST_CASE("BCD ADC 8-bit: $50 + $50 = $00 C=1 V=1 N=0",
-          "[unit][opcode][cpu][bcd]") {
+TEST_CASE("BCD ADC 8-bit: $50 + $50 = $00 C=1 V=1 N=0", "[unit][opcode][cpu][bcd]") {
   // bin_sum = $A0; low nibble 0 <= 9 (no low fixup).
   // adj=$A0 > $99 -> +$60 = $100 -> result=$00, C=1.
   // V: ((~($50^$50)) & ($50^$A0)) & $80 = ($FF & $F0) & $80 = $80 -> V=true.
@@ -134,8 +129,7 @@ TEST_CASE("BCD ADC 8-bit: $50 + $50 = $00 C=1 V=1 N=0",
   REQUIRE(f.cpu.GetRegs().P.C == true);
 }
 
-TEST_CASE("BCD ADC 8-bit: $40 + $40 = $80 N=1 V=1",
-          "[unit][opcode][cpu][bcd]") {
+TEST_CASE("BCD ADC 8-bit: $40 + $40 = $80 N=1 V=1", "[unit][opcode][cpu][bcd]") {
   // bin_sum = $80; low nibble 0 (no fixup); adj=$80 <= $99 (no high fixup).
   // result = $80 -> N=true, Z=false, C=false.
   // V: ((~($40^$40)) & ($40^$80)) & $80 = ($FF & $C0) & $80 = $80 -> V=true.
@@ -155,8 +149,7 @@ TEST_CASE("BCD ADC 8-bit: $40 + $40 = $80 N=1 V=1",
   REQUIRE(f.cpu.GetRegs().P.C == false);
 }
 
-TEST_CASE("BCD ADC 8-bit: $99 + $01 = $00 C=1 (full rollover)",
-          "[unit][opcode][cpu][bcd]") {
+TEST_CASE("BCD ADC 8-bit: $99 + $01 = $00 C=1 (full rollover)", "[unit][opcode][cpu][bcd]") {
   TestFixture f;
   f.LoadAt(0, {0x69, 0x01});  // ADC #$01
   auto regs = f.cpu.GetRegs();
@@ -173,8 +166,7 @@ TEST_CASE("BCD ADC 8-bit: $99 + $01 = $00 C=1 (full rollover)",
   REQUIRE(f.cpu.GetRegs().P.C == true);
 }
 
-TEST_CASE("BCD ADC 16-bit: $0999 + $0001 = $1000 (nibble propagation)",
-          "[unit][opcode][cpu][bcd]") {
+TEST_CASE("BCD ADC 16-bit: $0999 + $0001 = $1000 (nibble propagation)", "[unit][opcode][cpu][bcd]") {
   TestFixture f;
   f.LoadAt(0, {0x69, 0x01, 0x00});  // ADC #$0001 (little-endian)
   auto regs = f.cpu.GetRegs();
@@ -193,8 +185,7 @@ TEST_CASE("BCD ADC 16-bit: $0999 + $0001 = $1000 (nibble propagation)",
   REQUIRE(f.cpu.GetRegs().P.C == false);
 }
 
-TEST_CASE("BCD SBC 8-bit with borrow: $50 - $01 C=0 = $48",
-          "[unit][opcode][cpu][bcd]") {
+TEST_CASE("BCD SBC 8-bit with borrow: $50 - $01 C=0 = $48", "[unit][opcode][cpu][bcd]") {
   // SBC uses ones-complement. C=0 means borrow-in.
   // bcd_add($50, ~$01 & $FF = $FE, false) -> ...
   TestFixture f;
@@ -213,8 +204,7 @@ TEST_CASE("BCD SBC 8-bit with borrow: $50 - $01 C=0 = $48",
   REQUIRE(f.cpu.GetRegs().P.C == true);  // C=1 = no borrow out
 }
 
-TEST_CASE("BCD ADC invalid digit $0A + $01 = $11",
-          "[unit][opcode][cpu][bcd]") {
+TEST_CASE("BCD ADC invalid digit $0A + $01 = $11", "[unit][opcode][cpu][bcd]") {
   // Per Bruce Clark §6.1.1.1 invalid-digit behavior: $0A + $01 bin_sum=$0B,
   // low nibble $B > 9 -> +6 = $11. adj=$11 <= $99 -> C=0.
   TestFixture f;
@@ -233,8 +223,7 @@ TEST_CASE("BCD ADC invalid digit $0A + $01 = $11",
   REQUIRE(f.cpu.GetRegs().P.C == false);
 }
 
-TEST_CASE("Binary ADC D=0 is unaffected by BCD changes (regression guard)",
-          "[unit][opcode][cpu][bcd]") {
+TEST_CASE("Binary ADC D=0 is unaffected by BCD changes (regression guard)", "[unit][opcode][cpu][bcd]") {
   // When D=0, $09 + $01 must produce $0A (binary), not $10 (BCD).
   TestFixture f;
   f.LoadAt(0, {0x69, 0x01});  // ADC #$01
@@ -252,8 +241,7 @@ TEST_CASE("Binary ADC D=0 is unaffected by BCD changes (regression guard)",
   REQUIRE(f.cpu.GetRegs().P.C == false);
 }
 
-TEST_CASE("BCD ADC 16-bit: $4000 + $4000 = $8000 V=1 N=1 (signed boundary)",
-          "[unit][opcode][cpu][bcd]") {
+TEST_CASE("BCD ADC 16-bit: $4000 + $4000 = $8000 V=1 N=1 (signed boundary)", "[unit][opcode][cpu][bcd]") {
   // HIGH-5 guard: V must come from the full 16-bit pre-adjustment binary sum,
   // NOT from the high-byte BcdAdd8's overflow field.
   // bin_sum = 0x8000; V = ((0x4000^0x8000) & (0x4000^0x8000) & 0x8000)
