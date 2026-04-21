@@ -56,6 +56,15 @@ enum class MicroInternalOp : uint8_t {
                             // uses signed 8-bit displacement from fetch_data_; when 1, uses
                             // signed 16-bit displacement from addr_[15:0]. The 8-bit path also
                             // updates timing_context_.branch_page_crossed.
+  kAddIndexToAddr,          // addr_ = (addr_ + index) & 0xFFFF (bank 0 preserved). Params[3:0]
+                            // selects Reg::kX or Reg::kY (see micro_op_params::PackAddIndex).
+                            // Index width follows P.X: full 16-bit when X=0, low 8 bits when
+                            // X=1. Used by direct-page-indexed addressing.
+  kSetAddrFromDp,           // addr_ = bank 0, (DP + fetch_data_) & 0xFFFF. Used by direct-page
+                            // addressing to turn the just-fetched DP offset into the effective
+                            // address. Always bank-0; never wraps the DP+offset inside a page.
+                            // The "DP low-byte nonzero" +1 cycle penalty is handled by the
+                            // instruction's timing rule (see kDirectPageLowNonzero alias).
   kSetAddrByteFromFetch,    // addr_[byte] = fetch_data_. Params bits [1:0] = ByteSel (kLow,
                             // kHigh, kBank), bit [2] = from_dbr. from_dbr is only meaningful
                             // when byte_sel == kHigh: in that combination addr_[15:8] is set
@@ -101,7 +110,7 @@ enum class ByteSel : uint8_t { kLow, kHigh, kBank };
 enum class Flag : uint8_t { kC, kD, kI, kV, kZ, kN, kM, kX };
 enum class BranchCond : uint8_t { kAlways, kZ, kNotZ, kC, kNotC, kN, kNotN, kV, kNotV };
 enum class AluOp : uint8_t { kAdc, kSbc, kAnd, kOra, kEor, kCmp, kCpx, kCpy, kBit };
-enum class WriteSrc : uint8_t { kFetchData, kA, kX, kY };
+enum class WriteSrc : uint8_t { kFetchData, kA, kX, kY, kZero };
 enum class PushSrc : uint8_t {
   kA8,
   kAHigh,
@@ -230,6 +239,11 @@ class CPU : public Device {
   struct TimingContext {
     bool branch_taken = false;
     bool branch_page_crossed = false;
+    // Cached at opcode-fetch from (regs_.DP & 0xFF) != 0. Folded into the
+    // same rule-table slot as branch_page_crossed via an OR in
+    // EvaluateTimingRule; see the kDirectPageLowNonzero alias in
+    // cpu_internal.h.
+    bool dp_low_nonzero = false;
   };
 
   struct StepResult {

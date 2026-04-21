@@ -18,6 +18,9 @@ enum class OpcodeAddressingMode : uint8_t {
   kRelative8 = 6,
   kImmediateByte = 7,
   kRelative16 = 8,
+  kDirectPage = 9,
+  kDirectPageIndexedX = 10,
+  kDirectPageIndexedY = 11,
 };
 
 enum class OpcodeImplementationStatus : uint8_t {

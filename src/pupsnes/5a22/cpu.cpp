@@ -262,7 +262,7 @@ TickResult CPU::BusWriteSlow(SnesAddrT addr, uint8_t data, TimeMasterDeltaT cycl
       (static_cast<uint32_t>(IsAccumulator16Bit(regs_)) << static_cast<uint8_t>(TimingCondition::kAccumulator16)) |
       (static_cast<uint32_t>(IsIndex16Bit(regs_)) << static_cast<uint8_t>(TimingCondition::kIndex16)) |
       (static_cast<uint32_t>(regs_.P.E) << static_cast<uint8_t>(TimingCondition::kEmulationMode)) |
-      (static_cast<uint32_t>(timing_context_.branch_page_crossed)
+      (static_cast<uint32_t>(timing_context_.branch_page_crossed || timing_context_.dp_low_nonzero)
        << static_cast<uint8_t>(TimingCondition::kBranchPageCrossed));
   return ((truth_table >> bits) & 1U) != 0U;
 }
@@ -303,6 +303,9 @@ void CPU::ExecuteInternalOp(MicroInternalOp op, [[maybe_unused]] uint8_t params)
       // never updates; A/X/Y update only when nz is set (8-bit).
       const bool skip_nz = is_pc || (!high && (reg == Reg::kDp || !nz));
       if (!skip_nz) SetNzFromWidth(regs_, r, high);
+      if (mp::UnpackLoadRegPostIncAddr(params)) {
+        addr_ = (addr_ + 1U) & 0xFFFFFFU;
+      }
       return;
     }
 
@@ -330,6 +333,19 @@ void CPU::ExecuteInternalOp(MicroInternalOp op, [[maybe_unused]] uint8_t params)
       const uint16_t old_pc = regs_.PC;
       regs_.PC = static_cast<uint16_t>(static_cast<int32_t>(old_pc) + displacement);
       if (!wide) timing_context_.branch_page_crossed = ((old_pc ^ regs_.PC) & 0xFF00U) != 0U;
+      return;
+    }
+
+    case MicroInternalOp::kSetAddrFromDp: {
+      addr_ = (static_cast<uint32_t>(regs_.DP) + static_cast<uint32_t>(fetch_data_)) & 0x0000FFFFU;
+      return;
+    }
+
+    case MicroInternalOp::kAddIndexToAddr: {
+      const Reg reg = static_cast<Reg>(params & 0x0FU);
+      const uint16_t index = (reg == Reg::kY) ? regs_.Y : regs_.X;
+      const uint16_t masked = IsIndex16Bit(regs_) ? index : static_cast<uint16_t>(index & 0x00FFU);
+      addr_ = (addr_ + static_cast<uint32_t>(masked)) & 0x0000FFFFU;
       return;
     }
 
@@ -532,6 +548,11 @@ CPU::StepResult CPU::FetchOpcode(TimeMasterDeltaT cycle_time) {
   }
   regs_.PC = static_cast<uint16_t>(regs_.PC + 1U);
   timing_context_ = TimingContext{};
+  // Cache the DP-low-nonzero bit at opcode-fetch. EvaluateTimingRule folds it
+  // into the same truth-table slot as branch_page_crossed (see the
+  // kDirectPageLowNonzero alias in cpu_internal.h). No opcode both branches
+  // and touches the direct page, so the aliasing is safe.
+  timing_context_.dp_low_nonzero = (regs_.DP & 0x00FFU) != 0U;
 
   const InstructionEntry& entry = opcode_defs_internal::kOpcodeArtifacts.execution_table[fetch_data_];
   if (entry.disposition == InstructionDisposition::kFaultUnimplemented) {
@@ -586,6 +607,7 @@ TickResult CPU::PerformBusAction(MicroBusAction action, [[maybe_unused]] uint8_t
         case WriteSrc::kY:
           byte = (sel == ByteSel::kLow) ? static_cast<uint8_t>(regs_.Y) : static_cast<uint8_t>(regs_.Y >> 8U);
           break;
+        case WriteSrc::kZero: byte = 0; break;
       }
       return BusWrite(addr_, byte, cycle_time);
     }

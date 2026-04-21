@@ -59,14 +59,18 @@ inline constexpr BranchCond UnpackBranchCond(uint8_t params) {
 }
 
 // Register load from fetch_data_ (kLoadReg): bits [3:0] = Reg (A/X/Y only),
-// bits [5:4] = ByteSel (kLow = 0, kHigh = 1), bit 6 = update_nz. Dispatch
-// lives in the kLoadReg case in ExecuteInternalOp in cpu.cpp. On kHigh, update_nz must be true
-// (that's the only high-byte variant the concrete helpers implement); the
-// builder enforces this.
-inline constexpr uint8_t PackLoadReg(Reg reg, ByteSel byte_sel, bool update_nz) {
+// bits [5:4] = ByteSel (kLow = 0, kHigh = 1), bit 6 = update_nz, bit 7 =
+// post_inc_addr. Dispatch lives in the kLoadReg case in ExecuteInternalOp in
+// cpu.cpp. On kHigh, update_nz must be true (that's the only high-byte
+// variant the concrete helpers implement); the builder enforces this.
+// post_inc_addr advances addr_ by 1 (24-bit wrap) after the register update
+// and is used by multi-byte reads from an effective address to set up the
+// next byte's bus cycle.
+inline constexpr uint8_t PackLoadReg(Reg reg, ByteSel byte_sel, bool update_nz, bool post_inc_addr = false) {
   return static_cast<uint8_t>((static_cast<uint32_t>(reg) & 0x0FU) |
                               ((static_cast<uint32_t>(byte_sel) & 0x03U) << 4U) |
-                              ((update_nz ? 1U : 0U) << 6U));
+                              ((update_nz ? 1U : 0U) << 6U) |
+                              ((post_inc_addr ? 1U : 0U) << 7U));
 }
 inline constexpr Reg UnpackLoadRegReg(uint8_t params) {
   return static_cast<Reg>(params & 0x0FU);
@@ -76,6 +80,9 @@ inline constexpr ByteSel UnpackLoadRegByteSel(uint8_t params) {
 }
 inline constexpr bool UnpackLoadRegNz(uint8_t params) {
   return (params & 0x40U) != 0U;
+}
+inline constexpr bool UnpackLoadRegPostIncAddr(uint8_t params) {
+  return (params & 0x80U) != 0U;
 }
 
 // Push bus action (kPushStack): bits [3:0] = PushSrc (15 variants — A8/AHigh,
@@ -88,20 +95,21 @@ inline constexpr PushSrc UnpackPushStack(uint8_t params) {
   return static_cast<PushSrc>(params & 0x0FU);
 }
 
-// Write bus action (kWriteRegByte): bits [1:0] = WriteSrc (kFetchData/kA/kX/kY),
-// bits [3:2] = ByteSel (kLow/kHigh; kBank is accepted but unused by writes).
-// For the generic fetch_data writer, WriteSrc::kFetchData + ByteSel::kLow is
-// the canonical encoding (the ByteSel is ignored for fetch_data). Dispatch
-// lives in the kWriteRegByte case in PerformBusAction in cpu.cpp.
+// Write bus action (kWriteRegByte): bits [2:0] = WriteSrc (kFetchData/kA/kX/
+// kY/kZero), bit 3 = ByteSel (0 = kLow, 1 = kHigh). For the generic fetch_data
+// writer, WriteSrc::kFetchData + ByteSel::kLow is the canonical encoding (the
+// ByteSel is ignored for fetch_data and kZero). Dispatch lives in the
+// kWriteRegByte case in PerformBusAction in cpu.cpp. Bit 4 is reserved for
+// kModifyAddr's decrement flag (shared-slot encoding); keep it clear here.
 inline constexpr uint8_t PackWriteAddr(WriteSrc src, ByteSel byte_sel) {
-  return static_cast<uint8_t>((static_cast<uint32_t>(src) & 0x03U)
-                              | ((static_cast<uint32_t>(byte_sel) & 0x03U) << 2U));
+  return static_cast<uint8_t>((static_cast<uint32_t>(src) & 0x07U)
+                              | ((static_cast<uint32_t>(byte_sel) & 0x01U) << 3U));
 }
 inline constexpr WriteSrc UnpackWriteAddrSrc(uint8_t params) {
-  return static_cast<WriteSrc>(params & 0x03U);
+  return static_cast<WriteSrc>(params & 0x07U);
 }
 inline constexpr ByteSel UnpackWriteAddrByteSel(uint8_t params) {
-  return static_cast<ByteSel>((params >> 2U) & 0x03U);
+  return static_cast<ByteSel>((params >> 3U) & 0x01U);
 }
 
 // ALU immediate (kAlu8Imm / kAlu16Imm): bits [3:0] = AluOp (9 variants — Adc,
@@ -199,6 +207,14 @@ inline constexpr ByteSel UnpackLoadAddrByteAndSetPcSel(uint8_t params) {
 }
 inline constexpr bool UnpackLoadAddrByteAndSetPcWithPbr(uint8_t params) {
   return (params & 0x04U) != 0U;
+}
+
+// Add index to addr (kAddIndexToAddr): bits [3:0] = Reg (kX or kY).
+inline constexpr uint8_t PackAddIndex(Reg reg) {
+  return static_cast<uint8_t>(static_cast<uint32_t>(reg) & 0x0FU);
+}
+inline constexpr Reg UnpackAddIndex(uint8_t params) {
+  return static_cast<Reg>(params & 0x0FU);
 }
 
 // Mask status (kMaskStatus): bit 0 = or_bits (1 = SEP/OR, 0 = REP/AND-NOT).

@@ -195,7 +195,13 @@ TEST_CASE("Every implemented opcode matches the 65C816 spec", "[cpu][opcode-defs
         {.m = 1, .x = 1, .w = 0, .p = 1, .t = 1, .e = 1},
     }};
 
-    for (const FormulaInputs& in : kModes) {
+    for (const FormulaInputs& orig : kModes) {
+      // DP opcodes share bit-4 with branch page-cross; force p=0 for them so
+      // the "p=1" test modes don't spuriously fire the DP-low-nonzero penalty.
+      FormulaInputs in = orig;
+      if (spec->dp_penalty_bit) {
+        in.p = 0;
+      }
       CAPTURE(in.m, in.x, in.t, in.p, in.e);
       const int expected = EvalFormula(spec->cycle_formula, in);
       const int actual = CountActiveCycles(entry, PackConditionBits(in) | spec->forced_condition_bits);

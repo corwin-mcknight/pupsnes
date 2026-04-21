@@ -43,6 +43,9 @@ std::string FormatOperand(const OpcodeMetadataView& metadata, SnesAddrT pc, uint
       const uint16_t target = static_cast<uint16_t>(next_pc + displacement);
       return std::format("${:04X}", static_cast<unsigned>(target));
     }
+    case OpcodeAddressingMode::kDirectPage: return std::format("${:02X}", static_cast<unsigned>(bytes[1]));
+    case OpcodeAddressingMode::kDirectPageIndexedX: return std::format("${:02X},X", static_cast<unsigned>(bytes[1]));
+    case OpcodeAddressingMode::kDirectPageIndexedY: return std::format("${:02X},Y", static_cast<unsigned>(bytes[1]));
   }
   return "";
 }

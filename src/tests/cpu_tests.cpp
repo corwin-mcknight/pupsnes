@@ -548,6 +548,261 @@ TEST_CASE("STA absolute writes both accumulator bytes when M is clear", "[cpu]")
   REQUIRE(f.wram.Peek(0x0031) == 0xCA);
 }
 
+TEST_CASE("STA direct page writes accumulator low byte with DP=0 and no DL penalty", "[cpu]") {
+  ResetFixture f;
+  f.SetRomByte(0x0000U, 0xA9);
+  f.SetRomByte(0x0001U, 0x5A);
+  f.SetRomByte(0x0002U, 0x85);
+  f.SetRomByte(0x0003U, 0x10);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  TickResult r = f.cpu.Tick(5);  // LDA#2 + STA dp (3 with M=1,DL=0)
+
+  REQUIRE(r.completed_cycles == 5);
+  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x5A);
+  REQUIRE(f.cpu.GetRegs().PC == 0x8004);
+  REQUIRE(f.wram.Peek(0x0010) == 0x5A);
+}
+
+TEST_CASE("STA direct page incurs +1 cycle penalty when DP low byte is nonzero", "[cpu]") {
+  ResetFixture f;
+  f.SetRomByte(0x0000U, 0x85);
+  f.SetRomByte(0x0001U, 0x10);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  auto regs = f.cpu.GetRegs();
+  regs.A = 0x00A7;
+  regs.DP = 0x0020;  // DL nonzero → +1 cycle
+  f.cpu.SetRegs(regs);
+
+  TickResult r = f.cpu.Tick(4);
+
+  REQUIRE(r.completed_cycles == 4);
+  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(f.cpu.GetRegs().PC == 0x8002);
+  REQUIRE(f.wram.Peek(0x0030) == 0xA7);
+}
+
+TEST_CASE("STA direct page writes both accumulator bytes when M is clear", "[cpu]") {
+  ResetFixture f;
+  f.SetRomByte(0x0000U, 0x85);
+  f.SetRomByte(0x0001U, 0x40);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  auto regs = f.cpu.GetRegs();
+  regs.P.E = false;
+  regs.P.M = false;
+  regs.A = 0xBEEF;
+  f.cpu.SetRegs(regs);
+
+  TickResult r = f.cpu.Tick(4);  // 4-m+w with m=0,w=0 = 4
+
+  REQUIRE(r.completed_cycles == 4);
+  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(f.cpu.GetRegs().PC == 0x8002);
+  REQUIRE(f.wram.Peek(0x0040) == 0xEF);
+  REQUIRE(f.wram.Peek(0x0041) == 0xBE);
+}
+
+TEST_CASE("LDA direct page loads from bank 0 (DP + offset)", "[cpu]") {
+  ResetFixture f;
+  f.SetRomByte(0x0000U, 0xA5);
+  f.SetRomByte(0x0001U, 0x50);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  f.wram.WriteRegister(0x0050, 0x42);
+
+  TickResult r = f.cpu.Tick(3);  // 4-m+w with m=1,w=0 = 3
+
+  REQUIRE(r.completed_cycles == 3);
+  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x42);
+  REQUIRE(f.cpu.GetRegs().PC == 0x8002);
+  REQUIRE(f.cpu.GetRegs().P.N == false);
+  REQUIRE(f.cpu.GetRegs().P.Z == false);
+}
+
+TEST_CASE("LDA direct page loads 16-bit value when M is clear", "[cpu]") {
+  ResetFixture f;
+  f.SetRomByte(0x0000U, 0xA5);
+  f.SetRomByte(0x0001U, 0x80);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  f.wram.WriteRegister(0x0080, 0xCD);
+  f.wram.WriteRegister(0x0081, 0xAB);
+  auto regs = f.cpu.GetRegs();
+  regs.P.E = false;
+  regs.P.M = false;
+  f.cpu.SetRegs(regs);
+
+  TickResult r = f.cpu.Tick(4);  // 4-m+w with m=0,w=0 = 4
+
+  REQUIRE(r.completed_cycles == 4);
+  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(f.cpu.GetRegs().A == 0xABCD);
+  REQUIRE(f.cpu.GetRegs().PC == 0x8002);
+  REQUIRE(f.cpu.GetRegs().P.N == true);
+  REQUIRE(f.cpu.GetRegs().P.Z == false);
+}
+
+TEST_CASE("LDA direct page incurs DL-nonzero penalty cycle", "[cpu]") {
+  ResetFixture f;
+  f.SetRomByte(0x0000U, 0xA5);
+  f.SetRomByte(0x0001U, 0x10);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  auto regs = f.cpu.GetRegs();
+  regs.DP = 0x0123;  // DL nonzero → +1 cycle
+  f.cpu.SetRegs(regs);
+  f.wram.WriteRegister(0x0133, 0x99);
+
+  TickResult r = f.cpu.Tick(4);  // 4-m+w = 3 + w(1) = 4
+
+  REQUIRE(r.completed_cycles == 4);
+  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x99);
+  REQUIRE(f.cpu.GetRegs().PC == 0x8002);
+}
+
+TEST_CASE("LDX/LDY/STX/STY/STZ direct page cover register + zero paths", "[cpu]") {
+  ResetFixture f;
+  // LDX $10 ; STX $14 ; LDY $11 ; STY $15 ; STZ $12
+  f.SetRomByte(0x0000U, 0xA6);
+  f.SetRomByte(0x0001U, 0x10);
+  f.SetRomByte(0x0002U, 0x86);
+  f.SetRomByte(0x0003U, 0x14);
+  f.SetRomByte(0x0004U, 0xA4);
+  f.SetRomByte(0x0005U, 0x11);
+  f.SetRomByte(0x0006U, 0x84);
+  f.SetRomByte(0x0007U, 0x15);
+  f.SetRomByte(0x0008U, 0x64);
+  f.SetRomByte(0x0009U, 0x12);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  f.wram.WriteRegister(0x0010, 0x7A);
+  f.wram.WriteRegister(0x0011, 0x2B);
+  f.wram.WriteRegister(0x0012, 0xFF);  // STZ should overwrite this
+
+  // Each op is 3 cycles (M=1/X=1, DL=0) = 15 total.
+  TickResult r = f.cpu.Tick(15);
+
+  REQUIRE(r.completed_cycles == 15);
+  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().X) == 0x7A);
+  REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().Y) == 0x2B);
+  REQUIRE(f.wram.Peek(0x0014) == 0x7A);
+  REQUIRE(f.wram.Peek(0x0015) == 0x2B);
+  REQUIRE(f.wram.Peek(0x0012) == 0x00);
+  REQUIRE(f.cpu.GetRegs().PC == 0x800A);
+}
+
+TEST_CASE("STZ direct page writes zero to both DP bytes when M is clear", "[cpu]") {
+  ResetFixture f;
+  f.SetRomByte(0x0000U, 0x64);
+  f.SetRomByte(0x0001U, 0x20);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  f.wram.WriteRegister(0x0020, 0xAA);
+  f.wram.WriteRegister(0x0021, 0xBB);
+  auto regs = f.cpu.GetRegs();
+  regs.P.E = false;
+  regs.P.M = false;
+  f.cpu.SetRegs(regs);
+
+  TickResult r = f.cpu.Tick(4);
+
+  REQUIRE(r.completed_cycles == 4);
+  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(f.wram.Peek(0x0020) == 0x00);
+  REQUIRE(f.wram.Peek(0x0021) == 0x00);
+}
+
+TEST_CASE("LDA direct page indexed X reads (DP + offset + X) in bank 0", "[cpu]") {
+  ResetFixture f;
+  f.SetRomByte(0x0000U, 0xB5);
+  f.SetRomByte(0x0001U, 0x20);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  auto regs = f.cpu.GetRegs();
+  regs.X = 0x000A;  // 8-bit X
+  f.cpu.SetRegs(regs);
+  f.wram.WriteRegister(0x002A, 0x55);
+
+  TickResult r = f.cpu.Tick(4);  // 5-m+w with m=1,w=0 = 4
+
+  REQUIRE(r.completed_cycles == 4);
+  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x55);
+  REQUIRE(f.cpu.GetRegs().PC == 0x8002);
+}
+
+TEST_CASE("LDX direct page indexed Y respects 16-bit index addition", "[cpu]") {
+  ResetFixture f;
+  f.SetRomByte(0x0000U, 0xB6);
+  f.SetRomByte(0x0001U, 0x10);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  SetIndex16Y(f.cpu, 0x0080);  // 16-bit Y so X=0 in P
+  f.wram.WriteRegister(0x0090, 0xCD);
+  f.wram.WriteRegister(0x0091, 0xAB);
+
+  TickResult r = f.cpu.Tick(5);  // 5-x+w with x=0,w=0 = 5
+
+  REQUIRE(r.completed_cycles == 5);
+  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(f.cpu.GetRegs().X == 0xABCD);
+}
+
+TEST_CASE("STA direct page indexed X incurs DL-nonzero penalty", "[cpu]") {
+  ResetFixture f;
+  f.SetRomByte(0x0000U, 0x95);
+  f.SetRomByte(0x0001U, 0x10);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  auto regs = f.cpu.GetRegs();
+  regs.A = 0x003C;
+  regs.X = 0x0002;
+  regs.DP = 0x0040;  // DL nonzero → +1 cycle
+  f.cpu.SetRegs(regs);
+
+  TickResult r = f.cpu.Tick(5);  // 5-m+w with m=1,w=1 = 5
+
+  REQUIRE(r.completed_cycles == 5);
+  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(f.wram.Peek(0x0052) == 0x3C);
+}
+
+TEST_CASE("STZ direct page indexed X clears bank 0 byte", "[cpu]") {
+  ResetFixture f;
+  f.SetRomByte(0x0000U, 0x74);
+  f.SetRomByte(0x0001U, 0x30);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  auto regs = f.cpu.GetRegs();
+  regs.X = 0x0004;
+  f.cpu.SetRegs(regs);
+  f.wram.WriteRegister(0x0034, 0x77);
+
+  TickResult r = f.cpu.Tick(4);
+
+  REQUIRE(r.completed_cycles == 4);
+  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(f.wram.Peek(0x0034) == 0x00);
+}
+
 TEST_CASE("STA absolute 16-bit high-byte write carries into the next bank at $FFFF", "[cpu]") {
   ResetFixture f;
   f.SetRomByte(0x0000U, 0x8D);

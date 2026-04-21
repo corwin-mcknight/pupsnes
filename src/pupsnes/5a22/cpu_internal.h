@@ -19,6 +19,11 @@ enum class TimingCondition : uint8_t {
   kIndex16 = 2,
   kEmulationMode = 3,
   kBranchPageCrossed = 4,
+  // Shares bit 4 with kBranchPageCrossed. No opcode uses both because branch
+  // instructions never touch the direct page and DP-addressed instructions
+  // never branch. CPU code sets timing_context_.branch_page_crossed from the
+  // relevant source at opcode-fetch (DP-low-nonzero) or branch-apply time.
+  kDirectPageLowNonzero = 4,
 };
 
 // Bit index of each TimingCondition within the packed-condition word used to

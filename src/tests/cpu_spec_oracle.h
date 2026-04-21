@@ -173,6 +173,12 @@ struct SpecEntry {
   // BranchTaken=1; the spec formula "3+e*p" has no `t` variable, so the
   // sweep must ignore the FormulaInputs.t value and evaluate as if t=1).
   uint8_t forced_condition_bits = 0;
+  // True if this opcode's bit-4 timing slot is gated on the direct-page
+  // low-byte-nonzero penalty (w) rather than the branch page-cross (p). The
+  // CPU aliases both onto the same truth-table bit (branches never touch DP
+  // and vice versa), so the sweep must force p=0 when packing bits for DP
+  // opcodes, otherwise the "p=1" test mode spuriously fires the DP penalty.
+  bool dp_penalty_bit = false;
 };
 
 // Bruce Clark's canonical addressing-mode tokens for each internal
@@ -189,13 +195,16 @@ constexpr std::string_view NormalizeAddressing(std::string_view internal) {
   if (internal == "absolute long") return "long";
   if (internal == "relative") return "rel";
   if (internal == "relative long") return "rlng";
+  if (internal == "direct page") return "dir";
+  if (internal == "direct page indexed X") return "dir,X";
+  if (internal == "direct page indexed Y") return "dir,Y";
   return internal;
 }
 
 // One row per currently implemented opcode. Add rows as new opcodes land.
 // Columns lifted verbatim from docs/plans/6502opcodes.md. Flag masks built
 // with FlagsFrom() from Clark's nvmxdizc column.
-constexpr std::array<SpecEntry, 75> kSpec = {{
+constexpr std::array<SpecEntry, 89> kSpec = {{
     // Misc
     {0xEA, "NOP", "impl", "1", "2", FlagsFrom("........")},
 
@@ -225,6 +234,24 @@ constexpr std::array<SpecEntry, 75> kSpec = {{
     {0x8E, "STX", "abs", "3", "5-x", FlagsFrom("........")},
     {0x8C, "STY", "abs", "3", "5-x", FlagsFrom("........")},
     {0x8F, "STA", "long", "4", "6-m", FlagsFrom("........")},
+
+    // Direct page
+    {0xA5, "LDA", "dir", "2", "4-m+w", FlagsFrom("n.....z."), 0U, true},
+    {0xA6, "LDX", "dir", "2", "4-x+w", FlagsFrom("n.....z."), 0U, true},
+    {0xA4, "LDY", "dir", "2", "4-x+w", FlagsFrom("n.....z."), 0U, true},
+    {0x85, "STA", "dir", "2", "4-m+w", FlagsFrom("........"), 0U, true},
+    {0x86, "STX", "dir", "2", "4-x+w", FlagsFrom("........"), 0U, true},
+    {0x84, "STY", "dir", "2", "4-x+w", FlagsFrom("........"), 0U, true},
+    {0x64, "STZ", "dir", "2", "4-m+w", FlagsFrom("........"), 0U, true},
+
+    // Direct page indexed
+    {0xB5, "LDA", "dir,X", "2", "5-m+w", FlagsFrom("n.....z."), 0U, true},
+    {0xB4, "LDY", "dir,X", "2", "5-x+w", FlagsFrom("n.....z."), 0U, true},
+    {0xB6, "LDX", "dir,Y", "2", "5-x+w", FlagsFrom("n.....z."), 0U, true},
+    {0x95, "STA", "dir,X", "2", "5-m+w", FlagsFrom("........"), 0U, true},
+    {0x94, "STY", "dir,X", "2", "5-x+w", FlagsFrom("........"), 0U, true},
+    {0x96, "STX", "dir,Y", "2", "5-x+w", FlagsFrom("........"), 0U, true},
+    {0x74, "STZ", "dir,X", "2", "5-m+w", FlagsFrom("........"), 0U, true},
 
     // Inc/Dec registers
     {0x1A, "INC", "impl", "1", "2", FlagsFrom("n.....z.")},

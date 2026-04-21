@@ -1,3 +1,4 @@
+#include "addressing_fragments.h"
 #include "cpu_opcode_defs_internal.h"
 #include "pupsnes/5a22/opcode_metadata.h"
 
@@ -288,6 +289,30 @@ constexpr auto MakeLoadSpecs() {
       Opcode(0xA9, "LDA", "immediate").Then(LoadAccumulatorImmediate()).Build(),
       Opcode(0xA2, "LDX", "immediate index").Then(LoadIndexXImmediate()).Build(),
       Opcode(0xA0, "LDY", "immediate index").Then(LoadIndexYImmediate()).Build(),
+      Opcode(0xA5, "LDA", "direct page")
+          .Then(FetchDirectPage())
+          .Then(LoadRegFromAddr(Reg::kA, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0xA6, "LDX", "direct page")
+          .Then(FetchDirectPage())
+          .Then(LoadRegFromAddr(Reg::kX, TimingCondition::kIndex16))
+          .Build(),
+      Opcode(0xA4, "LDY", "direct page")
+          .Then(FetchDirectPage())
+          .Then(LoadRegFromAddr(Reg::kY, TimingCondition::kIndex16))
+          .Build(),
+      Opcode(0xB5, "LDA", "direct page indexed X")
+          .Then(FetchDirectPageIndexed(Reg::kX))
+          .Then(LoadRegFromAddr(Reg::kA, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0xB4, "LDY", "direct page indexed X")
+          .Then(FetchDirectPageIndexed(Reg::kX))
+          .Then(LoadRegFromAddr(Reg::kY, TimingCondition::kIndex16))
+          .Build(),
+      Opcode(0xB6, "LDX", "direct page indexed Y")
+          .Then(FetchDirectPageIndexed(Reg::kY))
+          .Then(LoadRegFromAddr(Reg::kX, TimingCondition::kIndex16))
+          .Build(),
   };
 }
 
@@ -297,6 +322,38 @@ constexpr auto MakeStoreSpecs() {
       Opcode(0x8E, "STX", "absolute").Then(FetchAbsoluteAddr()).Then(StoreIndexX()).Build(),
       Opcode(0x8C, "STY", "absolute").Then(FetchAbsoluteAddr()).Then(StoreIndexY()).Build(),
       Opcode(0x8F, "STA", "absolute long").Then(FetchLongAddr()).Then(StoreAccumulator()).Build(),
+      Opcode(0x85, "STA", "direct page")
+          .Then(FetchDirectPage())
+          .Then(StoreRegToAddr(WriteSrc::kA, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0x86, "STX", "direct page")
+          .Then(FetchDirectPage())
+          .Then(StoreRegToAddr(WriteSrc::kX, TimingCondition::kIndex16))
+          .Build(),
+      Opcode(0x84, "STY", "direct page")
+          .Then(FetchDirectPage())
+          .Then(StoreRegToAddr(WriteSrc::kY, TimingCondition::kIndex16))
+          .Build(),
+      Opcode(0x64, "STZ", "direct page")
+          .Then(FetchDirectPage())
+          .Then(StoreRegToAddr(WriteSrc::kZero, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0x95, "STA", "direct page indexed X")
+          .Then(FetchDirectPageIndexed(Reg::kX))
+          .Then(StoreRegToAddr(WriteSrc::kA, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0x94, "STY", "direct page indexed X")
+          .Then(FetchDirectPageIndexed(Reg::kX))
+          .Then(StoreRegToAddr(WriteSrc::kY, TimingCondition::kIndex16))
+          .Build(),
+      Opcode(0x96, "STX", "direct page indexed Y")
+          .Then(FetchDirectPageIndexed(Reg::kY))
+          .Then(StoreRegToAddr(WriteSrc::kX, TimingCondition::kIndex16))
+          .Build(),
+      Opcode(0x74, "STZ", "direct page indexed X")
+          .Then(FetchDirectPageIndexed(Reg::kX))
+          .Then(StoreRegToAddr(WriteSrc::kZero, TimingCondition::kAccumulator16))
+          .Build(),
   };
 }
 
@@ -536,6 +593,15 @@ constexpr OpcodeAddressingMode MapAddressingMode(std::string_view mode) {
   if (mode == "relative long") {
     return OpcodeAddressingMode::kRelative16;
   }
+  if (mode == "direct page") {
+    return OpcodeAddressingMode::kDirectPage;
+  }
+  if (mode == "direct page indexed X") {
+    return OpcodeAddressingMode::kDirectPageIndexedX;
+  }
+  if (mode == "direct page indexed Y") {
+    return OpcodeAddressingMode::kDirectPageIndexedY;
+  }
   return OpcodeAddressingMode::kUnknown;
 }
 
@@ -562,6 +628,9 @@ constexpr OpcodeMetadataView LowerPublicMetadata(const opcode_defs_internal::Opc
     case OpcodeAddressingMode::kRelative8:
     case OpcodeAddressingMode::kImmediateByte: view.base_length = 2; break;
     case OpcodeAddressingMode::kRelative16: view.base_length = 3; break;
+    case OpcodeAddressingMode::kDirectPage:
+    case OpcodeAddressingMode::kDirectPageIndexedX:
+    case OpcodeAddressingMode::kDirectPageIndexedY: view.base_length = 2; break;
   }
 
   return view;
@@ -606,6 +675,9 @@ std::string_view GetAddressingModeName(OpcodeAddressingMode mode) {
     case OpcodeAddressingMode::kRelative8: return "relative";
     case OpcodeAddressingMode::kImmediateByte: return "immediate byte";
     case OpcodeAddressingMode::kRelative16: return "relative long";
+    case OpcodeAddressingMode::kDirectPage: return "direct page";
+    case OpcodeAddressingMode::kDirectPageIndexedX: return "direct page indexed X";
+    case OpcodeAddressingMode::kDirectPageIndexedY: return "direct page indexed Y";
   }
   return "unknown";
 }

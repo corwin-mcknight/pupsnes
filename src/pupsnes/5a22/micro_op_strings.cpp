@@ -21,6 +21,8 @@ std::string_view ToString(MicroInternalOp op) {
     case MicroInternalOp::kLoadReg: return "LoadReg";
     case MicroInternalOp::kSetBranchTakenCond: return "SetBranchTakenCond";
     case MicroInternalOp::kBranchRelative: return "BranchRelative";
+    case MicroInternalOp::kAddIndexToAddr: return "AddIndexToAddr";
+    case MicroInternalOp::kSetAddrFromDp: return "SetAddrFromDp";
     case MicroInternalOp::kSetAddrByteFromFetch: return "SetAddrByteFromFetch";
     case MicroInternalOp::kModifyAddr: return "ModifyAddr";
     case MicroInternalOp::kModifySp: return "ModifySp";
