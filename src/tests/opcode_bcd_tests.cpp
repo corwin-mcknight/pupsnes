@@ -2,7 +2,6 @@
 #include <catch2/catch_test_macros.hpp>
 #include <cstdint>
 #include <initializer_list>
-#include <vector>
 
 #include "pupsnes/hw/5a22/cpu.h"
 #include "pupsnes/hw/device.h"
