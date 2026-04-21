@@ -12,8 +12,8 @@ Thumbs.db
 # AI files
 .claude
 docs/plans/
-
-# Worktrees
+docs/external/
+.planning/
 .worktrees/
 
 # CMake / build artifacts
