@@ -35,7 +35,7 @@ constexpr CycleSlotSpec FetchAddrByte(ByteSel byte_sel, bool from_dbr,
 
 // Absolute-long effective address (3-byte operand). Fetches low, high, and
 // bank bytes from PC, assembling a 24-bit address in addr_. No DBR used.
-// Promoted from FetchLongAddr() (D-01). Two fixed cycles + bank byte cycle.
+// Promoted from cpu_opcodes.cpp (D-01). Two fixed cycles + bank byte cycle.
 constexpr CycleFragment FetchAbsoluteLong() {
   return Fragment()
       .Then(FetchAddrByte(ByteSel::kLow, false, Always(), "fetch address low"))
@@ -46,7 +46,7 @@ constexpr CycleFragment FetchAbsoluteLong() {
 
 // Absolute effective address (2-byte operand). Fetches low and high bytes
 // from PC; bank comes from DBR (from_dbr=true on the high byte). Promoted
-// from FetchAbsoluteAddr() (D-01).
+// from cpu_opcodes.cpp (D-01).
 constexpr CycleFragment FetchAbsolute() {
   return Fragment()
       .Then(FetchAddrByte(ByteSel::kLow, false, Always(), "fetch address low"))

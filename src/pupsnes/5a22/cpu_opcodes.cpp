@@ -5,33 +5,9 @@
 namespace pupsnes::opcode_defs_internal {
 namespace {
 
-// FetchPc + SetAddrByteFromFetch is a compound: FetchPc brings the byte in via
-// bus action, kSetAddrByteFromFetch runs as the internal op. Since both live
-// in the same CycleSlotSpec we just synthesize the slot by hand.
-constexpr CycleSlotSpec FetchAddrByte(ByteSel byte_sel, bool from_dbr, TimingRuleExpr rule, std::string_view label) {
-  return CycleSlotSpec{
-      MicroBusAction::kFetchPc,
-      MicroInternalOp::kSetAddrByteFromFetch,
-      rule,
-      label,
-      micro_op_params::PackSetAddrByte(byte_sel, from_dbr),
-  };
-}
-
-constexpr CycleFragment FetchLongAddr() {
-  return Fragment()
-      .Then(FetchAddrByte(ByteSel::kLow, false, Always(), "fetch address low"))
-      .Then(FetchAddrByte(ByteSel::kHigh, false, Always(), "fetch address high"))
-      .Then(FetchAddrByte(ByteSel::kBank, false, Always(), "fetch address bank"))
-      .Build();
-}
-
-constexpr CycleFragment FetchAbsoluteAddr() {
-  return Fragment()
-      .Then(FetchAddrByte(ByteSel::kLow, false, Always(), "fetch address low"))
-      .Then(FetchAddrByte(ByteSel::kHigh, true, Always(), "fetch address high"))
-      .Build();
-}
+// FetchAddrByte, FetchAbsolute, and FetchAbsoluteLong were promoted to the
+// public addressing_fragments.h header (D-01, D-02, D-04). Call sites in
+// this file now resolve to those public definitions.
 
 constexpr CycleFragment LoadAccumulatorImmediate() {
   return Fragment()
@@ -332,10 +308,10 @@ constexpr auto MakeLoadSpecs() {
 
 constexpr auto MakeStoreSpecs() {
   return std::array{
-      Opcode(0x8D, "STA", "absolute").Then(FetchAbsoluteAddr()).Then(StoreAccumulator()).Build(),
-      Opcode(0x8E, "STX", "absolute").Then(FetchAbsoluteAddr()).Then(StoreIndexX()).Build(),
-      Opcode(0x8C, "STY", "absolute").Then(FetchAbsoluteAddr()).Then(StoreIndexY()).Build(),
-      Opcode(0x8F, "STA", "absolute long").Then(FetchLongAddr()).Then(StoreAccumulator()).Build(),
+      Opcode(0x8D, "STA", "absolute").Then(FetchAbsolute()).Then(StoreAccumulator()).Build(),
+      Opcode(0x8E, "STX", "absolute").Then(FetchAbsolute()).Then(StoreIndexX()).Build(),
+      Opcode(0x8C, "STY", "absolute").Then(FetchAbsolute()).Then(StoreIndexY()).Build(),
+      Opcode(0x8F, "STA", "absolute long").Then(FetchAbsoluteLong()).Then(StoreAccumulator()).Build(),
       Opcode(0x85, "STA", "direct page")
           .Then(FetchDirectPage())
           .Then(StoreRegToAddr(WriteSrc::kA, TimingCondition::kAccumulator16))
@@ -369,7 +345,7 @@ constexpr auto MakeStoreSpecs() {
           .Then(StoreRegToAddr(WriteSrc::kZero, TimingCondition::kAccumulator16))
           .Build(),
       Opcode(0x9C, "STZ", "absolute")
-          .Then(FetchAbsoluteAddr())
+          .Then(FetchAbsolute())
           .Then(StoreRegToAddr(WriteSrc::kZero, TimingCondition::kAccumulator16))
           .Build(),
       Opcode(0x9E, "STZ", "absolute indexed X")
