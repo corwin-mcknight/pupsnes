@@ -778,6 +778,47 @@ constexpr auto MakeAluSrSpecs() {
   };
 }
 
+// ALU / Load / Store long,X specs (plan 01-06) — 8 mnemonics. Cycle formula
+// 6-m per Bruce Clark §6.1.1.1 / §6.1.2.2. Uses FetchAbsoluteLongIndexedX,
+// which packs the index-add with bank_wrap=false so a low-16 overflow carries
+// into the operand bank byte. No BIT long,X (not a real opcode).
+constexpr auto MakeLongXSpecs() {
+  return std::array{
+      Opcode(0x7F, "ADC", "absolute long indexed X")
+          .Then(FetchAbsoluteLongIndexedX())
+          .Then(AluFromAddr(AluOp::kAdc, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0xFF, "SBC", "absolute long indexed X")
+          .Then(FetchAbsoluteLongIndexedX())
+          .Then(AluFromAddr(AluOp::kSbc, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0x3F, "AND", "absolute long indexed X")
+          .Then(FetchAbsoluteLongIndexedX())
+          .Then(AluFromAddr(AluOp::kAnd, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0x1F, "ORA", "absolute long indexed X")
+          .Then(FetchAbsoluteLongIndexedX())
+          .Then(AluFromAddr(AluOp::kOra, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0x5F, "EOR", "absolute long indexed X")
+          .Then(FetchAbsoluteLongIndexedX())
+          .Then(AluFromAddr(AluOp::kEor, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0xDF, "CMP", "absolute long indexed X")
+          .Then(FetchAbsoluteLongIndexedX())
+          .Then(AluFromAddr(AluOp::kCmp, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0xBF, "LDA", "absolute long indexed X")
+          .Then(FetchAbsoluteLongIndexedX())
+          .Then(LoadRegFromAddr(Reg::kA, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0x9F, "STA", "absolute long indexed X")
+          .Then(FetchAbsoluteLongIndexedX())
+          .Then(StoreRegToAddr(WriteSrc::kA, TimingCondition::kAccumulator16))
+          .Build(),
+  };
+}
+
 constexpr auto kExplicitOpcodeSpecs = ConcatArrays(
     ConcatArrays(
         ConcatArrays(
@@ -790,8 +831,8 @@ constexpr auto kExplicitOpcodeSpecs = ConcatArrays(
                                           MakeJumpSpecs()),
                              ConcatArrays(MakeAluSpecs(), MakeShiftSpecs()))),
             ConcatArrays(MakeAluAbsSpecs(), MakeBitDpxSpec())),
-        MakeAluDpxSpecs()),
-    MakeAluSrSpecs());
+        ConcatArrays(MakeAluDpxSpecs(), MakeAluSrSpecs())),
+    MakeLongXSpecs());
 
 static_assert(ValidateOpcodeSpecs(kExplicitOpcodeSpecs), "Opcode specification validation failed");
 
@@ -854,6 +895,9 @@ constexpr OpcodeAddressingMode MapAddressingMode(std::string_view mode) {
   if (mode == "direct indirect long") {
     return OpcodeAddressingMode::kDirectIndirectLong;
   }
+  if (mode == "absolute long indexed X") {
+    return OpcodeAddressingMode::kAbsoluteLongIndexedX;
+  }
   return OpcodeAddressingMode::kUnknown;
 }
 
@@ -888,6 +932,7 @@ constexpr OpcodeMetadataView LowerPublicMetadata(const opcode_defs_internal::Opc
     case OpcodeAddressingMode::kAbsoluteIndexedY: view.base_length = 3; break;
     case OpcodeAddressingMode::kDirectIndirect:
     case OpcodeAddressingMode::kDirectIndirectLong: view.base_length = 2; break;
+    case OpcodeAddressingMode::kAbsoluteLongIndexedX: view.base_length = 4; break;
   }
 
   return view;
@@ -940,6 +985,7 @@ std::string_view GetAddressingModeName(OpcodeAddressingMode mode) {
     case OpcodeAddressingMode::kAbsoluteIndexedY: return "absolute indexed Y";
     case OpcodeAddressingMode::kDirectIndirect: return "direct indirect";
     case OpcodeAddressingMode::kDirectIndirectLong: return "direct indirect long";
+    case OpcodeAddressingMode::kAbsoluteLongIndexedX: return "absolute long indexed X";
   }
   return "unknown";
 }

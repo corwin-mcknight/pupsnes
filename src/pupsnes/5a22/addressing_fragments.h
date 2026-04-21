@@ -140,6 +140,27 @@ constexpr CycleFragment FetchStackRelative() {
       .Build();
 }
 
+// Absolute-long indexed effective address: fetch 3-byte operand (low, high,
+// bank) and add X to the low 16 bits with 24-bit carry into the bank byte.
+// Four fixed cycles (no page-cross penalty — bank is explicit). Used by long,X
+// addressing (e.g. LDA $FEDCBA,X). Cycle formula 6-m per Bruce Clark §6.1.1.1
+// (6 at m=1 for reads/writes, plus one more cycle for m=0 read/write of the
+// high byte through LoadRegFromAddr / StoreRegToAddr / AluFromAddr).
+constexpr CycleFragment FetchAbsoluteLongIndexedX() {
+  return Fragment()
+      .Then(FetchAddrByte(ByteSel::kLow, false, Always(), "fetch address low"))
+      .Then(FetchAddrByte(ByteSel::kHigh, false, Always(), "fetch address high"))
+      .Then(FetchAddrByte(ByteSel::kBank, false, Always(), "fetch address bank"))
+      .Then(CycleSlotSpec{
+          MicroBusAction::kNone,
+          MicroInternalOp::kAddIndexToAddr,
+          Always(),
+          "add X to addr",
+          micro_op_params::PackAddIndex(Reg::kX, /*bank_wrap=*/false),
+      })
+      .Build();
+}
+
 // Direct indirect: read a 2-byte pointer from bank 0 at the DP-derived addr,
 // assemble into DBR:(high:low). Leaves addr_ at the effective operand address.
 // Two additional cycles on top of FetchDirectPage (which must be Then()'d
