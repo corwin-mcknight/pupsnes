@@ -7,8 +7,8 @@
 // the DP low byte is nonzero).
 //
 // Fragments here are composed with OpcodeSpecBuilder in cpu_opcodes.cpp the
-// same way FetchAbsoluteAddr / StoreAccumulator are today — see
-// cpu_opcodes.cpp for the original patterns.
+// same way FetchAbsolute / FetchAbsoluteLong / StoreAccumulator are today —
+// see cpu_opcodes.cpp for the original patterns.
 
 #include "pupsnes/5a22/cpu_opcode_defs_internal.h"
 
@@ -17,6 +17,42 @@ namespace pupsnes::opcode_defs_internal {
 // ---------------------------------------------------------------------------
 // Address computation
 // ---------------------------------------------------------------------------
+
+// Promoted from cpu_opcodes.cpp anonymous namespace (D-01, D-02).
+// Byte-fetch primitive shared by FetchAbsolute, FetchAbsoluteLong, and
+// FetchAbsoluteIndexed. Builds one cycle slot: FetchPc bus action +
+// kSetAddrByteFromFetch internal op targeting byte_sel of addr_.
+constexpr CycleSlotSpec FetchAddrByte(ByteSel byte_sel, bool from_dbr,
+                                       TimingRuleExpr rule, std::string_view label) {
+  return CycleSlotSpec{
+      MicroBusAction::kFetchPc,
+      MicroInternalOp::kSetAddrByteFromFetch,
+      rule,
+      label,
+      micro_op_params::PackSetAddrByte(byte_sel, from_dbr),
+  };
+}
+
+// Absolute-long effective address (3-byte operand). Fetches low, high, and
+// bank bytes from PC, assembling a 24-bit address in addr_. No DBR used.
+// Promoted from FetchLongAddr() (D-01). Two fixed cycles + bank byte cycle.
+constexpr CycleFragment FetchAbsoluteLong() {
+  return Fragment()
+      .Then(FetchAddrByte(ByteSel::kLow, false, Always(), "fetch address low"))
+      .Then(FetchAddrByte(ByteSel::kHigh, false, Always(), "fetch address high"))
+      .Then(FetchAddrByte(ByteSel::kBank, false, Always(), "fetch address bank"))
+      .Build();
+}
+
+// Absolute effective address (2-byte operand). Fetches low and high bytes
+// from PC; bank comes from DBR (from_dbr=true on the high byte). Promoted
+// from FetchAbsoluteAddr() (D-01).
+constexpr CycleFragment FetchAbsolute() {
+  return Fragment()
+      .Then(FetchAddrByte(ByteSel::kLow, false, Always(), "fetch address low"))
+      .Then(FetchAddrByte(ByteSel::kHigh, true, Always(), "fetch address high"))
+      .Build();
+}
 
 // Direct-page effective address: fetch the 1-byte DP offset from PC and
 // compute addr_ = bank 0, (DP + offset) & 0xFFFF in a single slot. The
@@ -69,29 +105,15 @@ constexpr CycleFragment FetchDirectPageIndexed(Reg index_reg) {
 // bank from DBR), then add the chosen index register. The index-add is
 // unconditional (always 1 cycle) — this matches the 65C816's behavior for
 // indexed *stores*, which pay the extra cycle regardless of page crossing.
-// Caller fragments emit a FetchPc-style op first; this helper re-uses the
-// existing FetchAddrByte cycle pattern laid out in cpu_opcodes.cpp. Three
-// fixed cycles. index_reg must be Reg::kX or Reg::kY.
+// Three fixed cycles. index_reg must be Reg::kX or Reg::kY.
 //
-// Note: emitted inline as CycleSlotSpecs rather than calling FetchAbsoluteAddr
-// (which lives in the anonymous namespace of cpu_opcodes.cpp) to keep this
-// header standalone.
+// Refactored (D-03) to call the promoted FetchAddrByte helper above instead
+// of inlining CycleSlotSpec+PackSetAddrByte constructors for the first two
+// slots. The third slot (index-add) remains inline.
 constexpr CycleFragment FetchAbsoluteIndexed(Reg index_reg) {
   return Fragment()
-      .Then(CycleSlotSpec{
-          MicroBusAction::kFetchPc,
-          MicroInternalOp::kSetAddrByteFromFetch,
-          Always(),
-          "fetch address low",
-          micro_op_params::PackSetAddrByte(ByteSel::kLow, /*from_dbr=*/false),
-      })
-      .Then(CycleSlotSpec{
-          MicroBusAction::kFetchPc,
-          MicroInternalOp::kSetAddrByteFromFetch,
-          Always(),
-          "fetch address high",
-          micro_op_params::PackSetAddrByte(ByteSel::kHigh, /*from_dbr=*/true),
-      })
+      .Then(FetchAddrByte(ByteSel::kLow, false, Always(), "fetch address low"))
+      .Then(FetchAddrByte(ByteSel::kHigh, true, Always(), "fetch address high"))
       .Then(CycleSlotSpec{
           MicroBusAction::kNone,
           MicroInternalOp::kAddIndexToAddr,
