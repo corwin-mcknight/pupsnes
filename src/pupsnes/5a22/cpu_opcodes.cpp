@@ -710,15 +710,51 @@ constexpr auto MakeBitDpxSpec() {
   };
 }
 
+// ALU dp,X specs (plan 01-03) — 6 non-BIT ALU mnemonics. Cycle formula
+// 5-m+w per Bruce Clark §6.1.1.1. BIT dp,X (0x34) is NOT registered here —
+// it is already in MakeBitDpxSpec above (plan 01-02); adding 0x34 again
+// would trip ValidateOpcodeSpecs' duplicate-byte static_assert.
+constexpr auto MakeAluDpxSpecs() {
+  return std::array{
+      Opcode(0x75, "ADC", "direct page indexed X")
+          .Then(FetchDirectPageIndexed(Reg::kX))
+          .Then(AluFromAddr(AluOp::kAdc, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0xF5, "SBC", "direct page indexed X")
+          .Then(FetchDirectPageIndexed(Reg::kX))
+          .Then(AluFromAddr(AluOp::kSbc, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0x35, "AND", "direct page indexed X")
+          .Then(FetchDirectPageIndexed(Reg::kX))
+          .Then(AluFromAddr(AluOp::kAnd, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0x15, "ORA", "direct page indexed X")
+          .Then(FetchDirectPageIndexed(Reg::kX))
+          .Then(AluFromAddr(AluOp::kOra, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0x55, "EOR", "direct page indexed X")
+          .Then(FetchDirectPageIndexed(Reg::kX))
+          .Then(AluFromAddr(AluOp::kEor, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0xD5, "CMP", "direct page indexed X")
+          .Then(FetchDirectPageIndexed(Reg::kX))
+          .Then(AluFromAddr(AluOp::kCmp, TimingCondition::kAccumulator16))
+          .Build(),
+  };
+}
+
 constexpr auto kExplicitOpcodeSpecs = ConcatArrays(
     ConcatArrays(
-        ConcatArrays(ConcatArrays(MakeMiscSpecs(), MakeLoadSpecs()), ConcatArrays(MakeStoreSpecs(), MakeBranchSpecs())),
         ConcatArrays(
-            ConcatArrays(ConcatArrays(ConcatArrays(ConcatArrays(MakeStackSpecs(), MakeIncDecSpecs()), MakeFlagSpecs()),
-                                      MakeTransferSpecs()),
-                         MakeJumpSpecs()),
-            ConcatArrays(MakeAluSpecs(), MakeShiftSpecs()))),
-    ConcatArrays(MakeAluAbsSpecs(), MakeBitDpxSpec()));
+            ConcatArrays(ConcatArrays(MakeMiscSpecs(), MakeLoadSpecs()),
+                         ConcatArrays(MakeStoreSpecs(), MakeBranchSpecs())),
+            ConcatArrays(ConcatArrays(ConcatArrays(ConcatArrays(ConcatArrays(MakeStackSpecs(), MakeIncDecSpecs()),
+                                                                MakeFlagSpecs()),
+                                                   MakeTransferSpecs()),
+                                      MakeJumpSpecs()),
+                         ConcatArrays(MakeAluSpecs(), MakeShiftSpecs()))),
+        ConcatArrays(MakeAluAbsSpecs(), MakeBitDpxSpec())),
+    MakeAluDpxSpecs());
 
 static_assert(ValidateOpcodeSpecs(kExplicitOpcodeSpecs), "Opcode specification validation failed");
 
