@@ -60,6 +60,7 @@ set(PUPSNES_TEST_SOURCES
   src/tests/run_control_tests.cpp
   src/tests/microop_trace_tests.cpp
   src/tests/opcode_alu_abs_tests.cpp
+  src/tests/opcode_alu_dpx_tests.cpp
 )
 
 set(PUPSNES_PROFILE "PRODUCTION" CACHE STRING "Build profile: DEBUG, CI, or PRODUCTION")
