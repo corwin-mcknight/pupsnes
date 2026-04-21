@@ -743,18 +743,55 @@ constexpr auto MakeAluDpxSpecs() {
   };
 }
 
+// ALU sr,S specs (plan 01-04) — 6 ALU mnemonics (BIT has no sr,S form per
+// Bruce Clark). Cycle formula 5-m per Bruce Clark §6.1.1.1. STA sr,S (0x83)
+// and LDA sr,S (0xA3) are NOT registered here — they already live in
+// MakeStoreSpecs / MakeLoadSpecs; re-adding would trip the duplicate-byte
+// static_assert. No DL-nonzero penalty — FetchStackRelative has no
+// kDirectPageLowNonzero slot.
+constexpr auto MakeAluSrSpecs() {
+  return std::array{
+      Opcode(0x63, "ADC", "stack relative")
+          .Then(FetchStackRelative())
+          .Then(AluFromAddr(AluOp::kAdc, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0xE3, "SBC", "stack relative")
+          .Then(FetchStackRelative())
+          .Then(AluFromAddr(AluOp::kSbc, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0x23, "AND", "stack relative")
+          .Then(FetchStackRelative())
+          .Then(AluFromAddr(AluOp::kAnd, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0x03, "ORA", "stack relative")
+          .Then(FetchStackRelative())
+          .Then(AluFromAddr(AluOp::kOra, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0x43, "EOR", "stack relative")
+          .Then(FetchStackRelative())
+          .Then(AluFromAddr(AluOp::kEor, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0xC3, "CMP", "stack relative")
+          .Then(FetchStackRelative())
+          .Then(AluFromAddr(AluOp::kCmp, TimingCondition::kAccumulator16))
+          .Build(),
+  };
+}
+
 constexpr auto kExplicitOpcodeSpecs = ConcatArrays(
     ConcatArrays(
         ConcatArrays(
-            ConcatArrays(ConcatArrays(MakeMiscSpecs(), MakeLoadSpecs()),
-                         ConcatArrays(MakeStoreSpecs(), MakeBranchSpecs())),
-            ConcatArrays(ConcatArrays(ConcatArrays(ConcatArrays(ConcatArrays(MakeStackSpecs(), MakeIncDecSpecs()),
-                                                                MakeFlagSpecs()),
-                                                   MakeTransferSpecs()),
-                                      MakeJumpSpecs()),
-                         ConcatArrays(MakeAluSpecs(), MakeShiftSpecs()))),
-        ConcatArrays(MakeAluAbsSpecs(), MakeBitDpxSpec())),
-    MakeAluDpxSpecs());
+            ConcatArrays(
+                ConcatArrays(ConcatArrays(MakeMiscSpecs(), MakeLoadSpecs()),
+                             ConcatArrays(MakeStoreSpecs(), MakeBranchSpecs())),
+                ConcatArrays(ConcatArrays(ConcatArrays(ConcatArrays(ConcatArrays(MakeStackSpecs(), MakeIncDecSpecs()),
+                                                                    MakeFlagSpecs()),
+                                                       MakeTransferSpecs()),
+                                          MakeJumpSpecs()),
+                             ConcatArrays(MakeAluSpecs(), MakeShiftSpecs()))),
+            ConcatArrays(MakeAluAbsSpecs(), MakeBitDpxSpec())),
+        MakeAluDpxSpecs()),
+    MakeAluSrSpecs());
 
 static_assert(ValidateOpcodeSpecs(kExplicitOpcodeSpecs), "Opcode specification validation failed");
 
