@@ -6,6 +6,7 @@
 #include <cctype>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <exception>
 #include <filesystem>
 #include <fstream>
@@ -39,6 +40,9 @@ int DebuggerApp::Run(const std::optional<std::string>& initial_rom_path) {
   if (!InitWindow()) {
     return 1;
   }
+
+  InitFileShortcuts();
+  LoadAppConfig();
 
   if (initial_rom_path.has_value()) {
     ui_state_.rom_path_input = *initial_rom_path;
@@ -95,6 +99,15 @@ bool DebuggerApp::LoadRomFromPath(const std::string& path) {
     run_control_.ResetMachineState();
     loaded_rom_ = true;
     loaded_rom_path_ = path;
+    std::error_code abs_ec;
+    const fs::path absolute = fs::weakly_canonical(fs::path(path), abs_ec);
+    const std::string resolved = abs_ec ? path : absolute.string();
+    ui_state_.last_rom_path = resolved;
+    const fs::path parent = fs::path(resolved).parent_path();
+    if (!parent.empty()) {
+      ui_state_.load_rom_dir = parent.string();
+    }
+    SaveAppConfig();
     JumpToAddress(GetCurrentPc());
     return true;
   } catch (const std::exception& ex) {
@@ -302,6 +315,16 @@ void DebuggerApp::RenderMenuBar() {
         ui_state_.open_load_rom_dialog = true;
         ui_state_.load_rom_error.clear();
       }
+      const bool has_last = !ui_state_.last_rom_path.empty();
+      const std::string last_label =
+          has_last ? ("Load Last ROM (" + std::filesystem::path(ui_state_.last_rom_path).filename().string() + ")")
+                   : std::string("Load Last ROM");
+      if (ImGui::MenuItem(last_label.c_str(), nullptr, false, has_last)) {
+        if (!LoadRomFromPath(ui_state_.last_rom_path)) {
+          ui_state_.load_rom_error = "Failed to load: " + ui_state_.last_rom_path;
+          ui_state_.open_load_rom_dialog = true;
+        }
+      }
       ImGui::Separator();
       if (ImGui::MenuItem("Exit")) {
         glfwSetWindowShouldClose(window_, GLFW_TRUE);
@@ -378,55 +401,106 @@ void DebuggerApp::RenderLoadRomDialog() {
     ui_state_.open_load_rom_dialog = false;
   }
 
-  ImGui::SetNextWindowSize(ImVec2(520.0F, 360.0F), ImGuiCond_Appearing);
+  ImGui::SetNextWindowSize(ImVec2(760.0F, 460.0F), ImGuiCond_Appearing);
   if (!ImGui::BeginPopupModal("Load ROM", nullptr, ImGuiWindowFlags_NoCollapse)) {
     return;
   }
 
-  ImGui::TextUnformatted("Directory:");
-  ImGui::SameLine();
-  ImGui::TextUnformatted(ui_state_.load_rom_dir.c_str());
-
-  ImGui::Separator();
-
-  std::error_code ec;
-  const fs::path dir(ui_state_.load_rom_dir);
-  if (!fs::exists(dir, ec) || !fs::is_directory(dir, ec)) {
-    ImGui::TextColored(ImVec4(0.95F, 0.5F, 0.25F, 1.0F), "Directory not found: %s", ui_state_.load_rom_dir.c_str());
-  } else {
-    std::vector<fs::path> entries;
-    for (const auto& entry : fs::directory_iterator(dir, ec)) {
-      if (!entry.is_regular_file(ec)) {
-        continue;
+  // Sidebar: shortcuts.
+  if (ImGui::BeginChild("rom_shortcuts", ImVec2(180.0F, -ImGui::GetFrameHeightWithSpacing()),
+                        ImGuiChildFlags_Borders)) {
+    ImGui::TextDisabled("Shortcuts");
+    ImGui::Separator();
+    if (!ui_state_.last_rom_path.empty()) {
+      if (ImGui::Button("Last ROM", ImVec2(-1.0F, 0.0F))) {
+        if (LoadRomFromPath(ui_state_.last_rom_path)) {
+          ui_state_.load_rom_error.clear();
+          ImGui::CloseCurrentPopup();
+        } else {
+          ui_state_.load_rom_error = "Failed to load: " + ui_state_.last_rom_path;
+        }
       }
-      std::string ext = entry.path().extension().string();
-      for (char& c : ext) {
-        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-      }
-      if (ext == ".sfc" || ext == ".smc") {
-        entries.push_back(entry.path());
+      ImGui::Separator();
+    }
+    for (const FileShortcut& sc : ui_state_.load_rom_shortcuts) {
+      if (ImGui::Button(sc.label.c_str(), ImVec2(-1.0F, 0.0F))) {
+        ui_state_.load_rom_dir = sc.path;
+        ui_state_.load_rom_error.clear();
       }
     }
-    std::sort(entries.begin(), entries.end());
+  }
+  ImGui::EndChild();
 
-    if (ImGui::BeginChild("rom_list", ImVec2(0.0F, 240.0F), ImGuiChildFlags_Borders)) {
-      if (entries.empty()) {
-        ImGui::TextDisabled("No .sfc or .smc files found.");
+  ImGui::SameLine();
+
+  // Main pane: path bar + entries list.
+  if (ImGui::BeginChild("rom_browser", ImVec2(0.0F, -ImGui::GetFrameHeightWithSpacing()))) {
+    std::error_code ec;
+    fs::path dir(ui_state_.load_rom_dir);
+    if (!fs::exists(dir, ec) || !fs::is_directory(dir, ec)) {
+      ImGui::TextColored(ImVec4(0.95F, 0.5F, 0.25F, 1.0F), "Directory not found: %s", ui_state_.load_rom_dir.c_str());
+    } else {
+      if (ImGui::Button("Up")) {
+        const fs::path parent = dir.parent_path();
+        if (!parent.empty() && parent != dir) {
+          ui_state_.load_rom_dir = parent.string();
+          dir = parent;
+        }
       }
-      for (const fs::path& path : entries) {
-        const std::string name = path.filename().string();
-        if (ImGui::Selectable(name.c_str(), false, ImGuiSelectableFlags_AllowDoubleClick)) {
-          if (LoadRomFromPath(path.string())) {
-            ui_state_.load_rom_error.clear();
-            ImGui::CloseCurrentPopup();
-          } else {
-            ui_state_.load_rom_error = "Failed to load: " + name;
+      ImGui::SameLine();
+      ImGui::TextUnformatted(ui_state_.load_rom_dir.c_str());
+      ImGui::Separator();
+
+      std::vector<fs::path> subdirs;
+      std::vector<fs::path> files;
+      for (const auto& entry : fs::directory_iterator(dir, ec)) {
+        const bool is_dir = entry.is_directory(ec);
+        const bool is_file = entry.is_regular_file(ec);
+        if (is_dir) {
+          const std::string name = entry.path().filename().string();
+          if (!name.empty() && name.front() == '.') {
+            continue;
+          }
+          subdirs.push_back(entry.path());
+        } else if (is_file) {
+          std::string ext = entry.path().extension().string();
+          for (char& c : ext) {
+            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+          }
+          if (ext == ".sfc" || ext == ".smc") {
+            files.push_back(entry.path());
           }
         }
       }
+      std::sort(subdirs.begin(), subdirs.end());
+      std::sort(files.begin(), files.end());
+
+      if (ImGui::BeginChild("rom_list", ImVec2(0.0F, 0.0F), ImGuiChildFlags_Borders)) {
+        if (subdirs.empty() && files.empty()) {
+          ImGui::TextDisabled("No subdirectories or .sfc/.smc files.");
+        }
+        for (const fs::path& sub : subdirs) {
+          const std::string label = "[DIR] " + sub.filename().string();
+          if (ImGui::Selectable(label.c_str(), false)) {
+            ui_state_.load_rom_dir = sub.string();
+          }
+        }
+        for (const fs::path& path : files) {
+          const std::string name = path.filename().string();
+          if (ImGui::Selectable(name.c_str(), false, ImGuiSelectableFlags_AllowDoubleClick)) {
+            if (LoadRomFromPath(path.string())) {
+              ui_state_.load_rom_error.clear();
+              ImGui::CloseCurrentPopup();
+            } else {
+              ui_state_.load_rom_error = "Failed to load: " + name;
+            }
+          }
+        }
+      }
+      ImGui::EndChild();
     }
-    ImGui::EndChild();
   }
+  ImGui::EndChild();
 
   if (!ui_state_.load_rom_error.empty()) {
     ImGui::TextColored(ImVec4(0.95F, 0.25F, 0.25F, 1.0F), "%s", ui_state_.load_rom_error.c_str());
@@ -436,6 +510,81 @@ void DebuggerApp::RenderLoadRomDialog() {
     ImGui::CloseCurrentPopup();
   }
   ImGui::EndPopup();
+}
+
+void DebuggerApp::InitFileShortcuts() {
+  namespace fs = std::filesystem;
+  ui_state_.load_rom_shortcuts.clear();
+
+  std::error_code ec;
+  const fs::path cwd = fs::current_path(ec);
+
+  auto add_if_exists = [&](std::string label, const fs::path& candidate) {
+    std::error_code exists_ec;
+    if (!fs::exists(candidate, exists_ec) || !fs::is_directory(candidate, exists_ec)) {
+      return;
+    }
+    std::error_code canon_ec;
+    const fs::path resolved = fs::weakly_canonical(candidate, canon_ec);
+    const std::string path_str = canon_ec ? candidate.string() : resolved.string();
+    for (const FileShortcut& existing : ui_state_.load_rom_shortcuts) {
+      if (existing.path == path_str) {
+        return;
+      }
+    }
+    ui_state_.load_rom_shortcuts.push_back({std::move(label), path_str});
+  };
+
+  add_if_exists("ROMs", cwd / "roms");
+  add_if_exists("Test ROMs", cwd / "testroms");
+  add_if_exists("Built Test ROMs", cwd / "build" / "dev" / "test-roms");
+
+  const char* home = std::getenv("HOME");
+  if (home != nullptr && *home != '\0') {
+    const fs::path home_path(home);
+    add_if_exists("Home", home_path);
+  }
+}
+
+std::string DebuggerApp::GetConfigPath() {
+  namespace fs = std::filesystem;
+  const char* home = std::getenv("HOME");
+  if (home != nullptr && *home != '\0') {
+    return (fs::path(home) / ".pupsnes_config.ini").string();
+  }
+  return (fs::current_path() / ".pupsnes_config.ini").string();
+}
+
+void DebuggerApp::LoadAppConfig() {
+  const std::string path = GetConfigPath();
+  std::ifstream stream(path);
+  if (!stream.good()) {
+    return;
+  }
+  std::string line;
+  while (std::getline(stream, line)) {
+    const std::size_t eq = line.find('=');
+    if (eq == std::string::npos) {
+      continue;
+    }
+    const std::string key = line.substr(0, eq);
+    const std::string value = line.substr(eq + 1);
+    if (key == "last_rom_path") {
+      ui_state_.last_rom_path = value;
+    } else if (key == "last_rom_dir") {
+      ui_state_.load_rom_dir = value;
+    }
+  }
+}
+
+void DebuggerApp::SaveAppConfig() {
+  const std::string path = GetConfigPath();
+  std::ofstream stream(path, std::ios::trunc);
+  if (!stream.good()) {
+    return;
+  }
+  stream << "last_rom_path=" << ui_state_.last_rom_path << "\n";
+  stream << "last_rom_dir=" << ui_state_.load_rom_dir << "\n";
 }
 
 void DebuggerApp::RenderFatalModal() {

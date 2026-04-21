@@ -5,6 +5,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 struct GLFWwindow;
 
@@ -36,6 +37,11 @@ struct RegisterHistory {
   float hi_I = 0.0F, hi_Z = 0.0F, hi_C = 0.0F, hi_E = 0.0F;
 };
 
+struct FileShortcut {
+  std::string label;
+  std::string path;
+};
+
 struct UiState {
   std::string rom_path_input;
   uint64_t step_count = 10;
@@ -43,6 +49,8 @@ struct UiState {
   bool open_load_rom_dialog = false;
   std::string load_rom_dir = "build/dev/test-roms";
   std::string load_rom_error;
+  std::vector<FileShortcut> load_rom_shortcuts;
+  std::string last_rom_path;
   bool follow_pc = true;
   SnesAddrT disasm_address = 0x008000;
   SnesAddrT memory_address = 0x7E0000;
@@ -102,6 +110,10 @@ class DebuggerApp {
   void RenderMenuBar();
   void RenderLoadRomDialog();
   void RenderFatalModal();
+  void InitFileShortcuts();
+  void LoadAppConfig();
+  void SaveAppConfig();
+  static std::string GetConfigPath();
 
   static void GlfwErrorCallback(int code, const char* description);
 
