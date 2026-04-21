@@ -113,6 +113,10 @@ enum class MicroInternalOp : uint8_t {
                              // A/X/Y (or just update Z for BIT imm). Params pack AluOp in
                              // bits [3:0] (see micro_op_params::PackAluOp). Dispatch lives
                              // in the kAlu8Imm case in ExecuteInternalOp in cpu.cpp.
+  kShiftRotateA,             // ASL/LSR/ROL/ROR on A. Width follows M flag.
+                             // Params[1:0] = ShiftOp (kAsl/kLsr/kRol/kRor).
+                             // Dispatch lives in the kShiftRotateA case in
+                             // ExecuteInternalOp in cpu.cpp.
   kAlu16Imm,                 // 16-bit ALU immediate: apply AluOp to the 16-bit operand
                              // formed from addr_[7:0] (low, stashed by a prior
                              // kSetAddrByteFromFetch(kLow)) and fetch_data_ (high). Params
@@ -129,6 +133,7 @@ enum class ByteSel : uint8_t { kLow, kHigh, kBank };
 enum class Flag : uint8_t { kC, kD, kI, kV, kZ, kN, kM, kX };
 enum class BranchCond : uint8_t { kAlways, kZ, kNotZ, kC, kNotC, kN, kNotN, kV, kNotV };
 enum class AluOp : uint8_t { kAdc, kSbc, kAnd, kOra, kEor, kCmp, kCpx, kCpy, kBit };
+enum class ShiftOp : uint8_t { kAsl, kLsr, kRol, kRor };
 enum class WriteSrc : uint8_t { kFetchData, kA, kX, kY, kZero };
 enum class PushSrc : uint8_t {
   kA8,

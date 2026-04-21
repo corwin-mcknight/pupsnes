@@ -209,7 +209,7 @@ constexpr std::string_view NormalizeAddressing(std::string_view internal) {
 // One row per currently implemented opcode. Add rows as new opcodes land.
 // Columns lifted verbatim from docs/plans/6502opcodes.md. Flag masks built
 // with FlagsFrom() from Clark's nvmxdizc column.
-constexpr std::array<SpecEntry, 99> kSpec = {{
+constexpr std::array<SpecEntry, 109> kSpec = {{
     // Misc
     {0xEA, "NOP", "impl", "1", "2", FlagsFrom("........")},
 
@@ -335,6 +335,20 @@ constexpr std::array<SpecEntry, 99> kSpec = {{
     {0x89, "BIT", "imm", "3-m", "3-m", FlagsFrom("......m.")},
     {0xE0, "CPX", "imm", "3-x", "3-x", FlagsFrom("n.x...xx")},
     {0xC0, "CPY", "imm", "3-x", "3-x", FlagsFrom("n.x...xx")},
+
+    // Shift/rotate on accumulator
+    {0x0A, "ASL", "impl", "1", "2", FlagsFrom("n.....zc")},
+    {0x4A, "LSR", "impl", "1", "2", FlagsFrom("n.....zc")},
+    {0x2A, "ROL", "impl", "1", "2", FlagsFrom("n.....zc")},
+    {0x6A, "ROR", "impl", "1", "2", FlagsFrom("n.....zc")},
+
+    // ALU direct page
+    {0x65, "ADC", "dir", "2", "4-m+w", FlagsFrom("nvm...mm"), 0U, true},
+    {0xE5, "SBC", "dir", "2", "4-m+w", FlagsFrom("nvm...mm"), 0U, true},
+    {0x25, "AND", "dir", "2", "4-m+w", FlagsFrom("n.m...m."), 0U, true},
+    {0x05, "ORA", "dir", "2", "4-m+w", FlagsFrom("n.m...m."), 0U, true},
+    {0x45, "EOR", "dir", "2", "4-m+w", FlagsFrom("n.m...m."), 0U, true},
+    {0xC5, "CMP", "dir", "2", "4-m+w", FlagsFrom("n.m...mm"), 0U, true},
 
     // Jumps
     {0x4C, "JMP", "abs", "3", "3", FlagsFrom("........")},

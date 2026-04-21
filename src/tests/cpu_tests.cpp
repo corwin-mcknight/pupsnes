@@ -2319,6 +2319,213 @@ TEST_CASE("CPX immediate compares X", "[cpu][opcode]") {
   REQUIRE(f.cpu.GetRegs().P.Z == false);
 }
 
+TEST_CASE("ADC direct page 8-bit adds value at DP+offset", "[cpu][opcode]") {
+  ResetFixture f;
+  f.SetRomByte(0x0000U, 0x65);
+  f.SetRomByte(0x0001U, 0x20);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  f.wram.WriteRegister(0x0020, 0x05);
+  auto regs = f.cpu.GetRegs();
+  regs.A = 0x0040;
+  regs.P.C = false;
+  f.cpu.SetRegs(regs);
+
+  TickResult r = f.cpu.Tick(3);  // 4-m+w with m=1,w=0 = 3
+
+  REQUIRE(r.completed_cycles == 3);
+  REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x45);
+  REQUIRE(f.cpu.GetRegs().PC == 0x8002);
+}
+
+TEST_CASE("ADC direct page 16-bit adds value at DP+offset", "[cpu][opcode]") {
+  ResetFixture f;
+  f.SetRomByte(0x0000U, 0x65);
+  f.SetRomByte(0x0001U, 0x40);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  f.wram.WriteRegister(0x0040, 0x34);
+  f.wram.WriteRegister(0x0041, 0x12);
+  auto regs = f.cpu.GetRegs();
+  regs.P.E = false;
+  regs.P.M = false;
+  regs.A = 0x1000;
+  regs.P.C = false;
+  f.cpu.SetRegs(regs);
+
+  TickResult r = f.cpu.Tick(4);  // 4-m+w with m=0,w=0 = 4
+
+  REQUIRE(r.completed_cycles == 4);
+  REQUIRE(f.cpu.GetRegs().A == 0x2234);
+}
+
+TEST_CASE("ADC direct page pays DL-nonzero penalty", "[cpu][opcode]") {
+  ResetFixture f;
+  f.SetRomByte(0x0000U, 0x65);
+  f.SetRomByte(0x0001U, 0x10);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  auto regs = f.cpu.GetRegs();
+  regs.DP = 0x0123;
+  regs.A = 0x0001;
+  regs.P.C = false;
+  f.cpu.SetRegs(regs);
+  f.wram.WriteRegister(0x0133, 0x02);
+
+  TickResult r = f.cpu.Tick(4);  // 4-m+w with m=1,w=1 = 4
+
+  REQUIRE(r.completed_cycles == 4);
+  REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x03);
+}
+
+TEST_CASE("SBC direct page subtracts with borrow", "[cpu][opcode]") {
+  ResetFixture f;
+  f.SetRomByte(0x0000U, 0xE5);
+  f.SetRomByte(0x0001U, 0x10);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  f.wram.WriteRegister(0x0010, 0x01);
+  auto regs = f.cpu.GetRegs();
+  regs.A = 0x0005;
+  regs.P.C = true;
+  f.cpu.SetRegs(regs);
+
+  (void)f.cpu.Tick(3);
+
+  REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x04);
+  REQUIRE(f.cpu.GetRegs().P.C == true);
+}
+
+TEST_CASE("AND/ORA/EOR direct page combine A with memory", "[cpu][opcode]") {
+  ResetFixture f;
+  // AND $10 ; ORA $11 ; EOR $12
+  f.SetRomByte(0x0000U, 0x25);
+  f.SetRomByte(0x0001U, 0x10);
+  f.SetRomByte(0x0002U, 0x05);
+  f.SetRomByte(0x0003U, 0x11);
+  f.SetRomByte(0x0004U, 0x45);
+  f.SetRomByte(0x0005U, 0x12);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  f.wram.WriteRegister(0x0010, 0x0F);
+  f.wram.WriteRegister(0x0011, 0xF0);
+  f.wram.WriteRegister(0x0012, 0xFF);
+  auto regs = f.cpu.GetRegs();
+  regs.A = 0x00A5;
+  f.cpu.SetRegs(regs);
+
+  // 3+3+3 = 9 cycles (all m=1, w=0).
+  TickResult r = f.cpu.Tick(9);
+
+  REQUIRE(r.completed_cycles == 9);
+  // A5 & 0F = 05 ; 05 | F0 = F5 ; F5 ^ FF = 0A
+  REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x0A);
+}
+
+TEST_CASE("CMP direct page sets Z when equal", "[cpu][opcode]") {
+  ResetFixture f;
+  f.SetRomByte(0x0000U, 0xC5);
+  f.SetRomByte(0x0001U, 0x20);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  f.wram.WriteRegister(0x0020, 0x42);
+  auto regs = f.cpu.GetRegs();
+  regs.A = 0x0042;
+  f.cpu.SetRegs(regs);
+
+  (void)f.cpu.Tick(3);
+
+  REQUIRE(f.cpu.GetRegs().P.Z == true);
+  REQUIRE(f.cpu.GetRegs().P.C == true);
+  REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x42);  // A preserved
+}
+
+TEST_CASE("ASL A shifts accumulator left, bit 7 into C", "[cpu][opcode]") {
+  TestFixture f;
+  f.LoadAt(0, {0x0A});
+  auto regs = f.cpu.GetRegs();
+  regs.A = 0x00C3;
+  regs.P.C = false;
+  f.cpu.SetRegs(regs);
+
+  TickResult r = f.cpu.Tick(2);
+
+  REQUIRE(r.completed_cycles == 2);
+  REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x86);
+  REQUIRE(f.cpu.GetRegs().P.C == true);
+  REQUIRE(f.cpu.GetRegs().P.N == true);
+  REQUIRE(f.cpu.GetRegs().P.Z == false);
+}
+
+TEST_CASE("ASL A 16-bit shifts full accumulator", "[cpu][opcode]") {
+  TestFixture f;
+  f.LoadAt(0, {0x0A});
+  auto regs = f.cpu.GetRegs();
+  regs.P.E = false;
+  regs.P.M = false;
+  regs.A = 0x4001;
+  regs.P.C = false;
+  f.cpu.SetRegs(regs);
+
+  (void)f.cpu.Tick(2);
+
+  REQUIRE(f.cpu.GetRegs().A == 0x8002);
+  REQUIRE(f.cpu.GetRegs().P.C == false);
+  REQUIRE(f.cpu.GetRegs().P.N == true);
+}
+
+TEST_CASE("LSR A shifts right, bit 0 into C", "[cpu][opcode]") {
+  TestFixture f;
+  f.LoadAt(0, {0x4A});
+  auto regs = f.cpu.GetRegs();
+  regs.A = 0x0003;
+  regs.P.C = false;
+  f.cpu.SetRegs(regs);
+
+  (void)f.cpu.Tick(2);
+
+  REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x01);
+  REQUIRE(f.cpu.GetRegs().P.C == true);
+  REQUIRE(f.cpu.GetRegs().P.N == false);
+}
+
+TEST_CASE("ROL A rotates through carry", "[cpu][opcode]") {
+  TestFixture f;
+  f.LoadAt(0, {0x2A});
+  auto regs = f.cpu.GetRegs();
+  regs.A = 0x0081;
+  regs.P.C = true;
+  f.cpu.SetRegs(regs);
+
+  (void)f.cpu.Tick(2);
+
+  // 0x81 << 1 | C=1 -> 0x03, C out = 1
+  REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x03);
+  REQUIRE(f.cpu.GetRegs().P.C == true);
+}
+
+TEST_CASE("ROR A rotates right through carry", "[cpu][opcode]") {
+  TestFixture f;
+  f.LoadAt(0, {0x6A});
+  auto regs = f.cpu.GetRegs();
+  regs.A = 0x0002;
+  regs.P.C = true;
+  f.cpu.SetRegs(regs);
+
+  (void)f.cpu.Tick(2);
+
+  // 0x02 >> 1 with C=1 in bit 7 -> 0x81, C out = 0
+  REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x81);
+  REQUIRE(f.cpu.GetRegs().P.C == false);
+  REQUIRE(f.cpu.GetRegs().P.N == true);
+}
+
 TEST_CASE("BIT immediate only affects Z", "[cpu][opcode]") {
   TestFixture f;
   f.LoadAt(0, {0x89, 0xF0});

@@ -41,6 +41,7 @@ std::string_view ToString(MicroInternalOp op) {
     case MicroInternalOp::kLoadAddrByteAndSetPc: return "LoadAddrByteAndSetPc";
     case MicroInternalOp::kAlu8Imm: return "Alu8Imm";
     case MicroInternalOp::kAlu16Imm: return "Alu16Imm";
+    case MicroInternalOp::kShiftRotateA: return "ShiftRotateA";
   }
   return "?";
 }

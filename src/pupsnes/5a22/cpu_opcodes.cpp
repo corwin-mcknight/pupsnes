@@ -567,6 +567,25 @@ constexpr CycleFragment Rtl() {
       .Build();
 }
 
+constexpr CycleSlotSpec ShiftRotateAccumulator(ShiftOp op, std::string_view label) {
+  return CycleSlotSpec{
+      MicroBusAction::kNone,
+      MicroInternalOp::kShiftRotateA,
+      Always(),
+      label,
+      static_cast<uint8_t>(static_cast<uint32_t>(op) & 0x03U),
+  };
+}
+
+constexpr auto MakeShiftSpecs() {
+  return std::array{
+      Opcode(0x0A, "ASL", "implied").Then(ShiftRotateAccumulator(ShiftOp::kAsl, "ASL A")).Build(),
+      Opcode(0x4A, "LSR", "implied").Then(ShiftRotateAccumulator(ShiftOp::kLsr, "LSR A")).Build(),
+      Opcode(0x2A, "ROL", "implied").Then(ShiftRotateAccumulator(ShiftOp::kRol, "ROL A")).Build(),
+      Opcode(0x6A, "ROR", "implied").Then(ShiftRotateAccumulator(ShiftOp::kRor, "ROR A")).Build(),
+  };
+}
+
 constexpr auto MakeAluSpecs() {
   return std::array{
       Opcode(0x69, "ADC", "immediate").Then(AluImmediateAccumulator(AluOp::kAdc)).Build(),
@@ -578,6 +597,30 @@ constexpr auto MakeAluSpecs() {
       Opcode(0x89, "BIT", "immediate").Then(AluImmediateAccumulator(AluOp::kBit)).Build(),
       Opcode(0xE0, "CPX", "immediate index").Then(AluImmediateIndex(AluOp::kCpx)).Build(),
       Opcode(0xC0, "CPY", "immediate index").Then(AluImmediateIndex(AluOp::kCpy)).Build(),
+      Opcode(0x65, "ADC", "direct page")
+          .Then(FetchDirectPage())
+          .Then(AluFromAddr(AluOp::kAdc, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0xE5, "SBC", "direct page")
+          .Then(FetchDirectPage())
+          .Then(AluFromAddr(AluOp::kSbc, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0x25, "AND", "direct page")
+          .Then(FetchDirectPage())
+          .Then(AluFromAddr(AluOp::kAnd, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0x05, "ORA", "direct page")
+          .Then(FetchDirectPage())
+          .Then(AluFromAddr(AluOp::kOra, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0x45, "EOR", "direct page")
+          .Then(FetchDirectPage())
+          .Then(AluFromAddr(AluOp::kEor, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0xC5, "CMP", "direct page")
+          .Then(FetchDirectPage())
+          .Then(AluFromAddr(AluOp::kCmp, TimingCondition::kAccumulator16))
+          .Build(),
   };
 }
 
@@ -598,7 +641,7 @@ constexpr auto kExplicitOpcodeSpecs = ConcatArrays(
         ConcatArrays(ConcatArrays(ConcatArrays(ConcatArrays(MakeStackSpecs(), MakeIncDecSpecs()), MakeFlagSpecs()),
                                   MakeTransferSpecs()),
                      MakeJumpSpecs()),
-        MakeAluSpecs()));
+        ConcatArrays(MakeAluSpecs(), MakeShiftSpecs())));
 
 static_assert(ValidateOpcodeSpecs(kExplicitOpcodeSpecs), "Opcode specification validation failed");
 

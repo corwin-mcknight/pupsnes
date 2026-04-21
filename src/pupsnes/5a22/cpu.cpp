@@ -497,6 +497,42 @@ void CPU::ExecuteInternalOp(MicroInternalOp op, [[maybe_unused]] uint8_t params)
       return;
     }
 
+    case MicroInternalOp::kShiftRotateA: {
+      const ShiftOp sop = static_cast<ShiftOp>(params & 0x03U);
+      const bool wide = IsAccumulator16Bit(regs_);
+      const uint16_t mask = wide ? 0xFFFFU : 0x00FFU;
+      const uint16_t sign = wide ? 0x8000U : 0x0080U;
+      const uint16_t a_keep = wide ? 0x0000U : 0xFF00U;
+      const uint16_t a_val = regs_.A & mask;
+      uint16_t result = 0;
+      bool carry_out = false;
+      switch (sop) {
+        case ShiftOp::kAsl:
+          carry_out = (a_val & sign) != 0U;
+          result = static_cast<uint16_t>((static_cast<uint32_t>(a_val) << 1U) & mask);
+          break;
+        case ShiftOp::kLsr:
+          carry_out = (a_val & 0x0001U) != 0U;
+          result = static_cast<uint16_t>(static_cast<uint32_t>(a_val) >> 1U);
+          break;
+        case ShiftOp::kRol:
+          carry_out = (a_val & sign) != 0U;
+          result = static_cast<uint16_t>(
+              ((static_cast<uint32_t>(a_val) << 1U) | (regs_.P.C ? 1U : 0U)) & mask);
+          break;
+        case ShiftOp::kRor:
+          carry_out = (a_val & 0x0001U) != 0U;
+          result = static_cast<uint16_t>((static_cast<uint32_t>(a_val) >> 1U) |
+                                         (regs_.P.C ? static_cast<uint32_t>(sign) : 0U));
+          break;
+      }
+      regs_.P.C = carry_out;
+      regs_.P.Z = (result == 0U);
+      regs_.P.N = (result & sign) != 0U;
+      regs_.A = static_cast<uint16_t>((regs_.A & a_keep) | (result & mask));
+      return;
+    }
+
     case MicroInternalOp::kAlu8Imm:
     case MicroInternalOp::kAlu16Imm: {
       // Width + sign/carry bit positions selected by the op variant. The
@@ -504,8 +540,11 @@ void CPU::ExecuteInternalOp(MicroInternalOp op, [[maybe_unused]] uint8_t params)
       // addr_[7:0] (low, stashed by a prior kSetAddrByteFromFetch(kLow)).
       const bool wide = (op == MicroInternalOp::kAlu16Imm);
       const uint16_t fetch_high = static_cast<uint16_t>(static_cast<uint16_t>(fetch_data_) << 8U);
+      const uint16_t low_src = mp::UnpackAluLowFromScratch(params)
+                                   ? static_cast<uint16_t>(addr_scratch_ & 0xFFU)
+                                   : static_cast<uint16_t>(addr_ & 0xFFU);
       const uint16_t operand =
-          wide ? static_cast<uint16_t>((addr_ & 0xFFU) | fetch_high) : static_cast<uint16_t>(fetch_data_);
+          wide ? static_cast<uint16_t>(low_src | fetch_high) : static_cast<uint16_t>(fetch_data_);
       const uint16_t mask = wide ? 0xFFFFU : 0x00FFU;
       const uint16_t sign = wide ? 0x8000U : 0x0080U;
       const uint32_t carry = wide ? 0x10000U : 0x0100U;

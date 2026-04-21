@@ -171,6 +171,24 @@ constexpr CycleFragment LoadRegFromAddr(Reg reg, TimingCondition wide_cond) {
       .Build();
 }
 
+// Apply an ALU operation (ADC/SBC/AND/ORA/EOR/CMP) against the byte(s) at
+// addr_, respecting the accumulator-width flag. One cycle for the 8-bit path
+// and two cycles for the 16-bit path (low byte into addr_scratch_, high byte
+// performs the 16-bit ALU using scratch low + fetch_data_ high).
+//
+// wide_cond must be kAccumulator16 for A-based ALU ops. This helper is not
+// used for CPX/CPY (they use immediate-only in the current opcode set).
+constexpr CycleFragment AluFromAddr(AluOp op, TimingCondition wide_cond) {
+  return Fragment()
+      .Then(CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kAlu8Imm, Not(Condition(wide_cond)),
+                          "read + ALU (8-bit)", micro_op_params::PackAluOp(op)})
+      .Then(CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kStashIndirectLow, Condition(wide_cond),
+                          "read low", 0})
+      .Then(CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kAlu16Imm, Condition(wide_cond),
+                          "read high + ALU (16-bit)", micro_op_params::PackAluOp(op, /*low_from_scratch=*/true)})
+      .Build();
+}
+
 // Store a register (A/X/Y) to addr_, respecting the width flag. Mirrors
 // StoreAccumulator / StoreIndexX / StoreIndexY from cpu_opcodes.cpp but
 // generalized over (WriteSrc, wide_cond). Uses the shared-params trick: the

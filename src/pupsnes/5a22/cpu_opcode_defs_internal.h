@@ -113,16 +113,22 @@ inline constexpr ByteSel UnpackWriteAddrByteSel(uint8_t params) {
 }
 
 // ALU immediate (kAlu8Imm / kAlu16Imm): bits [3:0] = AluOp (9 variants — Adc,
-// Sbc, And, Ora, Eor, Cmp, Cpx, Cpy, Bit). Dispatch lives in the kAlu8Imm case in ExecuteInternalOp /
-// the kAlu16Imm case in ExecuteInternalOp in cpu.cpp. Width selection is baked into the enum variant
-// (8 vs 16) because the two paths differ in operand plumbing: 8-bit consumes
-// fetch_data_ only; 16-bit consumes addr_[7:0] (low, stashed earlier) plus
-// fetch_data_ (high).
-inline constexpr uint8_t PackAluOp(AluOp op) {
-  return static_cast<uint8_t>(static_cast<uint32_t>(op) & 0x0FU);
+// Sbc, And, Ora, Eor, Cmp, Cpx, Cpy, Bit). Bit 4 (kAlu16Imm only) = low byte
+// source: 0 = addr_[7:0] (immediate path, stashed by a prior
+// kSetAddrByteFromFetch(kLow)); 1 = addr_scratch_[7:0] (memory path, stashed
+// by a prior kStashIndirectLow on the low-byte read).  Dispatch lives in the
+// kAlu8Imm / kAlu16Imm cases in ExecuteInternalOp in cpu.cpp. Width selection
+// is baked into the enum variant (8 vs 16) because the two paths differ in
+// operand plumbing: 8-bit consumes fetch_data_ only; 16-bit consumes the
+// low-byte source (addr_ or addr_scratch_) plus fetch_data_ (high).
+inline constexpr uint8_t PackAluOp(AluOp op, bool low_from_scratch = false) {
+  return static_cast<uint8_t>((static_cast<uint32_t>(op) & 0x0FU) | (low_from_scratch ? 0x10U : 0x00U));
 }
 inline constexpr AluOp UnpackAluOp(uint8_t params) {
   return static_cast<AluOp>(params & 0x0FU);
+}
+inline constexpr bool UnpackAluLowFromScratch(uint8_t params) {
+  return (params & 0x10U) != 0U;
 }
 
 // Set addr byte from fetch (kSetAddrByteFromFetch): bits [1:0] = ByteSel
