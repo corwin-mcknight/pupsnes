@@ -82,8 +82,8 @@ TEST_CASE("BCD SBC 16-bit locked: A=$0001 - #$2003 D=1 C=1 -> A=$7998", "[unit][
   regs.P.D = true;
   regs.P.C = true;
   f.cpu.SetRegs(regs);
-  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 32);
-  REQUIRE(r.completed_cycles == 32);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 24);
+  REQUIRE(r.completed_cycles == 24);
   REQUIRE(f.cpu.GetRegs().A == 0x7998);
   REQUIRE(f.cpu.GetRegs().P.N == false);
   REQUIRE(f.cpu.GetRegs().P.V == false);
@@ -99,8 +99,8 @@ TEST_CASE("BCD ADC 8-bit: $09 + $01 = $10 (unit-nibble carry)", "[unit][opcode][
   regs.P.D = true;
   regs.P.C = false;
   f.cpu.SetRegs(regs);
-  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 24);
-  REQUIRE(r.completed_cycles == 24);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 16);
+  REQUIRE(r.completed_cycles == 16);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x10);
   REQUIRE(f.cpu.GetRegs().P.N == false);
   REQUIRE(f.cpu.GetRegs().P.V == false);
@@ -120,8 +120,8 @@ TEST_CASE("BCD ADC 8-bit: $50 + $50 = $00 C=1 V=1 N=0", "[unit][opcode][cpu][bcd
   regs.P.D = true;
   regs.P.C = false;
   f.cpu.SetRegs(regs);
-  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 24);
-  REQUIRE(r.completed_cycles == 24);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 16);
+  REQUIRE(r.completed_cycles == 16);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x00);
   REQUIRE(f.cpu.GetRegs().P.N == false);
   REQUIRE(f.cpu.GetRegs().P.V == true);
@@ -140,8 +140,8 @@ TEST_CASE("BCD ADC 8-bit: $40 + $40 = $80 N=1 V=1", "[unit][opcode][cpu][bcd]") 
   regs.P.D = true;
   regs.P.C = false;
   f.cpu.SetRegs(regs);
-  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 24);
-  REQUIRE(r.completed_cycles == 24);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 16);
+  REQUIRE(r.completed_cycles == 16);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x80);
   REQUIRE(f.cpu.GetRegs().P.N == true);
   REQUIRE(f.cpu.GetRegs().P.V == true);
@@ -157,8 +157,8 @@ TEST_CASE("BCD ADC 8-bit: $99 + $01 = $00 C=1 (full rollover)", "[unit][opcode][
   regs.P.D = true;
   regs.P.C = false;
   f.cpu.SetRegs(regs);
-  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 24);
-  REQUIRE(r.completed_cycles == 24);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 16);
+  REQUIRE(r.completed_cycles == 16);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x00);
   REQUIRE(f.cpu.GetRegs().P.N == false);
   REQUIRE(f.cpu.GetRegs().P.V == false);
@@ -176,8 +176,8 @@ TEST_CASE("BCD ADC 16-bit: $0999 + $0001 = $1000 (nibble propagation)", "[unit][
   regs.P.D = true;
   regs.P.C = false;
   f.cpu.SetRegs(regs);
-  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 32);
-  REQUIRE(r.completed_cycles == 32);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 24);
+  REQUIRE(r.completed_cycles == 24);
   REQUIRE(f.cpu.GetRegs().A == 0x1000);
   REQUIRE(f.cpu.GetRegs().P.N == false);
   REQUIRE(f.cpu.GetRegs().P.V == false);
@@ -195,8 +195,8 @@ TEST_CASE("BCD SBC 8-bit with borrow: $50 - $01 C=0 = $48", "[unit][opcode][cpu]
   regs.P.D = true;
   regs.P.C = false;  // borrow-in
   f.cpu.SetRegs(regs);
-  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 24);
-  REQUIRE(r.completed_cycles == 24);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 16);
+  REQUIRE(r.completed_cycles == 16);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x48);
   REQUIRE(f.cpu.GetRegs().P.N == false);
   REQUIRE(f.cpu.GetRegs().P.V == false);
@@ -214,8 +214,8 @@ TEST_CASE("BCD ADC invalid digit $0A + $01 = $11", "[unit][opcode][cpu][bcd]") {
   regs.P.D = true;
   regs.P.C = false;
   f.cpu.SetRegs(regs);
-  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 24);
-  REQUIRE(r.completed_cycles == 24);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 16);
+  REQUIRE(r.completed_cycles == 16);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x11);
   REQUIRE(f.cpu.GetRegs().P.N == false);
   REQUIRE(f.cpu.GetRegs().P.V == false);
@@ -232,8 +232,8 @@ TEST_CASE("Binary ADC D=0 is unaffected by BCD changes (regression guard)", "[un
   regs.P.D = false;  // binary mode
   regs.P.C = false;
   f.cpu.SetRegs(regs);
-  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 24);
-  REQUIRE(r.completed_cycles == 24);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 16);
+  REQUIRE(r.completed_cycles == 16);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x0A);
   REQUIRE(f.cpu.GetRegs().P.N == false);
   REQUIRE(f.cpu.GetRegs().P.V == false);
@@ -257,8 +257,8 @@ TEST_CASE("BCD ADC 16-bit: $4000 + $4000 = $8000 V=1 N=1 (signed boundary)", "[u
   regs.P.D = true;
   regs.P.C = false;
   f.cpu.SetRegs(regs);
-  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 32);
-  REQUIRE(r.completed_cycles == 32);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 24);
+  REQUIRE(r.completed_cycles == 24);
   REQUIRE(f.cpu.GetRegs().A == 0x8000);
   REQUIRE(f.cpu.GetRegs().P.N == true);
   REQUIRE(f.cpu.GetRegs().P.V == true);
