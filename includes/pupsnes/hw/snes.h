@@ -47,6 +47,10 @@ class SNES {
 
   [[nodiscard]] TimeMasterT GetMasterTime() const { return time_now_; }
   void SetMasterTime(TimeMasterT t) { time_now_ = t; }
+  // Advance every registered Device's internal state to `target`. Called by
+  // RunControl's TickFrame after the CPU yields, before signal events fire.
+  void MachineSync(TimeMasterT target);
+
   [[nodiscard]] CPU& GetCpu();
   [[nodiscard]] const CPU& GetCpu() const;
   [[nodiscard]] Cartridge& GetCartridge();

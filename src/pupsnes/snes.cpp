@@ -91,3 +91,11 @@ pupsnes::DeviceIdT pupsnes::SNES::RegisterDevice(Device* device) {
   devices_.push_back(device);
   return id;
 }
+
+void pupsnes::SNES::MachineSync(TimeMasterT target) {
+  for (Device* device : devices_) {
+    if (device != nullptr) {
+      device->CatchUpTo(target);
+    }
+  }
+}
