@@ -5,63 +5,35 @@
 #include "imgui.h"
 #include "panels.h"
 #include "pupsnes/hw/scheduler.h"
+#include "pupsnes/hw/signal_event.h"
 
 namespace pupsnes::debugger {
 
 namespace {
 
-const char* DeviceName(DeviceIdT id) {
-  // Registration order matches the SNES class's member declaration order
-  // (see snes.h). Scheduler and SystemBus are not Devices, so they don't
-  // consume IDs.
-  switch (id) {
-    case 0: return "CPU";
-    case 1: return "Cartridge";
-    case 2: return "WRAM";
-    case 3: return "CpuMmio";
-    case 4: return "PPU";
-    default: return nullptr;
+const char* SignalKindName(SignalKind k) {
+  switch (k) {
+    case SignalKind::kFrameEnd:          return "FrameEnd";
+    case SignalKind::kVblankNmiBoundary: return "VblankNmiBoundary";
+    case SignalKind::kHIrqMatch:         return "HIrqMatch";
+    case SignalKind::kApuSampleDeadline: return "ApuSampleDeadline";
+    case SignalKind::kDmaBurstComplete:  return "DmaBurstComplete";
+    case SignalKind::kHdmaFire:          return "HdmaFire";
+    default:                             return "?";
   }
-}
-
-const char* PhaseName(SchedulerPhase phase) {
-  switch (phase) {
-    case SchedulerPhase::kCommitComplete: return "CommitComplete";
-    case SchedulerPhase::kWakeSample: return "WakeSample";
-    case SchedulerPhase::kRun: return "Run";
-  }
-  return "?";
-}
-
-const char* TypeName(EventType type) {
-  switch (type) {
-    case EventType::kDeviceRun: return "DeviceRun";
-    case EventType::kDeviceBoundary: return "Boundary";
-  }
-  return "?";
-}
-
-ImU32 TypeColor(EventType type) {
-  switch (type) {
-    case EventType::kDeviceRun: return IM_COL32(120, 180, 255, 255);
-    case EventType::kDeviceBoundary: return IM_COL32(255, 200, 120, 255);
-  }
-  return IM_COL32(200, 200, 200, 255);
 }
 
 }  // namespace
 
 void RenderSchedulerPanel(DebuggerApp& app) {
-  if (!app.GetUiState().show_scheduler_panel) {
-    return;
-  }
+  if (!app.GetUiState().show_scheduler_panel) return;
   if (!ImGui::Begin("Scheduler", &app.GetUiState().show_scheduler_panel)) {
     ImGui::End();
     return;
   }
 
   const TimeMasterT now = app.GetSnes().GetMasterTime();
-  const auto snapshot = app.GetSnes().GetScheduler().SnapshotQueue();
+  const auto snapshot = app.GetSnes().GetScheduler().SnapshotSignalQueue();
 
   ImGui::TextUnformatted("Master Time:");
   ImGui::SameLine();
@@ -74,9 +46,8 @@ void RenderSchedulerPanel(DebuggerApp& app) {
     ImGui::SameLine();
     ImGui::TextDisabled("|");
     ImGui::SameLine();
-    const TimeMasterT head = snapshot.front().time;
-    const int64_t delta = static_cast<int64_t>(head) - static_cast<int64_t>(now);
-    ImGui::Text("Next +%" PRId64, delta);
+    ImGui::Text("Next +%" PRId64,
+                static_cast<int64_t>(snapshot.front().master_time) - static_cast<int64_t>(now));
   }
   ImGui::Separator();
 
@@ -86,25 +57,23 @@ void RenderSchedulerPanel(DebuggerApp& app) {
     return;
   }
 
-  constexpr ImGuiTableFlags kFlags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY |
-                                     ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_Resizable;
-  if (ImGui::BeginTable("scheduler_table", 5, kFlags)) {
+  constexpr ImGuiTableFlags kFlags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+                                     ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingFixedFit |
+                                     ImGuiTableFlags_Resizable;
+  if (ImGui::BeginTable("scheduler_table", 3, kFlags)) {
     ImGui::TableSetupScrollFreeze(0, 1);
     ImGui::TableSetupColumn("Time");
     ImGui::TableSetupColumn("+Delta");
-    ImGui::TableSetupColumn("Device");
-    ImGui::TableSetupColumn("Phase");
-    ImGui::TableSetupColumn("Type");
+    ImGui::TableSetupColumn("Signal");
     ImGui::TableHeadersRow();
 
-    for (const SchedulerEventView& event : snapshot) {
+    for (const SignalEventView& event : snapshot) {
       ImGui::TableNextRow();
-
       ImGui::TableSetColumnIndex(0);
-      TextMasterTime(event.time, now, app.GetUiState().time_display_mode);
+      TextMasterTime(event.master_time, now, app.GetUiState().time_display_mode);
 
       ImGui::TableSetColumnIndex(1);
-      const int64_t delta = static_cast<int64_t>(event.time) - static_cast<int64_t>(now);
+      const int64_t delta = static_cast<int64_t>(event.master_time) - static_cast<int64_t>(now);
       if (delta == 0) {
         ImGui::TextDisabled("now");
       } else {
@@ -112,25 +81,7 @@ void RenderSchedulerPanel(DebuggerApp& app) {
       }
 
       ImGui::TableSetColumnIndex(2);
-      if (event.device_id.has_value()) {
-        const DeviceIdT id = *event.device_id;
-        const char* name = DeviceName(id);
-        if (name != nullptr) {
-          ImGui::Text("%s (#%u)", name, static_cast<unsigned>(id));
-        } else {
-          ImGui::Text("#%u", static_cast<unsigned>(id));
-        }
-      } else {
-        ImGui::TextDisabled("-");
-      }
-
-      ImGui::TableSetColumnIndex(3);
-      ImGui::TextUnformatted(PhaseName(event.subphase));
-
-      ImGui::TableSetColumnIndex(4);
-      ImGui::PushStyleColor(ImGuiCol_Text, TypeColor(event.type));
-      ImGui::TextUnformatted(TypeName(event.type));
-      ImGui::PopStyleColor();
+      ImGui::TextUnformatted(SignalKindName(event.kind));
     }
     ImGui::EndTable();
   }
