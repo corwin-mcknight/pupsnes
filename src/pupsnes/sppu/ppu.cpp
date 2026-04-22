@@ -246,7 +246,15 @@ void Ppu::WriteRegister(uint32_t offset, uint8_t data, TimeMasterT current_time)
 
 FrameBufferView Ppu::BuildFrontView() const {
   const uint32_t logical_height = (force_overscan_draw_ || overscan_) ? 239U : 224U;
-  return {front_buffer_->data(), sppu::regs::kLogicalWidth, logical_height, sppu::regs::kFrameBufferWidth};
+  // Point at the first visible pixel (H=22, V=1) of the grid so consumers can
+  // treat the view as a logical 256×(224|239) image. The full 341×313 grid
+  // stays accessible via GetFrontBuffer() for overlays that need H/V-blank
+  // regions.
+  const std::size_t visible_origin =
+      static_cast<std::size_t>(sppu::regs::kVisibleVStartNtsc) * sppu::regs::kFrameBufferWidth +
+      static_cast<std::size_t>(sppu::regs::kVisibleHStart);
+  return {front_buffer_->data() + visible_origin, sppu::regs::kLogicalWidth, logical_height,
+          sppu::regs::kFrameBufferWidth};
 }
 
 bool Ppu::EnqueueWrite(uint16_t offset, uint8_t data, TimeMasterT cycle) {

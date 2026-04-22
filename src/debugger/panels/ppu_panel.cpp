@@ -1,4 +1,8 @@
+#include <array>
+#include <cstddef>
 #include <cstdint>
+
+#include <OpenGL/gl3.h>
 
 #include "debugger/app.h"
 #include "imgui.h"
@@ -9,17 +13,6 @@
 namespace pupsnes::debugger {
 
 namespace {
-
-// Convert a SNES BGR555 word to an ImGui ABGR32 colour. Each 5-bit channel
-// is shifted up to 8 bits — correct for a debug preview; the real frontend
-// will want a proper lookup (or the brightness-scaled channel already stored
-// in the framebuffer — which is exactly what we read here).
-ImU32 Bgr555ToAbgr32(uint16_t c) {
-  const uint32_t r = static_cast<uint32_t>(c & 0x1FU) << 3U;
-  const uint32_t g = static_cast<uint32_t>((c >> 5U) & 0x1FU) << 3U;
-  const uint32_t b = static_cast<uint32_t>((c >> 10U) & 0x1FU) << 3U;
-  return IM_COL32(r, g, b, 255);
-}
 
 const char* VmainStepLabel(uint8_t vmain) {
   switch (vmain & sppu::regs::kVmainStepMask) {
@@ -105,11 +98,94 @@ void DrawRegisterTable(const Ppu& ppu) {
   ImGui::EndTable();
 }
 
-// Draw the PPU front buffer using row run-length encoding. Backdrop-only
-// rendering makes every row uniform colour, so this collapses to ~1 rect
-// per scanline instead of 57k per-pixel rects. Once BG/OBJ rendering lands
-// we'll want a proper GL texture; until then this keeps the panel
-// responsive without any OpenGL plumbing.
+// GL texture carrying the last uploaded PPU front buffer. Lazily created,
+// resized when the PPU switches between 224 and 239 rows, and reused for
+// the lifetime of the app (the GL context reclaims it at shutdown).
+struct PreviewTexture {
+  GLuint id = 0;
+  uint32_t width = 0;
+  uint32_t height = 0;
+};
+
+PreviewTexture& GetPreviewTexture() {
+  static PreviewTexture tex;
+  return tex;
+}
+
+// CPU-side conversion buffer: BGR555 -> RGBA8. Sized for the max logical
+// view (256 × 239 with overscan); the unused tail doesn't cost anything.
+constexpr std::size_t kMaxLogicalPixels = 256U * 239U;
+std::array<uint32_t, kMaxLogicalPixels>& GetScratchBuffer() {
+  static std::array<uint32_t, kMaxLogicalPixels> buf{};
+  return buf;
+}
+
+// 5-to-8 bit expansion: replicate the high bits into the low bits so the
+// 5-bit value 31 maps to 255, not 248. Correct for colour fidelity in the
+// debug preview; the emulator frontend may use its own table later.
+constexpr uint32_t Expand5To8(uint32_t v5) {
+  return (v5 << 3U) | (v5 >> 2U);
+}
+
+uint32_t Bgr555ToRgba8(uint16_t c) {
+  const uint32_t r = Expand5To8(static_cast<uint32_t>(c) & 0x1FU);
+  const uint32_t g = Expand5To8((static_cast<uint32_t>(c) >> 5U) & 0x1FU);
+  const uint32_t b = Expand5To8((static_cast<uint32_t>(c) >> 10U) & 0x1FU);
+  // IM_COL32 and glTexSubImage2D(GL_RGBA, GL_UNSIGNED_BYTE) both expect
+  // RGBA byte order in memory on little-endian hosts: [R][G][B][A].
+  return r | (g << 8U) | (b << 16U) | (0xFFU << 24U);
+}
+
+void UploadFrameToTexture(const FrameBufferView& view) {
+  if (view.pixels == nullptr || view.width == 0 || view.height == 0) {
+    return;
+  }
+  const std::size_t pixel_count = static_cast<std::size_t>(view.width) * view.height;
+  if (pixel_count > kMaxLogicalPixels) {
+    return;  // logical view shouldn't exceed 256×239; defend anyway
+  }
+
+  auto& scratch = GetScratchBuffer();
+  for (uint32_t y = 0; y < view.height; ++y) {
+    const uint16_t* src = view.pixels + static_cast<std::size_t>(y) * view.stride;
+    uint32_t* dst = scratch.data() + static_cast<std::size_t>(y) * view.width;
+    for (uint32_t x = 0; x < view.width; ++x) {
+      dst[x] = Bgr555ToRgba8(src[x]);
+    }
+  }
+
+  PreviewTexture& tex = GetPreviewTexture();
+  const GLint previous_unpack_alignment = [] {
+    GLint value = 4;
+    glGetIntegerv(GL_UNPACK_ALIGNMENT, &value);
+    return value;
+  }();
+  glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+
+  if (tex.id == 0) {
+    glGenTextures(1, &tex.id);
+    glBindTexture(GL_TEXTURE_2D, tex.id);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  } else {
+    glBindTexture(GL_TEXTURE_2D, tex.id);
+  }
+
+  if (tex.width != view.width || tex.height != view.height) {
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, static_cast<GLsizei>(view.width),
+                 static_cast<GLsizei>(view.height), 0, GL_RGBA, GL_UNSIGNED_BYTE, scratch.data());
+    tex.width = view.width;
+    tex.height = view.height;
+  } else {
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, static_cast<GLsizei>(view.width),
+                    static_cast<GLsizei>(view.height), GL_RGBA, GL_UNSIGNED_BYTE, scratch.data());
+  }
+
+  glPixelStorei(GL_UNPACK_ALIGNMENT, previous_unpack_alignment);
+}
+
 void DrawFramebufferPreview(const Ppu& ppu) {
   const FrameBufferView view = ppu.BuildFrontView();
   if (view.pixels == nullptr || view.width == 0 || view.height == 0) {
@@ -117,40 +193,24 @@ void DrawFramebufferPreview(const Ppu& ppu) {
     return;
   }
 
-  const float avail = ImGui::GetContentRegionAvail().x;
-  const float scale_x = avail / static_cast<float>(view.width);
-  // Preserve aspect. Clamp minimum scale so the preview stays usable.
-  const float scale = (scale_x > 0.5F) ? scale_x : 0.5F;
-
-  const ImVec2 origin = ImGui::GetCursorScreenPos();
-  const float total_w = static_cast<float>(view.width) * scale;
-  const float total_h = static_cast<float>(view.height) * scale;
-
-  ImDrawList* draw = ImGui::GetWindowDrawList();
-  draw->AddRectFilled(origin, ImVec2(origin.x + total_w, origin.y + total_h),
-                      IM_COL32(0, 0, 0, 255));
-
-  for (uint32_t y = 0; y < view.height; ++y) {
-    const uint16_t* row = view.pixels + static_cast<std::size_t>(y) * view.stride;
-    uint32_t run_start = 0;
-    uint16_t run_color = row[0];
-    for (uint32_t x = 1; x <= view.width; ++x) {
-      const uint16_t here = (x < view.width) ? row[x] : static_cast<uint16_t>(~run_color);
-      if (here != run_color) {
-        if (run_color != 0) {
-          const float x0 = origin.x + static_cast<float>(run_start) * scale;
-          const float x1 = origin.x + static_cast<float>(x) * scale;
-          const float y0 = origin.y + static_cast<float>(y) * scale;
-          const float y1 = y0 + scale;
-          draw->AddRectFilled(ImVec2(x0, y0), ImVec2(x1, y1), Bgr555ToAbgr32(run_color));
-        }
-        run_start = x;
-        run_color = here;
-      }
-    }
+  UploadFrameToTexture(view);
+  const PreviewTexture& tex = GetPreviewTexture();
+  if (tex.id == 0) {
+    ImGui::TextDisabled("(texture unavailable)");
+    return;
   }
 
-  ImGui::Dummy(ImVec2(total_w, total_h));
+  // Preserve aspect; don't down-scale below 1× so pixels stay distinct.
+  const float aspect = static_cast<float>(view.width) / static_cast<float>(view.height);
+  const float avail_w = ImGui::GetContentRegionAvail().x;
+  float w = (avail_w > static_cast<float>(view.width)) ? avail_w : static_cast<float>(view.width);
+  float h = w / aspect;
+
+  const ImTextureID texture_id = static_cast<ImTextureID>(static_cast<intptr_t>(tex.id));
+  ImGui::Image(texture_id, ImVec2(w, h));
+
+  ImGui::Text("%ux%u (%s)", view.width, view.height,
+              ppu.IsOverscan() || ppu.GetForceOverscanDraw() ? "overscan" : "standard");
 }
 
 }  // namespace
