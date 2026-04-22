@@ -21,6 +21,7 @@
 #include "imgui_impl_opengl3.h"
 #include "panels/panels.h"
 #include "pupsnes/hw/cartridge.h"
+#include "pupsnes/hw/sppu/ppu.h"
 
 namespace pupsnes::debugger {
 
@@ -362,6 +363,14 @@ void DebuggerApp::RenderMenuBar() {
           }
         }
         ImGui::EndMenu();
+      }
+      // Emulator-only override that lets the PPU panel render the 15-line
+      // overscan strip even when the ROM left SETINI bit 2 clear. Mirrors
+      // the checkbox in the PPU panel so it's reachable without opening the
+      // window.
+      bool force_overscan = snes_.GetPpu().GetForceOverscanDraw();
+      if (ImGui::MenuItem("Force PPU Overscan Draw", nullptr, &force_overscan)) {
+        snes_.GetPpu().SetForceOverscanDraw(force_overscan);
       }
       ImGui::EndMenu();
     }

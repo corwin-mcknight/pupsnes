@@ -27,7 +27,7 @@ TEST_CASE("ADC abs,X 8-bit adds DBR-banked indexed operand", "[unit][opcode][cpu
   f.LoadInstruction({0x7D, 0x00, 0x01});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x0110, 0x05);
+  f.wram.WriteRegister(0x0110, 0x05, 0);
   f.ModifyRegs([](auto& r) {
     r.X = 0x0010;
     r.A = 0x0001;
@@ -47,7 +47,7 @@ TEST_CASE("SBC abs,X 8-bit subtracts indexed operand", "[unit][opcode][cpu][absx
   f.LoadInstruction({0xFD, 0x00, 0x01});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x0110, 0x01);
+  f.wram.WriteRegister(0x0110, 0x01, 0);
   f.ModifyRegs([](auto& r) {
     r.X = 0x0010;
     r.A = 0x0010;
@@ -66,7 +66,7 @@ TEST_CASE("AND abs,X 8-bit", "[unit][opcode][cpu][absx]") {
   f.LoadInstruction({0x3D, 0x00, 0x01});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x0110, 0xF0);
+  f.wram.WriteRegister(0x0110, 0xF0, 0);
   f.ModifyRegs([](auto& r) {
     r.X = 0x0010;
     r.A = 0x00FF;
@@ -85,7 +85,7 @@ TEST_CASE("ORA abs,X 8-bit", "[unit][opcode][cpu][absx]") {
   f.LoadInstruction({0x1D, 0x00, 0x01});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x0110, 0x0F);
+  f.wram.WriteRegister(0x0110, 0x0F, 0);
   f.ModifyRegs([](auto& r) {
     r.X = 0x0010;
     r.A = 0x00F0;
@@ -103,7 +103,7 @@ TEST_CASE("EOR abs,X 8-bit clears to zero", "[unit][opcode][cpu][absx]") {
   f.LoadInstruction({0x5D, 0x00, 0x01});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x0110, 0xFF);
+  f.wram.WriteRegister(0x0110, 0xFF, 0);
   f.ModifyRegs([](auto& r) {
     r.X = 0x0010;
     r.A = 0x00FF;
@@ -122,7 +122,7 @@ TEST_CASE("CMP abs,X 8-bit equal sets Z and C", "[unit][opcode][cpu][absx]") {
   f.LoadInstruction({0xDD, 0x00, 0x01});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x0110, 0x42);
+  f.wram.WriteRegister(0x0110, 0x42, 0);
   f.ModifyRegs([](auto& r) {
     r.X = 0x0010;
     r.A = 0x0042;
@@ -148,7 +148,7 @@ TEST_CASE("LDA abs,X 8-bit loads indexed operand", "[unit][opcode][cpu][absx]") 
   f.LoadInstruction({0xBD, 0x00, 0x01});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x0120, 0x81);
+  f.wram.WriteRegister(0x0120, 0x81, 0);
   f.ModifyRegs([](auto& r) {
     r.X = 0x0020;
     r.A = 0x0000;
@@ -167,7 +167,7 @@ TEST_CASE("LDY abs,X 8-bit loads indexed operand into Y", "[unit][opcode][cpu][a
   f.LoadInstruction({0xBC, 0x00, 0x01});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x0130, 0x42);
+  f.wram.WriteRegister(0x0130, 0x42, 0);
   f.ModifyRegs([](auto& r) {
     r.X = 0x0030;
     r.Y = 0x0000;
@@ -197,8 +197,8 @@ TEST_CASE("ADC abs,X 16-bit adds 16-bit operand", "[unit][opcode][cpu][absx]") {
     r.P.C = false;
     r.DBR = 0x7E;
   });
-  f.wram.WriteRegister(0x0110, 0x34);
-  f.wram.WriteRegister(0x0111, 0x12);
+  f.wram.WriteRegister(0x0110, 0x34, 0);
+  f.wram.WriteRegister(0x0111, 0x12, 0);
 
   TickResult r = f.cpu.Tick(46);
 
@@ -216,8 +216,8 @@ TEST_CASE("LDA abs,X 16-bit loads wide operand", "[unit][opcode][cpu][absx]") {
     r.X = 0x0010;
     r.DBR = 0x7E;
   });
-  f.wram.WriteRegister(0x0110, 0xCD);
-  f.wram.WriteRegister(0x0111, 0xAB);
+  f.wram.WriteRegister(0x0110, 0xCD, 0);
+  f.wram.WriteRegister(0x0111, 0xAB, 0);
 
   TickResult r = f.cpu.Tick(46);
 
@@ -241,8 +241,8 @@ TEST_CASE("LDY abs,X 16-bit loads wide operand into Y", "[unit][opcode][cpu][abs
     r.Y = 0x0000;
     r.DBR = 0x7E;
   });
-  f.wram.WriteRegister(0x0110, 0x34);
-  f.wram.WriteRegister(0x0111, 0x12);
+  f.wram.WriteRegister(0x0110, 0x34, 0);
+  f.wram.WriteRegister(0x0111, 0x12, 0);
 
   TickResult r = f.cpu.Tick(46);
 
@@ -260,7 +260,7 @@ TEST_CASE("LDA abs,X carries into bank byte on index overflow", "[unit][opcode][
   f.LoadInstruction({0xBD, 0xF0, 0xFF});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x10010U, 0x77);  // $7F:0010 in WRAM linear space.
+  f.wram.WriteRegister(0x10010U, 0x77, 0);  // $7F:0010 in WRAM linear space.
   f.ModifyRegs([](auto& r) {
     r.X = 0x0020;
     r.A = 0x0000;

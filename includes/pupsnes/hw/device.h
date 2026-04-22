@@ -53,6 +53,18 @@ struct TickResult {
   [[nodiscard]] bool HasWakeTime() const { return next_wake_time != kNoWakeTime; }
 };
 
+// Result of a same-/cross-clock MMIO read returned through the bus. `value`
+// carries the device's driven bits; `driven_mask` is 1 for each bit the device
+// actively drives. The bus merges open-bus for any bit where the mask is 0:
+//   merged = (value & driven_mask) | (last_data_bus_value & ~driven_mask)
+// Fully-driven registers return {value, 0xFF}; pure open-bus / unimplemented
+// reads return {0, 0x00}. Fast-path kMemory accesses bypass this entirely and
+// are always fully driven.
+struct MmioReadResult {
+  uint8_t value;
+  uint8_t driven_mask;
+};
+
 class Device {
  protected:
   TimeMasterT local_time_ = 0;
@@ -64,8 +76,8 @@ class Device {
   virtual ~Device() = default;
   [[nodiscard]] virtual TickResult Tick(TimeMasterDeltaT budget) = 0;
   virtual void OnEvent(const SchedulerEvent& event) = 0;
-  virtual uint8_t ReadRegister(uint32_t /*offset*/) { return 0; }
-  virtual void WriteRegister(uint32_t /*offset*/, uint8_t /*data*/) {}
+  virtual MmioReadResult ReadRegister(uint32_t /*offset*/, TimeMasterT /*current_time*/) { return {0, 0x00}; }
+  virtual void WriteRegister(uint32_t /*offset*/, uint8_t /*data*/, TimeMasterT /*current_time*/) {}
   [[nodiscard]] virtual std::optional<uint8_t> HandleDebugRead(uint32_t /*offset*/) const { return std::nullopt; }
   virtual bool HandleDebugWrite(uint32_t /*offset*/, uint8_t /*data*/) { return false; }
 

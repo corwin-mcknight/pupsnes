@@ -1,5 +1,6 @@
 #pragma once
 
+#include <functional>
 #include <memory>
 #include <span>
 #include <vector>
@@ -10,15 +11,21 @@ namespace pupsnes {
 class CPU;
 class Cartridge;
 class CpuMmio;
+class Ppu;
 class Scheduler;
 class SystemBus;
 class Device;
 class WRAM;
+struct FrameBufferView;
 
 class SNES {
+ public:
+  using FrameReadyCallback = std::function<void(const FrameBufferView&)>;
+
  private:
   TimeMasterT time_now_ = 0;
   std::vector<Device*> devices_;  // Non-owning. Devices register themselves; caller owns them.
+  FrameReadyCallback frame_ready_callback_;
 
  public:
   std::unique_ptr<CPU> cpu;
@@ -27,6 +34,10 @@ class SNES {
   std::unique_ptr<SystemBus> system_bus;
   std::unique_ptr<WRAM> wram;
   std::unique_ptr<CpuMmio> cpu_mmio;
+  // The PPU is declared last so it registers after every other Device and
+  // gets the highest DeviceIdT. This keeps existing test expectations about
+  // device-ID assignment for CPU / cartridge / WRAM / CpuMmio stable.
+  std::unique_ptr<Ppu> ppu;
 
   SNES();
   ~SNES();
@@ -48,6 +59,18 @@ class SNES {
   [[nodiscard]] const WRAM& GetWram() const;
   [[nodiscard]] CpuMmio& GetCpuMmio();
   [[nodiscard]] const CpuMmio& GetCpuMmio() const;
+  [[nodiscard]] Ppu& GetPpu();
+  [[nodiscard]] const Ppu& GetPpu() const;
+
+  // Register a frontend-side callback invoked by the PPU at end-of-frame.
+  // Copying the std::function here is intentional: callers typically set it
+  // once at startup. Passing an empty callback clears the hook.
+  void SetFrameReadyCallback(FrameReadyCallback callback) { frame_ready_callback_ = std::move(callback); }
+  void FireFrameReady(const FrameBufferView& view) const {
+    if (frame_ready_callback_) {
+      frame_ready_callback_(view);
+    }
+  }
 
   DeviceIdT RegisterDevice(Device* device);
   [[nodiscard]] Device* GetDevice(DeviceIdT id) const;

@@ -71,12 +71,12 @@ TickResult Cartridge::Tick(TimeMasterDeltaT budget) { return {budget, TickStopRe
 
 void Cartridge::OnEvent(const SchedulerEvent& /*event*/) {}
 
-uint8_t Cartridge::ReadRegister(uint32_t offset) {
+MmioReadResult Cartridge::ReadRegister(uint32_t offset, TimeMasterT /*current_time*/) {
   if (rom_.empty()) {
-    return 0xFFU;
+    return {0xFFU, 0xFFU};
   }
 
-  return rom_[static_cast<std::size_t>(offset) % rom_.size()];
+  return {rom_[static_cast<std::size_t>(offset) % rom_.size()], 0xFFU};
 }
 
 std::optional<uint8_t> Cartridge::HandleDebugRead(uint32_t offset) const {

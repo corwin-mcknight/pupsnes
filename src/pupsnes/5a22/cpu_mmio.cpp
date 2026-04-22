@@ -54,18 +54,18 @@ TickResult CpuMmio::Tick(TimeMasterDeltaT budget) {
 
 void CpuMmio::OnEvent(const SchedulerEvent& /*event*/) {}
 
-uint8_t CpuMmio::ReadRegister(uint32_t offset) {
+MmioReadResult CpuMmio::ReadRegister(uint32_t offset, TimeMasterT /*current_time*/) {
   const uint32_t reg = offset & 0xFFFFU;
   if (reg == kMemSelOffset) {
-    return memsel_;
+    return {memsel_, 0xFFU};
   }
   // Stub: other CPU MMIO registers (NMITIMEN, RDNMI, joypad, HDMA) are not yet
-  // modeled. Return open-bus sentinel; callers that require real values must
-  // wait for the corresponding follow-up task.
-  return 0x00U;
+  // modeled. Return pure open-bus (mask=0) so the bus merges in the last data
+  // value instead of a hard zero.
+  return {0x00U, 0x00U};
 }
 
-void CpuMmio::WriteRegister(uint32_t offset, uint8_t data) {
+void CpuMmio::WriteRegister(uint32_t offset, uint8_t data, TimeMasterT /*current_time*/) {
   const uint32_t reg = offset & 0xFFFFU;
   if (reg == kMemSelOffset) {
     const bool was_fast = (memsel_ & 0x01U) != 0U;
@@ -93,7 +93,11 @@ std::optional<uint8_t> CpuMmio::HandleDebugRead(uint32_t offset) const {
 bool CpuMmio::HandleDebugWrite(uint32_t offset, uint8_t data) {
   const uint32_t reg = offset & 0xFFFFU;
   if (reg == kMemSelOffset) {
-    WriteRegister(reg, data);
+    // Debug writes are out-of-band and don't belong to a bus cycle; pass 0
+    // as the current time. CpuMmio commits synchronously, so the timestamp
+    // is unused. Devices that use lazy replay (PPU) must not be debug-written
+    // through this path — they provide their own HandleDebugWrite override.
+    WriteRegister(reg, data, 0);
   }
   return true;
 }

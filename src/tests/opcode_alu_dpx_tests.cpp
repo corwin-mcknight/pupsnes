@@ -25,7 +25,7 @@ TEST_CASE("ADC direct page indexed X 8-bit adds (DP+offset+X)", "[unit][opcode][
   f.LoadInstruction({0x75, 0x20});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x0025, 0x03);
+  f.wram.WriteRegister(0x0025, 0x03, 0);
   f.ModifyRegs([](auto& r) {
     r.A = 0x0010;
     r.X = 0x0005;
@@ -43,7 +43,7 @@ TEST_CASE("SBC direct page indexed X 8-bit subtracts with carry-in", "[unit][opc
   f.LoadInstruction({0xF5, 0x20});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x0025, 0x01);
+  f.wram.WriteRegister(0x0025, 0x01, 0);
   f.ModifyRegs([](auto& r) {
     r.A = 0x0010;
     r.X = 0x0005;
@@ -62,7 +62,7 @@ TEST_CASE("AND direct page indexed X 8-bit masks with memory", "[unit][opcode][c
   f.LoadInstruction({0x35, 0x20});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x0025, 0xF0);
+  f.wram.WriteRegister(0x0025, 0xF0, 0);
   f.ModifyRegs([](auto& r) {
     r.A = 0x00FF;
     r.X = 0x0005;
@@ -81,7 +81,7 @@ TEST_CASE("ORA direct page indexed X 8-bit combines with memory", "[unit][opcode
   f.LoadInstruction({0x15, 0x20});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x0025, 0x0F);
+  f.wram.WriteRegister(0x0025, 0x0F, 0);
   f.ModifyRegs([](auto& r) {
     r.A = 0x00F0;
     r.X = 0x0005;
@@ -99,7 +99,7 @@ TEST_CASE("EOR direct page indexed X 8-bit sets Z when equal", "[unit][opcode][c
   f.LoadInstruction({0x55, 0x20});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x0025, 0xFF);
+  f.wram.WriteRegister(0x0025, 0xFF, 0);
   f.ModifyRegs([](auto& r) {
     r.A = 0x00FF;
     r.X = 0x0005;
@@ -117,7 +117,7 @@ TEST_CASE("CMP direct page indexed X 8-bit equal sets Z and C", "[unit][opcode][
   f.LoadInstruction({0xD5, 0x20});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x0025, 0x10);
+  f.wram.WriteRegister(0x0025, 0x10, 0);
   f.ModifyRegs([](auto& r) {
     r.A = 0x0010;
     r.X = 0x0005;
@@ -142,8 +142,8 @@ TEST_CASE("ADC direct page indexed X 16-bit takes 5 cycles", "[unit][opcode][cpu
   f.LoadInstruction({0x75, 0x20});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x0025, 0x34);
-  f.wram.WriteRegister(0x0026, 0x12);
+  f.wram.WriteRegister(0x0025, 0x34, 0);
+  f.wram.WriteRegister(0x0026, 0x12, 0);
   SetAccumulator16(f.cpu, 0x1000);
   f.ModifyRegs([](auto& r) {
     r.X = 0x0005;
@@ -161,8 +161,8 @@ TEST_CASE("SBC direct page indexed X 16-bit", "[unit][opcode][cpu][dpx]") {
   f.LoadInstruction({0xF5, 0x20});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x0025, 0x01);
-  f.wram.WriteRegister(0x0026, 0x00);
+  f.wram.WriteRegister(0x0025, 0x01, 0);
+  f.wram.WriteRegister(0x0026, 0x00, 0);
   SetAccumulator16(f.cpu, 0x0002);
   f.ModifyRegs([](auto& r) {
     r.X = 0x0005;
@@ -181,8 +181,8 @@ TEST_CASE("AND direct page indexed X 16-bit", "[unit][opcode][cpu][dpx]") {
   f.LoadInstruction({0x35, 0x20});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x0025, 0x00);
-  f.wram.WriteRegister(0x0026, 0xFF);
+  f.wram.WriteRegister(0x0025, 0x00, 0);
+  f.wram.WriteRegister(0x0026, 0xFF, 0);
   SetAccumulator16(f.cpu, 0xFFFF);
   f.ModifyRegs([](auto& r) { r.X = 0x0005; });
 
@@ -198,8 +198,8 @@ TEST_CASE("ORA direct page indexed X 16-bit", "[unit][opcode][cpu][dpx]") {
   f.LoadInstruction({0x15, 0x20});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x0025, 0xFF);
-  f.wram.WriteRegister(0x0026, 0x00);
+  f.wram.WriteRegister(0x0025, 0xFF, 0);
+  f.wram.WriteRegister(0x0026, 0x00, 0);
   SetAccumulator16(f.cpu, 0x00FF);
   f.ModifyRegs([](auto& r) { r.X = 0x0005; });
 
@@ -217,8 +217,8 @@ TEST_CASE("EOR direct page indexed X 16-bit sets Z", "[unit][opcode][cpu][dpx]")
   f.LoadInstruction({0x55, 0x20});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x0025, 0xFF);
-  f.wram.WriteRegister(0x0026, 0xFF);
+  f.wram.WriteRegister(0x0025, 0xFF, 0);
+  f.wram.WriteRegister(0x0026, 0xFF, 0);
   SetAccumulator16(f.cpu, 0xFFFF);
   f.ModifyRegs([](auto& r) { r.X = 0x0005; });
 
@@ -234,8 +234,8 @@ TEST_CASE("CMP direct page indexed X 16-bit equal", "[unit][opcode][cpu][dpx]") 
   f.LoadInstruction({0xD5, 0x20});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x0025, 0x34);
-  f.wram.WriteRegister(0x0026, 0x12);
+  f.wram.WriteRegister(0x0025, 0x34, 0);
+  f.wram.WriteRegister(0x0026, 0x12, 0);
   SetAccumulator16(f.cpu, 0x1234);
   f.ModifyRegs([](auto& r) { r.X = 0x0005; });
 
@@ -265,7 +265,7 @@ TEST_CASE("ADC direct page indexed X pays DL-nonzero penalty", "[unit][opcode][c
     r.A = 0x0001;
     r.P.C = false;
   });
-  f.wram.WriteRegister(0x0134, 0x02);
+  f.wram.WriteRegister(0x0134, 0x02, 0);
 
   TickResult r = f.cpu.Tick(44);
 
@@ -284,7 +284,7 @@ TEST_CASE("BIT direct page indexed X sets N and V from memory", "[unit][opcode][
   f.LoadInstruction({0x34, 0x20});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x0025, 0xC0);  // bits 7 and 6 set
+  f.wram.WriteRegister(0x0025, 0xC0, 0);  // bits 7 and 6 set
   f.ModifyRegs([](auto& r) {
     r.A = 0x003F;  // A AND $C0 == 0 → Z=1
     r.X = 0x0005;
@@ -305,8 +305,8 @@ TEST_CASE("BIT direct page indexed X 16-bit reads N V from bit 15 and 14", "[uni
   f.LoadInstruction({0x34, 0x20});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x0025, 0x00);
-  f.wram.WriteRegister(0x0026, 0xC0);  // 16-bit operand = $C000 (bits 15 and 14 set)
+  f.wram.WriteRegister(0x0025, 0x00, 0);
+  f.wram.WriteRegister(0x0026, 0xC0, 0);  // 16-bit operand = $C000 (bits 15 and 14 set)
   SetAccumulator16(f.cpu, 0x3FFF);     // A AND $C000 == 0 → Z=1
   f.ModifyRegs([](auto& r) { r.X = 0x0005; });
 

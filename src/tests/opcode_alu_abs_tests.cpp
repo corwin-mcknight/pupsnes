@@ -24,7 +24,7 @@ TEST_CASE("ADC absolute 8-bit adds DBR-banked operand", "[unit][opcode][cpu][abs
   f.LoadInstruction({0x6D, 0x40, 0x00});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x0040, 0x05);
+  f.wram.WriteRegister(0x0040, 0x05, 0);
   f.ModifyRegs([](auto& r) {
     r.A = 0x000A;
     r.P.C = false;
@@ -44,7 +44,7 @@ TEST_CASE("SBC absolute 8-bit subtracts with carry-in", "[unit][opcode][cpu][abs
   f.LoadInstruction({0xED, 0x50, 0x00});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x0050, 0x03);
+  f.wram.WriteRegister(0x0050, 0x03, 0);
   f.ModifyRegs([](auto& r) {
     r.A = 0x0010;
     r.P.C = true;
@@ -63,7 +63,7 @@ TEST_CASE("AND absolute 8-bit masks with memory", "[unit][opcode][cpu][abs]") {
   f.LoadInstruction({0x2D, 0x60, 0x00});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x0060, 0xF0);
+  f.wram.WriteRegister(0x0060, 0xF0, 0);
   f.ModifyRegs([](auto& r) {
     r.A = 0x00FF;
     r.DBR = 0x7E;
@@ -82,7 +82,7 @@ TEST_CASE("ORA absolute 8-bit combines with memory", "[unit][opcode][cpu][abs]")
   f.LoadInstruction({0x0D, 0x60, 0x00});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x0060, 0x0F);
+  f.wram.WriteRegister(0x0060, 0x0F, 0);
   f.ModifyRegs([](auto& r) {
     r.A = 0x00F0;
     r.DBR = 0x7E;
@@ -100,7 +100,7 @@ TEST_CASE("EOR absolute 8-bit clears A to zero", "[unit][opcode][cpu][abs]") {
   f.LoadInstruction({0x4D, 0x60, 0x00});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x0060, 0xFF);
+  f.wram.WriteRegister(0x0060, 0xFF, 0);
   f.ModifyRegs([](auto& r) {
     r.A = 0x00FF;
     r.DBR = 0x7E;
@@ -118,7 +118,7 @@ TEST_CASE("CMP absolute 8-bit equal sets Z and C", "[unit][opcode][cpu][abs]") {
   f.LoadInstruction({0xCD, 0x60, 0x00});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x0060, 0x10);
+  f.wram.WriteRegister(0x0060, 0x10, 0);
   f.ModifyRegs([](auto& r) {
     r.A = 0x0010;
     r.DBR = 0x7E;
@@ -140,7 +140,7 @@ TEST_CASE("BIT absolute sets N and V from memory and Z from (A AND mem)", "[unit
   f.LoadInstruction({0x2C, 0x50, 0x00});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x0050, 0xC0);
+  f.wram.WriteRegister(0x0050, 0xC0, 0);
   f.ModifyRegs([](auto& r) {
     r.A = 0x003F;
     r.DBR = 0x7E;
@@ -162,7 +162,7 @@ TEST_CASE("BIT absolute N=0 V=1 Z=0 combination", "[unit][opcode][cpu][abs]") {
   f.LoadInstruction({0x2C, 0x50, 0x00});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x0050, 0x40);
+  f.wram.WriteRegister(0x0050, 0x40, 0);
   f.ModifyRegs([](auto& r) {
     r.A = 0x0040;
     r.DBR = 0x7E;
@@ -187,8 +187,8 @@ TEST_CASE("ADC absolute 16-bit uses 5-cycle path", "[unit][opcode][cpu][abs]") {
   f.LoadInstruction({0x6D, 0x40, 0x00});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x0040, 0x34);
-  f.wram.WriteRegister(0x0041, 0x12);
+  f.wram.WriteRegister(0x0040, 0x34, 0);
+  f.wram.WriteRegister(0x0041, 0x12, 0);
   SetAccumulator16(f.cpu, 0x1000);
   SetDataBank(f.cpu, 0x7E);
   f.ModifyRegs([](auto& r) { r.P.C = false; });
@@ -204,8 +204,8 @@ TEST_CASE("SBC absolute 16-bit subtracts with carry-in", "[unit][opcode][cpu][ab
   f.LoadInstruction({0xED, 0x40, 0x00});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x0040, 0x01);
-  f.wram.WriteRegister(0x0041, 0x00);
+  f.wram.WriteRegister(0x0040, 0x01, 0);
+  f.wram.WriteRegister(0x0041, 0x00, 0);
   SetAccumulator16(f.cpu, 0x0002);
   SetDataBank(f.cpu, 0x7E);
   f.ModifyRegs([](auto& r) { r.P.C = true; });
@@ -222,8 +222,8 @@ TEST_CASE("AND absolute 16-bit masks wide accumulator", "[unit][opcode][cpu][abs
   f.LoadInstruction({0x2D, 0x40, 0x00});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x0040, 0x00);
-  f.wram.WriteRegister(0x0041, 0xFF);
+  f.wram.WriteRegister(0x0040, 0x00, 0);
+  f.wram.WriteRegister(0x0041, 0xFF, 0);
   SetAccumulator16(f.cpu, 0xFFFF);
   SetDataBank(f.cpu, 0x7E);
 
@@ -240,8 +240,8 @@ TEST_CASE("ORA absolute 16-bit fills all bits", "[unit][opcode][cpu][abs]") {
   f.LoadInstruction({0x0D, 0x40, 0x00});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x0040, 0xFF);
-  f.wram.WriteRegister(0x0041, 0x00);
+  f.wram.WriteRegister(0x0040, 0xFF, 0);
+  f.wram.WriteRegister(0x0041, 0x00, 0);
   SetAccumulator16(f.cpu, 0xFF00);
   SetDataBank(f.cpu, 0x7E);
 
@@ -257,8 +257,8 @@ TEST_CASE("EOR absolute 16-bit sets Z", "[unit][opcode][cpu][abs]") {
   f.LoadInstruction({0x4D, 0x40, 0x00});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x0040, 0xFF);
-  f.wram.WriteRegister(0x0041, 0xFF);
+  f.wram.WriteRegister(0x0040, 0xFF, 0);
+  f.wram.WriteRegister(0x0041, 0xFF, 0);
   SetAccumulator16(f.cpu, 0xFFFF);
   SetDataBank(f.cpu, 0x7E);
 
@@ -274,8 +274,8 @@ TEST_CASE("CMP absolute 16-bit equal", "[unit][opcode][cpu][abs]") {
   f.LoadInstruction({0xCD, 0x40, 0x00});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x0040, 0x34);
-  f.wram.WriteRegister(0x0041, 0x12);
+  f.wram.WriteRegister(0x0040, 0x34, 0);
+  f.wram.WriteRegister(0x0041, 0x12, 0);
   SetAccumulator16(f.cpu, 0x1234);
   SetDataBank(f.cpu, 0x7E);
 
@@ -294,8 +294,8 @@ TEST_CASE("BIT absolute 16-bit reads N from bit 15 and V from bit 14", "[unit][o
   f.LoadInstruction({0x2C, 0x40, 0x00});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x0040, 0x00);
-  f.wram.WriteRegister(0x0041, 0xC0);
+  f.wram.WriteRegister(0x0040, 0x00, 0);
+  f.wram.WriteRegister(0x0041, 0xC0, 0);
   SetAccumulator16(f.cpu, 0x3FFF);
   SetDataBank(f.cpu, 0x7E);
 
@@ -318,7 +318,7 @@ TEST_CASE("ADC absolute long 8-bit loads from 24-bit address", "[unit][opcode][c
   f.LoadInstruction({0x6F, 0x00, 0x00, 0x7E});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x0000, 0x02);
+  f.wram.WriteRegister(0x0000, 0x02, 0);
   f.ModifyRegs([](auto& r) {
     r.A = 0x0001;
     r.P.C = false;
@@ -336,7 +336,7 @@ TEST_CASE("SBC absolute long 8-bit", "[unit][opcode][cpu][abs]") {
   f.LoadInstruction({0xEF, 0x00, 0x00, 0x7E});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x0000, 0x01);
+  f.wram.WriteRegister(0x0000, 0x01, 0);
   f.ModifyRegs([](auto& r) {
     r.A = 0x0010;
     r.P.C = true;
@@ -353,7 +353,7 @@ TEST_CASE("AND absolute long 8-bit", "[unit][opcode][cpu][abs]") {
   f.LoadInstruction({0x2F, 0x00, 0x00, 0x7E});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x0000, 0xF0);
+  f.wram.WriteRegister(0x0000, 0xF0, 0);
   f.ModifyRegs([](auto& r) { r.A = 0x00FF; });
 
   TickResult r = f.cpu.Tick(40);
@@ -367,7 +367,7 @@ TEST_CASE("ORA absolute long 8-bit", "[unit][opcode][cpu][abs]") {
   f.LoadInstruction({0x0F, 0x00, 0x00, 0x7E});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x0000, 0x0F);
+  f.wram.WriteRegister(0x0000, 0x0F, 0);
   f.ModifyRegs([](auto& r) { r.A = 0x00F0; });
 
   TickResult r = f.cpu.Tick(40);
@@ -381,7 +381,7 @@ TEST_CASE("EOR absolute long 8-bit clears A", "[unit][opcode][cpu][abs]") {
   f.LoadInstruction({0x4F, 0x00, 0x00, 0x7E});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x0000, 0xFF);
+  f.wram.WriteRegister(0x0000, 0xFF, 0);
   f.ModifyRegs([](auto& r) { r.A = 0x00FF; });
 
   TickResult r = f.cpu.Tick(40);
@@ -396,7 +396,7 @@ TEST_CASE("CMP absolute long 8-bit equal", "[unit][opcode][cpu][abs]") {
   f.LoadInstruction({0xCF, 0x00, 0x00, 0x7E});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x0000, 0x10);
+  f.wram.WriteRegister(0x0000, 0x10, 0);
   f.ModifyRegs([](auto& r) { r.A = 0x0010; });
 
   TickResult r = f.cpu.Tick(40);
@@ -416,8 +416,8 @@ TEST_CASE("ADC absolute long 16-bit uses 6 cycles", "[unit][opcode][cpu][abs]") 
   f.LoadInstruction({0x6F, 0x00, 0x00, 0x7E});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x0000, 0x34);
-  f.wram.WriteRegister(0x0001, 0x12);
+  f.wram.WriteRegister(0x0000, 0x34, 0);
+  f.wram.WriteRegister(0x0001, 0x12, 0);
   SetAccumulator16(f.cpu, 0x1000);
   f.ModifyRegs([](auto& r) { r.P.C = false; });
 
@@ -432,8 +432,8 @@ TEST_CASE("SBC absolute long 16-bit", "[unit][opcode][cpu][abs]") {
   f.LoadInstruction({0xEF, 0x00, 0x00, 0x7E});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x0000, 0x01);
-  f.wram.WriteRegister(0x0001, 0x00);
+  f.wram.WriteRegister(0x0000, 0x01, 0);
+  f.wram.WriteRegister(0x0001, 0x00, 0);
   SetAccumulator16(f.cpu, 0x0002);
   f.ModifyRegs([](auto& r) { r.P.C = true; });
 
@@ -449,8 +449,8 @@ TEST_CASE("AND absolute long 16-bit", "[unit][opcode][cpu][abs]") {
   f.LoadInstruction({0x2F, 0x00, 0x00, 0x7E});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x0000, 0x00);
-  f.wram.WriteRegister(0x0001, 0xFF);
+  f.wram.WriteRegister(0x0000, 0x00, 0);
+  f.wram.WriteRegister(0x0001, 0xFF, 0);
   SetAccumulator16(f.cpu, 0xFFFF);
 
   TickResult r = f.cpu.Tick(48);
@@ -465,8 +465,8 @@ TEST_CASE("ORA absolute long 16-bit", "[unit][opcode][cpu][abs]") {
   f.LoadInstruction({0x0F, 0x00, 0x00, 0x7E});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x0000, 0xFF);
-  f.wram.WriteRegister(0x0001, 0x00);
+  f.wram.WriteRegister(0x0000, 0xFF, 0);
+  f.wram.WriteRegister(0x0001, 0x00, 0);
   SetAccumulator16(f.cpu, 0xFF00);
 
   TickResult r = f.cpu.Tick(48);
@@ -480,8 +480,8 @@ TEST_CASE("EOR absolute long 16-bit sets Z", "[unit][opcode][cpu][abs]") {
   f.LoadInstruction({0x4F, 0x00, 0x00, 0x7E});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x0000, 0xFF);
-  f.wram.WriteRegister(0x0001, 0xFF);
+  f.wram.WriteRegister(0x0000, 0xFF, 0);
+  f.wram.WriteRegister(0x0001, 0xFF, 0);
   SetAccumulator16(f.cpu, 0xFFFF);
 
   TickResult r = f.cpu.Tick(48);
@@ -496,8 +496,8 @@ TEST_CASE("CMP absolute long 16-bit equal", "[unit][opcode][cpu][abs]") {
   f.LoadInstruction({0xCF, 0x00, 0x00, 0x7E});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x0000, 0x34);
-  f.wram.WriteRegister(0x0001, 0x12);
+  f.wram.WriteRegister(0x0000, 0x34, 0);
+  f.wram.WriteRegister(0x0001, 0x12, 0);
   SetAccumulator16(f.cpu, 0x1234);
 
   TickResult r = f.cpu.Tick(48);
@@ -517,7 +517,7 @@ TEST_CASE("LDA absolute loads 8-bit value from DBR-banked address", "[unit][opco
   f.LoadInstruction({0xAD, 0x40, 0x00});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x0040, 0x42);
+  f.wram.WriteRegister(0x0040, 0x42, 0);
   SetDataBank(f.cpu, 0x7E);
 
   TickResult r = f.cpu.Tick(32);
@@ -531,7 +531,7 @@ TEST_CASE("LDA absolute long loads from 24-bit address", "[unit][opcode][cpu][ab
   f.LoadInstruction({0xAF, 0x00, 0x00, 0x7E});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x0000, 0xBB);
+  f.wram.WriteRegister(0x0000, 0xBB, 0);
 
   TickResult r = f.cpu.Tick(40);
 
@@ -544,7 +544,7 @@ TEST_CASE("LDX absolute 8-bit loads X low byte", "[unit][opcode][cpu][abs]") {
   f.LoadInstruction({0xAE, 0x40, 0x00});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x0040, 0x55);
+  f.wram.WriteRegister(0x0040, 0x55, 0);
   SetDataBank(f.cpu, 0x7E);
 
   TickResult r = f.cpu.Tick(32);
@@ -558,8 +558,8 @@ TEST_CASE("LDX absolute 16-bit uses 5-cycle path", "[unit][opcode][cpu][abs]") {
   f.LoadInstruction({0xAE, 0x40, 0x00});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x0040, 0x34);
-  f.wram.WriteRegister(0x0041, 0x12);
+  f.wram.WriteRegister(0x0040, 0x34, 0);
+  f.wram.WriteRegister(0x0041, 0x12, 0);
   SetIndex16X(f.cpu, 0x0000);
   SetDataBank(f.cpu, 0x7E);
 
@@ -574,7 +574,7 @@ TEST_CASE("LDY absolute 8-bit loads Y low byte", "[unit][opcode][cpu][abs]") {
   f.LoadInstruction({0xAC, 0x40, 0x00});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x0040, 0x33);
+  f.wram.WriteRegister(0x0040, 0x33, 0);
   SetDataBank(f.cpu, 0x7E);
 
   TickResult r = f.cpu.Tick(32);
@@ -588,8 +588,8 @@ TEST_CASE("LDY absolute 16-bit uses 5-cycle path", "[unit][opcode][cpu][abs]") {
   f.LoadInstruction({0xAC, 0x40, 0x00});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x0040, 0xCD);
-  f.wram.WriteRegister(0x0041, 0xAB);
+  f.wram.WriteRegister(0x0040, 0xCD, 0);
+  f.wram.WriteRegister(0x0041, 0xAB, 0);
   SetIndex16Y(f.cpu, 0x0000);
   SetDataBank(f.cpu, 0x7E);
 
@@ -604,7 +604,7 @@ TEST_CASE("CPX absolute equal sets Z and C", "[unit][opcode][cpu][abs]") {
   f.LoadInstruction({0xEC, 0x40, 0x00});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x0040, 0x10);
+  f.wram.WriteRegister(0x0040, 0x10, 0);
   f.ModifyRegs([](auto& r) {
     r.X = 0x0010;
     r.DBR = 0x7E;
@@ -624,7 +624,7 @@ TEST_CASE("CPY absolute Y > operand sets C but not Z", "[unit][opcode][cpu][abs]
   f.LoadInstruction({0xCC, 0x40, 0x00});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x0040, 0x10);
+  f.wram.WriteRegister(0x0040, 0x10, 0);
   f.ModifyRegs([](auto& r) {
     r.Y = 0x0020;
     r.DBR = 0x7E;

@@ -34,9 +34,13 @@ TickResult WRAM::Tick(TimeMasterDeltaT budget) { return {budget, TickStopReason:
 
 void WRAM::OnEvent(const SchedulerEvent& /*event*/) {}
 
-uint8_t WRAM::ReadRegister(uint32_t offset) { return bytes_[static_cast<std::size_t>(offset) % kSize]; }
+MmioReadResult WRAM::ReadRegister(uint32_t offset, TimeMasterT /*current_time*/) {
+  return {bytes_[static_cast<std::size_t>(offset) % kSize], 0xFFU};
+}
 
-void WRAM::WriteRegister(uint32_t offset, uint8_t data) { bytes_[static_cast<std::size_t>(offset) % kSize] = data; }
+void WRAM::WriteRegister(uint32_t offset, uint8_t data, TimeMasterT /*current_time*/) {
+  bytes_[static_cast<std::size_t>(offset) % kSize] = data;
+}
 
 std::optional<uint8_t> WRAM::HandleDebugRead(uint32_t offset) const {
   return bytes_[static_cast<std::size_t>(offset) % kSize];

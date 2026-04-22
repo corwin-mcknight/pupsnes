@@ -38,7 +38,7 @@ class Cartridge : public Device {
 
   [[nodiscard]] TickResult Tick(TimeMasterDeltaT budget) override;
   void OnEvent(const SchedulerEvent& event) override;
-  [[nodiscard]] uint8_t ReadRegister(uint32_t offset) override;
+  [[nodiscard]] MmioReadResult ReadRegister(uint32_t offset, TimeMasterT current_time) override;
   [[nodiscard]] std::optional<uint8_t> HandleDebugRead(uint32_t offset) const override;
 
   [[nodiscard]] std::size_t Size() const { return rom_.size(); }

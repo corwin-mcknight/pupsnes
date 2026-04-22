@@ -25,8 +25,12 @@ class TestROM : public Device {
   TickResult Tick(TimeMasterDeltaT budget) override { return {budget, TickStopReason::kBudgetExhausted}; }
   void OnEvent(const SchedulerEvent&) override {}
 
-  uint8_t ReadRegister(uint32_t offset) override { return mem[offset % kSize]; }
-  void WriteRegister(uint32_t offset, uint8_t data) override { mem[offset % kSize] = data; }
+  MmioReadResult ReadRegister(uint32_t offset, TimeMasterT /*current_time*/) override {
+    return {mem[offset % kSize], 0xFFU};
+  }
+  void WriteRegister(uint32_t offset, uint8_t data, TimeMasterT /*current_time*/) override {
+    mem[offset % kSize] = data;
+  }
 };
 
 class ObservedMMIO : public Device {
@@ -40,9 +44,9 @@ class ObservedMMIO : public Device {
   TickResult Tick(TimeMasterDeltaT budget) override { return {budget, TickStopReason::kBudgetExhausted}; }
   void OnEvent(const SchedulerEvent&) override {}
 
-  uint8_t ReadRegister(uint32_t offset) override {
+  MmioReadResult ReadRegister(uint32_t offset, TimeMasterT /*current_time*/) override {
     read_times.push_back(GetTime());
-    return mem[offset % kSize];
+    return {mem[offset % kSize], 0xFFU};
   }
 };
 
@@ -533,7 +537,7 @@ TEST_CASE("LDA direct page loads from bank 0 (DP + offset)", "[cpu]") {
   f.LoadInstruction({0xA5, 0x50});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x0050, 0x42);
+  f.wram.WriteRegister(0x0050, 0x42, 0);
 
   TickResult r = f.cpu.Tick(24);  // 4-m+w with m=1,w=0 = 3
 
@@ -550,8 +554,8 @@ TEST_CASE("LDA direct page loads 16-bit value when M is clear", "[cpu]") {
   f.LoadInstruction({0xA5, 0x80});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x0080, 0xCD);
-  f.wram.WriteRegister(0x0081, 0xAB);
+  f.wram.WriteRegister(0x0080, 0xCD, 0);
+  f.wram.WriteRegister(0x0081, 0xAB, 0);
   f.ModifyRegs([](auto& r) {
     r.P.E = false;
     r.P.M = false;
@@ -575,7 +579,7 @@ TEST_CASE("LDA direct page incurs DL-nonzero penalty cycle", "[cpu]") {
   f.ModifyRegs([](auto& r) {
     r.DP = 0x0123;  // DL nonzero → +1 cycle
   });
-  f.wram.WriteRegister(0x0133, 0x99);
+  f.wram.WriteRegister(0x0133, 0x99, 0);
 
   TickResult r = f.cpu.Tick(30);  // 4-m+w = 3 + w(1) = 4
 
@@ -591,9 +595,9 @@ TEST_CASE("LDX/LDY/STX/STY/STZ direct page cover register + zero paths", "[cpu]"
   f.LoadInstruction({0xA6, 0x10, 0x86, 0x14, 0xA4, 0x11, 0x84, 0x15, 0x64, 0x12});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x0010, 0x7A);
-  f.wram.WriteRegister(0x0011, 0x2B);
-  f.wram.WriteRegister(0x0012, 0xFF);  // STZ should overwrite this
+  f.wram.WriteRegister(0x0010, 0x7A, 0);
+  f.wram.WriteRegister(0x0011, 0x2B, 0);
+  f.wram.WriteRegister(0x0012, 0xFF, 0);  // STZ should overwrite this
 
   // Each op is 3 cycles (M=1/X=1, DL=0) = 15 total.
   TickResult r = f.cpu.Tick(120);
@@ -613,8 +617,8 @@ TEST_CASE("STZ direct page writes zero to both DP bytes when M is clear", "[cpu]
   f.LoadInstruction({0x64, 0x20});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x0020, 0xAA);
-  f.wram.WriteRegister(0x0021, 0xBB);
+  f.wram.WriteRegister(0x0020, 0xAA, 0);
+  f.wram.WriteRegister(0x0021, 0xBB, 0);
   f.ModifyRegs([](auto& r) {
     r.P.E = false;
     r.P.M = false;
@@ -636,7 +640,7 @@ TEST_CASE("LDA direct page indexed X reads (DP + offset + X) in bank 0", "[cpu]"
   f.ModifyRegs([](auto& r) {
     r.X = 0x000A;  // 8-bit X
   });
-  f.wram.WriteRegister(0x002A, 0x55);
+  f.wram.WriteRegister(0x002A, 0x55, 0);
 
   TickResult r = f.cpu.Tick(30);  // 5-m+w with m=1,w=0 = 4
 
@@ -652,8 +656,8 @@ TEST_CASE("LDX direct page indexed Y respects 16-bit index addition", "[cpu]") {
 
   f.cpu.Reset();
   SetIndex16Y(f.cpu, 0x0080);  // 16-bit Y so X=0 in P
-  f.wram.WriteRegister(0x0090, 0xCD);
-  f.wram.WriteRegister(0x0091, 0xAB);
+  f.wram.WriteRegister(0x0090, 0xCD, 0);
+  f.wram.WriteRegister(0x0091, 0xAB, 0);
 
   TickResult r = f.cpu.Tick(46);  // 5-x+w with x=0,w=0 = 5
 
@@ -686,7 +690,7 @@ TEST_CASE("STZ direct page indexed X clears bank 0 byte", "[cpu]") {
 
   f.cpu.Reset();
   f.ModifyRegs([](auto& r) { r.X = 0x0004; });
-  f.wram.WriteRegister(0x0034, 0x77);
+  f.wram.WriteRegister(0x0034, 0x77, 0);
 
   TickResult r = f.cpu.Tick(38);
 
@@ -702,7 +706,7 @@ TEST_CASE("STZ absolute writes zero through DBR-banked effective address", "[cpu
 
   f.cpu.Reset();
   SetDataBank(f.cpu, 0x7E);
-  f.wram.WriteRegister(0x1234, 0xAB);
+  f.wram.WriteRegister(0x1234, 0xAB, 0);
 
   // 5-m with m=1 = 4 cycles.
   TickResult r = f.cpu.Tick(32);
@@ -720,8 +724,8 @@ TEST_CASE("STZ absolute clears both bytes when M is clear", "[cpu]") {
   f.cpu.Reset();
   SetDataBank(f.cpu, 0x7E);
   SetAccumulator16(f.cpu, 0x1234);  // also clears M
-  f.wram.WriteRegister(0x0040, 0xAA);
-  f.wram.WriteRegister(0x0041, 0xBB);
+  f.wram.WriteRegister(0x0040, 0xAA, 0);
+  f.wram.WriteRegister(0x0041, 0xBB, 0);
 
   // 5-m with m=0 = 5 cycles.
   TickResult r = f.cpu.Tick(40);
@@ -742,7 +746,7 @@ TEST_CASE("STZ absolute indexed X adds X into the DBR-banked effective address",
   f.ModifyRegs([](auto& r) {
     r.X = 0x0034;  // 8-bit X
   });
-  f.wram.WriteRegister(0x1234, 0x99);
+  f.wram.WriteRegister(0x1234, 0x99, 0);
 
   // 6-m with m=1 = 5 cycles.
   TickResult r = f.cpu.Tick(38);
@@ -761,14 +765,14 @@ TEST_CASE("STZ absolute indexed X carries across the bank boundary", "[cpu]") {
   f.cpu.Reset();
   SetDataBank(f.cpu, 0x7E);
   SetIndex16X(f.cpu, 0x0001);
-  f.wram.WriteRegister(0xFFFF, 0xCC);  // not this one
+  f.wram.WriteRegister(0xFFFF, 0xCC, 0);  // not this one
   // 0x7F:$0000 = WRAM linear offset 0x10000; poke via bank 0x7F mapping
   f.ModifyRegs([](auto& r) {
     r.P.M = true;  // 8-bit store
   });
 
   // Prime WRAM $10000 (bank 0x7F:$0000) with nonzero so we can see the clear.
-  f.wram.WriteRegister(0x10000, 0xDD);
+  f.wram.WriteRegister(0x10000, 0xDD, 0);
 
   TickResult r = f.cpu.Tick(46);  // 6-m with m=1 = 5
 
@@ -784,7 +788,7 @@ TEST_CASE("LDA stack-relative reads bank-0 (SP + offset)", "[cpu]") {
 
   f.cpu.Reset();
   f.ModifyRegs([](auto& r) { r.SP = 0x01F0; });
-  f.wram.WriteRegister(0x01F4, 0x66);
+  f.wram.WriteRegister(0x01F4, 0x66, 0);
 
   TickResult r = f.cpu.Tick(38);  // 5-m at m=1 = 4
 
@@ -852,7 +856,7 @@ TEST_CASE("STZ absolute indexed X clears a bank-0 byte", "[cpu]") {
     r.DBR = 0x7E;
     r.X = 0x0004;
   });
-  f.wram.WriteRegister(0x0044, 0x99);
+  f.wram.WriteRegister(0x0044, 0x99, 0);
 
   TickResult r = f.cpu.Tick(46);
 
@@ -866,9 +870,9 @@ TEST_CASE("LDA direct indirect reads through pointer at DBR:(high:low)", "[cpu]"
 
   f.cpu.Reset();
   f.ModifyRegs([](auto& r) { r.DBR = 0x7E; });
-  f.wram.WriteRegister(0x0010, 0x34);
-  f.wram.WriteRegister(0x0011, 0x12);
-  f.wram.WriteRegister(0x1234, 0x99);
+  f.wram.WriteRegister(0x0010, 0x34, 0);
+  f.wram.WriteRegister(0x0011, 0x12, 0);
+  f.wram.WriteRegister(0x1234, 0x99, 0);
 
   TickResult r = f.cpu.Tick(40);
 
@@ -886,10 +890,10 @@ TEST_CASE("LDA direct indirect reads 16 bits when M is clear", "[cpu]") {
     r.P.M = false;
     r.DBR = 0x7E;
   });
-  f.wram.WriteRegister(0x0020, 0x00);
-  f.wram.WriteRegister(0x0021, 0x20);
-  f.wram.WriteRegister(0x2000, 0xCD);
-  f.wram.WriteRegister(0x2001, 0xAB);
+  f.wram.WriteRegister(0x0020, 0x00, 0);
+  f.wram.WriteRegister(0x0021, 0x20, 0);
+  f.wram.WriteRegister(0x2000, 0xCD, 0);
+  f.wram.WriteRegister(0x2001, 0xAB, 0);
 
   TickResult r = f.cpu.Tick(48);
 
@@ -906,8 +910,8 @@ TEST_CASE("STA direct indirect writes through pointer", "[cpu]") {
     r.A = 0x0044;
     r.DBR = 0x7E;
   });
-  f.wram.WriteRegister(0x0030, 0x00);
-  f.wram.WriteRegister(0x0031, 0x40);
+  f.wram.WriteRegister(0x0030, 0x00, 0);
+  f.wram.WriteRegister(0x0031, 0x40, 0);
 
   TickResult r = f.cpu.Tick(40);
 
@@ -920,10 +924,10 @@ TEST_CASE("LDA direct indirect long reads through 24-bit pointer", "[cpu]") {
   f.LoadInstruction({0xA7, 0x40});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x0040, 0x10);
-  f.wram.WriteRegister(0x0041, 0x30);
-  f.wram.WriteRegister(0x0042, 0x7E);
-  f.wram.WriteRegister(0x3010, 0x11);
+  f.wram.WriteRegister(0x0040, 0x10, 0);
+  f.wram.WriteRegister(0x0041, 0x30, 0);
+  f.wram.WriteRegister(0x0042, 0x7E, 0);
+  f.wram.WriteRegister(0x3010, 0x11, 0);
 
   TickResult r = f.cpu.Tick(48);
 
@@ -937,9 +941,9 @@ TEST_CASE("STA direct indirect long writes through 24-bit pointer", "[cpu]") {
 
   f.cpu.Reset();
   f.ModifyRegs([](auto& r) { r.A = 0x0077; });
-  f.wram.WriteRegister(0x0050, 0x00);
-  f.wram.WriteRegister(0x0051, 0x50);
-  f.wram.WriteRegister(0x0052, 0x7E);
+  f.wram.WriteRegister(0x0050, 0x00, 0);
+  f.wram.WriteRegister(0x0051, 0x50, 0);
+  f.wram.WriteRegister(0x0052, 0x7E, 0);
 
   TickResult r = f.cpu.Tick(48);
 
@@ -956,9 +960,9 @@ TEST_CASE("LDA direct indirect with DP-nonzero adds DL penalty cycle", "[cpu]") 
     r.DP = 0x0080;  // DL nonzero → +1 cycle
     r.DBR = 0x7E;
   });
-  f.wram.WriteRegister(0x0090, 0x00);
-  f.wram.WriteRegister(0x0091, 0x60);
-  f.wram.WriteRegister(0x6000, 0x55);
+  f.wram.WriteRegister(0x0090, 0x00, 0);
+  f.wram.WriteRegister(0x0091, 0x60, 0);
+  f.wram.WriteRegister(0x6000, 0x55, 0);
 
   TickResult r = f.cpu.Tick(48);
 
@@ -1053,7 +1057,7 @@ TEST_CASE("PLB pulls data bank register from stack and updates DBR and flags", "
   f.LoadInstruction({0xAB});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x01FF, 0x42);
+  f.wram.WriteRegister(0x01FF, 0x42, 0);
   f.ModifyRegs([](auto& r) {
     r.SP = 0x01FE;
     r.DBR = 0x00;
@@ -1077,7 +1081,7 @@ TEST_CASE("PLB sets Z when pulled value is zero", "[cpu]") {
   f.LoadInstruction({0xAB});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x01FF, 0x00);
+  f.wram.WriteRegister(0x01FF, 0x00, 0);
   f.ModifyRegs([](auto& r) {
     r.SP = 0x01FE;
     r.DBR = 0x7E;
@@ -1096,7 +1100,7 @@ TEST_CASE("PLB sets N when pulled value has bit 7 set", "[cpu]") {
   f.LoadInstruction({0xAB});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x01FF, 0x80);
+  f.wram.WriteRegister(0x01FF, 0x80, 0);
   f.ModifyRegs([](auto& r) { r.SP = 0x01FE; });
 
   TickResult r = f.cpu.Tick(36);
@@ -1112,7 +1116,7 @@ TEST_CASE("PLB in emulation mode wraps SP across page 1", "[cpu]") {
   f.LoadInstruction({0xAB});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x0100, 0x33);
+  f.wram.WriteRegister(0x0100, 0x33, 0);
   f.ModifyRegs([](auto& r) { r.SP = 0x01FF; });
 
   TickResult r = f.cpu.Tick(36);
@@ -2119,7 +2123,7 @@ TEST_CASE("ADC direct page 8-bit adds value at DP+offset", "[cpu][opcode]") {
   f.LoadInstruction({0x65, 0x20});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x0020, 0x05);
+  f.wram.WriteRegister(0x0020, 0x05, 0);
   f.ModifyRegs([](auto& r) {
     r.A = 0x0040;
     r.P.C = false;
@@ -2137,8 +2141,8 @@ TEST_CASE("ADC direct page 16-bit adds value at DP+offset", "[cpu][opcode]") {
   f.LoadInstruction({0x65, 0x40});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x0040, 0x34);
-  f.wram.WriteRegister(0x0041, 0x12);
+  f.wram.WriteRegister(0x0040, 0x34, 0);
+  f.wram.WriteRegister(0x0041, 0x12, 0);
   f.ModifyRegs([](auto& r) {
     r.P.E = false;
     r.P.M = false;
@@ -2162,7 +2166,7 @@ TEST_CASE("ADC direct page pays DL-nonzero penalty", "[cpu][opcode]") {
     r.A = 0x0001;
     r.P.C = false;
   });
-  f.wram.WriteRegister(0x0133, 0x02);
+  f.wram.WriteRegister(0x0133, 0x02, 0);
 
   TickResult r = f.cpu.Tick(38);  // 4-m+w with m=1,w=1 = 4
 
@@ -2175,7 +2179,7 @@ TEST_CASE("SBC direct page subtracts with borrow", "[cpu][opcode]") {
   f.LoadInstruction({0xE5, 0x10});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x0010, 0x01);
+  f.wram.WriteRegister(0x0010, 0x01, 0);
   f.ModifyRegs([](auto& r) {
     r.A = 0x0005;
     r.P.C = true;
@@ -2193,9 +2197,9 @@ TEST_CASE("AND/ORA/EOR direct page combine A with memory", "[cpu][opcode]") {
   f.LoadInstruction({0x25, 0x10, 0x05, 0x11, 0x45, 0x12});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x0010, 0x0F);
-  f.wram.WriteRegister(0x0011, 0xF0);
-  f.wram.WriteRegister(0x0012, 0xFF);
+  f.wram.WriteRegister(0x0010, 0x0F, 0);
+  f.wram.WriteRegister(0x0011, 0xF0, 0);
+  f.wram.WriteRegister(0x0012, 0xFF, 0);
   f.ModifyRegs([](auto& r) { r.A = 0x00A5; });
 
   // 3+3+3 = 9 cycles (all m=1, w=0).
@@ -2211,7 +2215,7 @@ TEST_CASE("CMP direct page sets Z when equal", "[cpu][opcode]") {
   f.LoadInstruction({0xC5, 0x20});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x0020, 0x42);
+  f.wram.WriteRegister(0x0020, 0x42, 0);
   f.ModifyRegs([](auto& r) { r.A = 0x0042; });
 
   (void)f.cpu.Tick(100);

@@ -21,8 +21,12 @@ class MockMemoryDevice : public Device {
   TickResult Tick(TimeMasterDeltaT budget) override { return {budget, TickStopReason::kBudgetExhausted}; }
   void OnEvent(const SchedulerEvent&) override {}
 
-  uint8_t ReadRegister(uint32_t offset) override { return memory[offset % kSize]; }
-  void WriteRegister(uint32_t offset, uint8_t data) override { memory[offset % kSize] = data; }
+  MmioReadResult ReadRegister(uint32_t offset, TimeMasterT /*current_time*/) override {
+    return {memory[offset % kSize], 0xFFU};
+  }
+  void WriteRegister(uint32_t offset, uint8_t data, TimeMasterT /*current_time*/) override {
+    memory[offset % kSize] = data;
+  }
 };
 
 class MockMMIODevice : public Device {
@@ -41,11 +45,11 @@ class MockMMIODevice : public Device {
   }
   void OnEvent(const SchedulerEvent&) override {}
 
-  uint8_t ReadRegister(uint32_t offset) override {
+  MmioReadResult ReadRegister(uint32_t offset, TimeMasterT /*current_time*/) override {
     last_read_offset = offset;
-    return read_value;
+    return {read_value, 0xFFU};
   }
-  void WriteRegister(uint32_t offset, uint8_t data) override {
+  void WriteRegister(uint32_t offset, uint8_t data, TimeMasterT /*current_time*/) override {
     last_write_offset = offset;
     last_write_data = data;
   }
@@ -142,7 +146,10 @@ TEST_CASE("follow InlineComplete for SameClockMMIO triggers catch-up", "[unit]")
   REQUIRE(mmio_dev.last_read_offset == 0x100);  // base_offset + (0x00 & 0xFF)
 }
 
-TEST_CASE("follow InlineComplete for SameClockMMIO write", "[unit]") {
+TEST_CASE("follow InlineComplete for SameClockMMIO write does not catch up", "[unit]") {
+  // Lazy-replay rule: writes to same-clock MMIO append to the target device's
+  // pending-write log without forcing a catch-up. The device stays behind
+  // until a later read (or its own Tick) drains the log.
   SNES snes;
   MockMMIODevice mmio_dev(&snes);
 
@@ -152,7 +159,8 @@ TEST_CASE("follow InlineComplete for SameClockMMIO write", "[unit]") {
   BusFollowResult result = snes.system_bus->Follow(p, 50, mmio_dev.GetDeviceId());
 
   REQUIRE(result.outcome == BusPlanOutcome::kInlineComplete);
-  REQUIRE(mmio_dev.GetTime() == 50);
+  REQUIRE(mmio_dev.GetTime() == 0);   // Device time unchanged — no catch-up.
+  REQUIRE(mmio_dev.tick_calls == 0);  // No catch-up tick.
   REQUIRE(mmio_dev.last_write_offset == 0x05);
   REQUIRE(mmio_dev.last_write_data == 0xFF);
 }

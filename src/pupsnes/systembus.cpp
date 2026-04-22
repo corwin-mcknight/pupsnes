@@ -215,7 +215,11 @@ BusFollowResult SystemBus::FollowInline(const BusPlan& plan, TimeMasterT current
     return {BusPlanOutcome::kRejected, 0, 0};
   }
 
-  if (entry.kind == PageDeviceKind::kSameClockMmio) {
+  // Lazy-replay rule: writes queue, reads catch up. Only reads to same-clock
+  // MMIO force the target device to catch up to the current bus time; writes
+  // append to the device's pending-write log (inside WriteRegister) without
+  // paying per-write catch-up overhead.
+  if (entry.kind == PageDeviceKind::kSameClockMmio && plan.access_type == BusAccessType::kRead) {
     snes_->scheduler->CatchUpDevice(plan.target_device, current_time);
   }
   // TODO: kArbitrated — when a contended mapper (SA-1 / SuperFX shared SRAM)
@@ -226,9 +230,15 @@ BusFollowResult SystemBus::FollowInline(const BusPlan& plan, TimeMasterT current
   result.token = 0;
 
   if (plan.access_type == BusAccessType::kRead) {
-    result.data = device->ReadRegister(plan.device_offset);
+    const MmioReadResult read = device->ReadRegister(plan.device_offset, current_time);
+    // Open-bus merge: each bit the device actively drives comes from `value`;
+    // every other bit falls through from the last byte the bus latched. The
+    // merged byte both goes to the requester and becomes the new latch so a
+    // subsequent pure open-bus read observes these floating bits too.
+    result.data = static_cast<uint8_t>((read.value & read.driven_mask) |
+                                       (last_data_bus_value_ & static_cast<uint8_t>(~read.driven_mask)));
   } else {
-    device->WriteRegister(plan.device_offset, plan.write_data);
+    device->WriteRegister(plan.device_offset, plan.write_data, current_time);
     result.data = plan.write_data;
   }
 

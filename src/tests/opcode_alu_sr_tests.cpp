@@ -30,7 +30,7 @@ TEST_CASE("ADC stack-relative 8-bit adds from bank-0 SP+offset", "[unit][opcode]
     r.A = 0x0001;
     r.P.C = false;
   });
-  f.wram.WriteRegister(0x01F4, 0x05);
+  f.wram.WriteRegister(0x01F4, 0x05, 0);
 
   TickResult r = f.cpu.Tick(38);
 
@@ -49,7 +49,7 @@ TEST_CASE("SBC stack-relative 8-bit subtracts from stack", "[unit][opcode][cpu][
     r.A = 0x0010;
     r.P.C = true;
   });
-  f.wram.WriteRegister(0x01F4, 0x01);
+  f.wram.WriteRegister(0x01F4, 0x01, 0);
 
   TickResult r = f.cpu.Tick(38);
 
@@ -67,7 +67,7 @@ TEST_CASE("AND stack-relative 8-bit", "[unit][opcode][cpu][sr]") {
     r.SP = 0x01F0;
     r.A = 0x00FF;
   });
-  f.wram.WriteRegister(0x01F4, 0xF0);
+  f.wram.WriteRegister(0x01F4, 0xF0, 0);
 
   TickResult r = f.cpu.Tick(38);
 
@@ -86,7 +86,7 @@ TEST_CASE("ORA stack-relative 8-bit", "[unit][opcode][cpu][sr]") {
     r.SP = 0x01F0;
     r.A = 0x00F0;
   });
-  f.wram.WriteRegister(0x01F4, 0x0F);
+  f.wram.WriteRegister(0x01F4, 0x0F, 0);
 
   TickResult r = f.cpu.Tick(38);
 
@@ -104,7 +104,7 @@ TEST_CASE("EOR stack-relative 8-bit clears to zero", "[unit][opcode][cpu][sr]") 
     r.SP = 0x01F0;
     r.A = 0x00FF;
   });
-  f.wram.WriteRegister(0x01F4, 0xFF);
+  f.wram.WriteRegister(0x01F4, 0xFF, 0);
 
   TickResult r = f.cpu.Tick(38);
 
@@ -122,7 +122,7 @@ TEST_CASE("CMP stack-relative 8-bit equal result", "[unit][opcode][cpu][sr]") {
     r.SP = 0x01F0;
     r.A = 0x0010;
   });
-  f.wram.WriteRegister(0x01F4, 0x10);
+  f.wram.WriteRegister(0x01F4, 0x10, 0);
 
   TickResult r = f.cpu.Tick(38);
 
@@ -148,8 +148,8 @@ TEST_CASE("ADC stack-relative 16-bit uses 5 cycles", "[unit][opcode][cpu][sr]") 
     r.SP = 0x01F0;
     r.P.C = false;
   });
-  f.wram.WriteRegister(0x01F4, 0x34);
-  f.wram.WriteRegister(0x01F5, 0x12);
+  f.wram.WriteRegister(0x01F4, 0x34, 0);
+  f.wram.WriteRegister(0x01F5, 0x12, 0);
 
   TickResult r = f.cpu.Tick(46);
 
@@ -167,8 +167,8 @@ TEST_CASE("SBC stack-relative 16-bit", "[unit][opcode][cpu][sr]") {
     r.SP = 0x01F0;
     r.P.C = true;
   });
-  f.wram.WriteRegister(0x01F4, 0x01);
-  f.wram.WriteRegister(0x01F5, 0x00);
+  f.wram.WriteRegister(0x01F4, 0x01, 0);
+  f.wram.WriteRegister(0x01F5, 0x00, 0);
 
   TickResult r = f.cpu.Tick(46);
 
@@ -184,8 +184,8 @@ TEST_CASE("AND stack-relative 16-bit", "[unit][opcode][cpu][sr]") {
   f.cpu.Reset();
   SetAccumulator16(f.cpu, 0xFFFF);
   f.ModifyRegs([](auto& r) { r.SP = 0x01F0; });
-  f.wram.WriteRegister(0x01F4, 0x00);
-  f.wram.WriteRegister(0x01F5, 0xFF);
+  f.wram.WriteRegister(0x01F4, 0x00, 0);
+  f.wram.WriteRegister(0x01F5, 0xFF, 0);
 
   TickResult r = f.cpu.Tick(46);
 
@@ -201,8 +201,8 @@ TEST_CASE("ORA stack-relative 16-bit", "[unit][opcode][cpu][sr]") {
   f.cpu.Reset();
   SetAccumulator16(f.cpu, 0x00FF);
   f.ModifyRegs([](auto& r) { r.SP = 0x01F0; });
-  f.wram.WriteRegister(0x01F4, 0xFF);
-  f.wram.WriteRegister(0x01F5, 0x00);
+  f.wram.WriteRegister(0x01F4, 0xFF, 0);
+  f.wram.WriteRegister(0x01F5, 0x00, 0);
 
   TickResult r = f.cpu.Tick(46);
 
@@ -218,8 +218,8 @@ TEST_CASE("EOR stack-relative 16-bit sets Z", "[unit][opcode][cpu][sr]") {
   f.cpu.Reset();
   SetAccumulator16(f.cpu, 0xFFFF);
   f.ModifyRegs([](auto& r) { r.SP = 0x01F0; });
-  f.wram.WriteRegister(0x01F4, 0xFF);
-  f.wram.WriteRegister(0x01F5, 0xFF);
+  f.wram.WriteRegister(0x01F4, 0xFF, 0);
+  f.wram.WriteRegister(0x01F5, 0xFF, 0);
 
   TickResult r = f.cpu.Tick(46);
 
@@ -235,8 +235,8 @@ TEST_CASE("CMP stack-relative 16-bit equal", "[unit][opcode][cpu][sr]") {
   f.cpu.Reset();
   SetAccumulator16(f.cpu, 0x1234);
   f.ModifyRegs([](auto& r) { r.SP = 0x01F0; });
-  f.wram.WriteRegister(0x01F4, 0x34);
-  f.wram.WriteRegister(0x01F5, 0x12);
+  f.wram.WriteRegister(0x01F4, 0x34, 0);
+  f.wram.WriteRegister(0x01F5, 0x12, 0);
 
   TickResult r = f.cpu.Tick(46);
 
@@ -263,7 +263,7 @@ TEST_CASE("ADC stack-relative does not pay DL-nonzero penalty", "[unit][opcode][
     r.DP = 0x0123;  // DL = 0x23 != 0 — would trigger +w for dp modes, but not for sr,S.
     r.P.C = false;
   });
-  f.wram.WriteRegister(0x01F4, 0x05);
+  f.wram.WriteRegister(0x01F4, 0x05, 0);
 
   TickResult r = f.cpu.Tick(38);
 

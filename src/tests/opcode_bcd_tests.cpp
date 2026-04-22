@@ -29,8 +29,12 @@ class TestROM : public Device {
   TickResult Tick(TimeMasterDeltaT budget) override { return {budget, TickStopReason::kBudgetExhausted}; }
   void OnEvent(const SchedulerEvent&) override {}
 
-  uint8_t ReadRegister(uint32_t offset) override { return mem[offset % kSize]; }
-  void WriteRegister(uint32_t offset, uint8_t data) override { mem[offset % kSize] = data; }
+  MmioReadResult ReadRegister(uint32_t offset, TimeMasterT /*current_time*/) override {
+    return {mem[offset % kSize], 0xFFU};
+  }
+  void WriteRegister(uint32_t offset, uint8_t data, TimeMasterT /*current_time*/) override {
+    mem[offset % kSize] = data;
+  }
 };
 
 struct TestFixture {

@@ -10,6 +10,7 @@ set(PUPSNES_LIB_SOURCES
   src/pupsnes/cartridge.cpp
   src/pupsnes/scheduler.cpp
   src/pupsnes/snes.cpp
+  src/pupsnes/sppu/ppu.cpp
   src/pupsnes/token.cpp
   src/pupsnes/systembus.cpp
   src/pupsnes/wram.cpp
@@ -69,6 +70,7 @@ set(PUPSNES_TEST_SOURCES
   src/tests/opcode_alu_longx_tests.cpp
   src/tests/opcode_alu_absx_tests.cpp
   src/tests/opcode_bcd_tests.cpp
+  src/tests/ppu_tests.cpp
 )
 
 set(PUPSNES_PROFILE "PRODUCTION" CACHE STRING "Build profile: DEBUG, CI, or PRODUCTION")
@@ -278,6 +280,8 @@ set(PUPSNES_HEADERS
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/device.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/scheduler.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/snes.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/sppu/ppu.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/sppu/ppu_regs.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/systembus.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/token.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/wram.h
