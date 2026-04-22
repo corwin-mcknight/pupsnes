@@ -1002,8 +1002,12 @@ TickResult CPU::TickToTarget(TimeMasterT target_master_time) {
 
     // Strict no-overshoot: if the next step wouldn't fit, yield on this
     // micro-op boundary. Events fire next, then RunControl calls us again.
+    // Exception: when a user-directed step is pending (step_target > 0), the
+    // scheduler boundary must not deadlock the step — let the instruction run
+    // even if it slightly overshoots the event boundary.
     const TimeMasterDeltaT next_cost = EstimateNextStepCostOrZero();
-    if (snes_->GetMasterTime() + next_cost > target_master_time) {
+    if (debugger_contract_.step_target == 0 &&
+        snes_->GetMasterTime() + next_cost > target_master_time) {
       return {snes_->GetMasterTime() - start, TickStopReason::kReachedTarget};
     }
 
