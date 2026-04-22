@@ -16,24 +16,6 @@ namespace pupsnes {
 
 namespace {
 [[noreturn]] void FailScheduler(const char* message) { throw std::logic_error(message); }
-
-void DebugPrintSchedulerEvent(const SchedulerEvent& event, bool multiline) {
-  auto src = reinterpret_cast<std::uintptr_t>(event.source);
-  if (multiline) {
-    std::cerr << std::format("  Time: {}\n", event.time);
-    std::cerr << std::format("  Source: 0x{:x}\n", src);
-    std::cerr << std::format("  Seq: {}\n", event.seq);
-    std::cerr << std::format("  Subphase: {}\n", static_cast<int>(event.subphase));
-    std::cerr << std::format("  Type: {}\n", static_cast<int>(event.type));
-    std::cerr << std::format("  Run generation: {}\n", event.run_generation);
-    return;
-  }
-
-  std::cerr << std::format(
-      "  Time: {}, Source: 0x{:x}, Seq: {}, Subphase: {}, Type: {}, Run "
-      "generation: {}\n",
-      event.time, src, event.seq, static_cast<int>(event.subphase), static_cast<int>(event.type), event.run_generation);
-}
 }  // namespace
 
 namespace {
