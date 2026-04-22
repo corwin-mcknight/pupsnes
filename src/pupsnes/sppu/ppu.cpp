@@ -104,14 +104,30 @@ TickResult Ppu::Tick(TimeMasterDeltaT budget) {
   // current dot in prior Tick calls so we can split one dot across Ticks
   // without ever exceeding budget. Consumed cycles are strictly <= budget.
   //
-  // We yield to the scheduler only at VSYNC (end of frame). HBlank sync
-  // within a frame happens internally — HV counters advance dot-by-dot,
-  // pixels land in the back buffer, and pending writes drain at each dot's
-  // nominal start time. Staying inside Tick across scanlines lets the
-  // scheduler hand the PPU full kMaxCyclesStep budgets (~3 scanlines) so
-  // the CPU isn't starved by tight same-time event interleaving.
+  // We yield at VSYNC (end of frame) and — during scheduler-driven dispatch,
+  // not same-clock catch-up — at scanline boundaries when the remaining
+  // budget can't fit another full scanline. The scanline-aligned phase-break
+  // is load-bearing: greedy consumption of every budget cycle phase-locks
+  // with the CPU's tight-budget kNoWork wake (also at local_time +
+  // kMaxCyclesStep), and the CPU never gets a non-zero slice again.
+  // Catch-up contexts set in_same_clock_catch_up_ so progress is guaranteed.
   TimeMasterDeltaT consumed = 0;
   while (consumed < budget) {
+    // Phase-break yield. Only at a clean scanline boundary (h==0, no partial
+    // carry) and only outside catch-up. Yield with a wake one scanline past
+    // our committed time so whichever peer is clipping our budget gets a
+    // real slice before our next dispatch.
+    if (!in_same_clock_catch_up_ && h_ == 0 && partial_dot_cycles_ == 0) {
+      const TimeMasterDeltaT line_cycles = LineCycles(v_, field_);
+      if (budget - consumed < line_cycles) {
+        const TimeMasterT next_wake = local_time_ + consumed + line_cycles;
+        if (consumed == 0) {
+          return {0, TickStopReason::kNoWork, 0, next_wake};
+        }
+        return {consumed, TickStopReason::kReachedLocalBoundary, 0, next_wake};
+      }
+    }
+
     const TimeMasterDeltaT dot_cost = DotCost(h_, v_, field_);
     const TimeMasterDeltaT remaining_dot = dot_cost - partial_dot_cycles_;
     const TimeMasterDeltaT available = budget - consumed;

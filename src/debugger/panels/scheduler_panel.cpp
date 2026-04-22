@@ -11,12 +11,15 @@ namespace pupsnes::debugger {
 namespace {
 
 const char* DeviceName(DeviceIdT id) {
-  // Registration order in SNES constructor: CPU, Cartridge, WRAM.
-  // Scheduler and SystemBus are not Devices.
+  // Registration order matches the SNES class's member declaration order
+  // (see snes.h). Scheduler and SystemBus are not Devices, so they don't
+  // consume IDs.
   switch (id) {
     case 0: return "CPU";
     case 1: return "Cartridge";
     case 2: return "WRAM";
+    case 3: return "CpuMmio";
+    case 4: return "PPU";
     default: return nullptr;
   }
 }

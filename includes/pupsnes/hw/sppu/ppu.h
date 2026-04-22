@@ -84,6 +84,13 @@ class Ppu : public Device {
   // dimensions (256 × 224/239 today; wider when interlace/hires land later).
   [[nodiscard]] FrameBufferView BuildFrontView() const;
 
+  // Scheduler hook: toggled around CatchUpDevice's Tick calls. While true, Tick
+  // must make forward progress — the catch-up loop fails if completed_cycles
+  // is zero. While false, Tick is free to yield with a future wake so peers
+  // (notably the CPU in budget-0 same-time collisions) don't starve.
+  void SetInSameClockCatchUp(bool on) { in_same_clock_catch_up_ = on; }
+  [[nodiscard]] bool IsInSameClockCatchUp() const { return in_same_clock_catch_up_; }
+
   // Debugger / test accessors.
   [[nodiscard]] uint8_t GetShadow(uint16_t reg) const {
     return shadow_[static_cast<std::size_t>(reg - sppu::regs::kBase) & (sppu::regs::kShadowSize - 1U)];
@@ -214,6 +221,10 @@ class Ppu : public Device {
   // Range: [0, DotCost(h_, v_, field_)). Lets one dot span multiple Ticks
   // when budget lands mid-dot — no budget overshoot permitted.
   TimeMasterDeltaT partial_dot_cycles_ = 0;
+
+  // See SetInSameClockCatchUp. Disables Tick's phase-break yield while the
+  // scheduler is driving a same-clock catch-up loop that requires progress.
+  bool in_same_clock_catch_up_ = false;
 
   // --- Backing storage ---
   // Heap-allocated via unique_ptr<array> to keep the parent SNES object small

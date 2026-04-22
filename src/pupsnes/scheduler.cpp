@@ -11,6 +11,7 @@
 
 #include "pupsnes/hw/device.h"
 #include "pupsnes/hw/snes.h"
+#include "pupsnes/hw/sppu/ppu.h"
 
 namespace pupsnes {
 
@@ -310,6 +311,23 @@ void Scheduler::CatchUpDevice(DeviceIdT device_id, TimeMasterT target_time) {
 
   ClearPendingRun(state);
   ResetZeroProgressGuard(state);
+
+  // Disable the PPU's phase-break yield while we drive its catch-up loop.
+  // The loop requires strict forward progress (FailScheduler fires on
+  // completed_cycles == 0); the phase-break yield deliberately returns 0
+  // progress and is only safe in scheduled-dispatch contexts where the CPU
+  // is starving. Other devices don't implement a phase-break yield today,
+  // so only Ppu needs the flag flipped.
+  struct CatchUpGuard {
+    Ppu* ppu;
+    explicit CatchUpGuard(Device* device) : ppu(dynamic_cast<Ppu*>(device)) {
+      if (ppu != nullptr) ppu->SetInSameClockCatchUp(true);
+    }
+    ~CatchUpGuard() {
+      if (ppu != nullptr) ppu->SetInSameClockCatchUp(false);
+    }
+  };
+  CatchUpGuard catch_up_guard(device);
 
   while (device->GetTime() < target_time) {
     const TimeMasterDeltaT budget = target_time - device->GetTime();
