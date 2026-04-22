@@ -8,32 +8,44 @@ The architecture and subsystem design documents describe how the emulator should
 
 The project already has strong core infrastructure in place:
 
-- scheduler event ordering and authoritative device time ownership
-- token-based async I/O plumbing
+- signal-horizon scheduler: priority queue of `SignalEvent{master_time, SignalKind, handler, seq}`
+- `MasterClockDriver` (CPU) running via `TickToTarget`; passive devices via `CatchUpTo`
+- `MachineSync` + `FireEventsThrough` as the per-iteration sync pattern
+- lazy-replay MMIO: writes queue, reads catch up
 - system bus page table and plan/follow contract
-- initial 5A22 CPU micro-op execution scaffold
-- unit/integration coverage for scheduler, tokens, bus, and early CPU behavior
+- PPU scaffold: dot-major catch-up, `kFrameEnd` signal, drawn-mask debugger overlay
+- token-based same-clock bus back-pressure
+- unit/integration coverage for scheduler, tokens, bus, CPU, and PPU scaffold
 
 The main gap is that PupSNES still cannot load a cartridge, reset into a real memory map, or boot even a tiny ROM. That makes machine bring-up the next highest-leverage milestone.
 
 ## Milestone 0: Execution Core
 
-Status: substantially complete
+Status: complete (2026-04-22) — signal-horizon scheduler redesign done.
 
 Objective:
 Establish the timing and bus contracts that all later devices rely on.
 
 Exit criteria:
 
-- scheduler orders events deterministically
-- devices run through `tick(budget)` with scheduler-owned committed time
-- same-clock catch-up works through the scheduler contract
-- cross-clock accesses can block and resume through tokens
-- system bus supports page mapping and plan/follow behavior
-- CI coverage exists for these core invariants
+- scheduler orders signal events deterministically by `(master_time, SignalKind, seq)` — **done**
+- CPU runs as sole `MasterClockDriver` via `TickToTarget`; writes master time as micro-ops retire — **done**
+- passive devices (`CatchUpTo`) advance on demand; default no-op for stateless devices — **done**
+- `MachineSync` + `FireEventsThrough` as the per-iteration sync pattern — **done**
+- same-clock catch-up (lazy-replay: writes queue, reads catch up) — **done**
+- system bus supports page mapping and plan/follow behavior — **done**
+- CI coverage exists for these core invariants — **done**
+
+Deferred (not part of v1 scheduler):
+
+- APU — `SignalKind` placeholders exist; handlers not wired.
+- DMA / HDMA — `SignalKind` placeholders exist; handlers not wired.
+- Coprocessor speculation (GSU, SA-1, DSP-n) — will implement `CatchUpTo` on a worker thread; no scheduler surgery required.
+- Threading / lock-free signal feed — deferred until coprocessor workers land.
+- Rollback / checkpoint — deferred until a concrete need emerges.
 
 Notes:
-Most of this is already present. Remaining work in this area should be driven by concrete integration needs, not speculative abstraction.
+The earlier spec described a `tick(budget)` dispatch loop with CommitComplete / WakeSample / Run phases and a full `ISchedulable` interface. That design was replaced by the signal-horizon model: the scheduler is a pure event queue; device execution is driven by `TickToTarget` (CPU) and `CatchUpTo` (passive devices). The token API is preserved for same-clock bus back-pressure.
 
 ## Milestone 1: Headless Bring-Up
 

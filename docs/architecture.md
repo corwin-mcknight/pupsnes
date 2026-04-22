@@ -6,17 +6,23 @@ Devices are clocked at a certain rate based on the clock they are connected to, 
 
 Each device is modeled separately, and has its inputs, its outputs, and internal state modeled. Devices are emulated with C++ code and are not actually composed of wires.
 
-Each device implements `Device::tick(budget)` to advance internal state by up to `budget` master clock cycles, returning a `TickResult` with the cycles consumed and a stop reason. Devices also implement `Device::on_event(event)` for non-Run scheduler events (CommitComplete, WakeSample).
+Devices fall into two roles:
 
-See `docs/scheduler.md` for the full scheduler design specification.
+- **`MasterClockDriver`** (CPU; future DMA, HDMA, coprocessors): implements
+  `TickToTarget(TimeMasterT target)`, writes global master time as work retires,
+  and drives the RunControl loop forward.
+- **Passive `Device`** (PPU, bus responders): implements `CatchUpTo(TimeMasterT target)`
+  to advance internal state on demand. The default is a no-op for stateless devices.
+
+See `docs/scheduler.md` for the full scheduler design.
 
 ## Object Model
 
 PupSNES has a dynamic topology of interconnected objects that represent the SNES hardware. The main components are:
 
 * **SNES**: The top-level object that contains all other components. Owns global master and APU time, and the Scheduler instance.
-* **Scheduler**: Part of the SNES. Maintains an event queue ordered by `(time, subphase, type, seq)`. Dispatches events to devices via `tick()` (Run phase) or `on_event()` (CommitComplete/WakeSample phases). Computes per-device budgets capped by `MAX_CYCLES_STEP` and the next event time.
-* **Device**: Base class for all hardware units (CPU, PPU, APU, etc.). Each device has internal state, a reference to the SNES, and implements `tick(budget)` and `on_event(event)`.
+* **Scheduler**: Part of the SNES. Maintains a signal-event priority queue ordered by `(master_time, SignalKind, seq)`. Exposes `ScheduleSignal`, `NextEventMasterTime`, `FireEventsThrough`, and `SnapshotSignalQueue`. Does not dispatch device execution — devices run via `TickToTarget` or `CatchUpTo` outside the queue.
+* **Device**: Base class for all hardware units. Holds `local_time_`, a `SNES*` back-pointer, and a `DeviceIdT`. Passive devices override `CatchUpTo(target)`; master-clock drivers subclass `MasterClockDriver` and implement `TickToTarget(target)`. `CpuMmio` subclasses `Device` for bus-page dispatch but keeps the default no-op `CatchUpTo`.
 * **SystemBus**: Authority for CPU-visible bus transactions. Decodes addresses via a flat page table (256×256 bank×page → device+offset), precalculated at ROM load. Same-clock targets are synchronized via catch-up on access; cross-clock targets use async tokens. See `docs/systembus.md`. (planned)
 * **State Block**: A single contiguous memory allocation containing all device state — registers, counters, VRAM, WRAM, APU RAM. Save state = `memcpy`. Rewind = ring buffer of snapshots. Determinism verification = `memcmp`. (planned)
 * **Signal Region**: Part of the State Block. Models control signals (NMI, IRQ, HALT) as flat fields rather than wire objects. Edge-triggered signals (NMI) use two fields (current + previous level). Level-triggered signals (IRQ, HALT) use one field. (planned)
@@ -28,10 +34,12 @@ All devices have a stable numeric ID (`device_id_t`) for deterministic ordering 
 
 PupSNES uses **lazy-replay catch-up** for same-clock-domain synchronization. The rule is: **writes queue, reads catch up.**
 
-- **Reads catch up**: when a bus master issues a read targeting a same-clock device, the scheduler advances the target to the current master cycle before the read samples state. The target's `tick()` runs until its local time matches the bus cycle.
-- **Writes queue**: writes append to a per-device pending-write log `{cycle, offset, data}` tagged with the cycle they arrived on. No catch-up fires on the write path. The target's `tick()` replays the log in order as it advances (dot-by-dot for the PPU). Any remaining queued writes at or before the read's cycle are also drained inside the read handler, so the lazy-replay contract holds even when the per-dot drain fell slightly short.
+- **Reads catch up**: when a bus master issues a read targeting a same-clock device, `CatchUpTo` is called on the target before the read samples state. The target advances its `local_time_` to match the bus cycle.
+- **Writes queue**: writes append to a per-device pending-write log `{cycle, offset, data}` tagged with the cycle they arrived on. No catch-up fires on the write path. `CatchUpTo` replays the log in order as it advances (dot-by-dot for the PPU). Any queued writes at or before the read cycle are also drained inside the read handler, so the lazy-replay contract holds even when the per-dot drain fell slightly short.
 
-This refines the earlier "catch-up on access" language to match the cost profile of real workloads: DMA and HDMA bursts write hundreds of MMIO bytes per frame, and forcing a catch-up on every write would dominate the inner loop. Correctness is preserved because replay order equals write order (enqueues are monotonic in cycle) and reads never sample stale state.
+This approach matches the cost profile of real workloads: DMA and HDMA bursts write hundreds of MMIO bytes per frame, and forcing a catch-up on every write would dominate the inner loop. Correctness is preserved because replay order equals write order (enqueues are monotonic in cycle) and reads never sample stale state.
+
+The `RunControl` loop calls `SNES::MachineSync(now)` — which invokes `CatchUpTo(now)` on every registered passive device — before firing signal events. This ensures handlers always see a fully-synced machine.
 
 **Bus masters** (CPU, DMA) initiate transactions and drive the clock forward. **Bus targets** (PPU registers, WRAM) respond to transactions and can be caught up. Catch-up applies only to targets — devices whose internal state evolution does not require issuing bus transactions. On the SNES, the PPU qualifies because it uses its own VRAM bus during rendering and never initiates system bus transactions.
 
