@@ -4,6 +4,7 @@
 #include <memory>
 
 #include "pupsnes/hw/scheduler.h"
+#include "pupsnes/hw/signal_event.h"
 #include "pupsnes/hw/snes.h"
 #include "pupsnes/hw/systembus.h"
 
@@ -36,6 +37,7 @@ Ppu::Ppu(SNES* snes)
       cgram_(std::make_unique<std::array<uint16_t, sppu::regs::kCgramWords>>()),
       front_buffer_(std::make_unique<std::array<uint16_t, sppu::regs::kFrameBufferPixels>>()),
       back_buffer_(std::make_unique<std::array<uint16_t, sppu::regs::kFrameBufferPixels>>()),
+      drawn_mask_(std::make_unique<std::array<uint8_t, (sppu::regs::kFrameBufferPixels + 7U) / 8U>>()),
       pending_writes_(std::make_unique<std::array<PpuPokeLogEntry, kPendingWriteLogSize>>()) {}
 
 void Ppu::MapSystemBus(SystemBus& bus) {
@@ -88,88 +90,70 @@ void Ppu::Reset() {
   cgram_->fill(0);
   front_buffer_->fill(0);
   back_buffer_->fill(0);
+  drawn_mask_->fill(0);
 
-  // Schedule the first HBlank sync at the end of scanline 0. Each Tick's
-  // return with next_wake_time = committed_time chains the next scanline
-  // automatically. The VSYNC / frame-submit happens inside Tick when V
-  // wraps back to 0.
+  // Schedule the first frame-end signal. CatchUpTo drives all dot emission;
+  // the signal fires when the frame boundary arrives so OnFrameEndSignal can
+  // chain the next frame's signal.
   if (snes_ != nullptr && snes_->scheduler != nullptr) {
-    snes_->scheduler->ScheduleDeviceRun(this, sppu::regs::kNormalLineCycles);
+    const TimeMasterT frame_mcyc =
+        262U * sppu::regs::kNormalLineCycles - (field_ ? 4U : 0U);
+    snes_->scheduler->ScheduleSignal(frame_mcyc, SignalKind::kFrameEnd,
+                                     [this](TimeMasterT t) { OnFrameEndSignal(t); });
   }
 }
 
-TickResult Ppu::Tick(TimeMasterDeltaT budget) {
-  // Sub-dot advancement: a dot is 4-6 mcyc but the scheduler may hand us a
-  // smaller budget mid-dot. Track cycles already consumed toward the
-  // current dot in prior Tick calls so we can split one dot across Ticks
-  // without ever exceeding budget. Consumed cycles are strictly <= budget.
-  //
-  // We yield at VSYNC (end of frame) and — during scheduler-driven dispatch,
-  // not same-clock catch-up — at scanline boundaries when the remaining
-  // budget can't fit another full scanline. The scanline-aligned phase-break
-  // is load-bearing: greedy consumption of every budget cycle phase-locks
-  // with the CPU's tight-budget kNoWork wake (also at local_time +
-  // kMaxCyclesStep), and the CPU never gets a non-zero slice again.
-  // Catch-up contexts set in_same_clock_catch_up_ so progress is guaranteed.
-  TimeMasterDeltaT consumed = 0;
-  while (consumed < budget) {
-    // Phase-break yield. Only at a clean scanline boundary (h==0, no partial
-    // carry) and only outside catch-up. Yield with a wake one scanline past
-    // our committed time so whichever peer is clipping our budget gets a
-    // real slice before our next dispatch.
-    if (!in_same_clock_catch_up_ && h_ == 0 && partial_dot_cycles_ == 0) {
-      const TimeMasterDeltaT line_cycles = LineCycles(v_, field_);
-      if (budget - consumed < line_cycles) {
-        const TimeMasterT next_wake = local_time_ + consumed + line_cycles;
-        if (consumed == 0) {
-          return {0, TickStopReason::kNoWork, 0, next_wake};
-        }
-        return {consumed, TickStopReason::kReachedLocalBoundary, 0, next_wake};
-      }
-    }
-
+void Ppu::CatchUpTo(TimeMasterT target) {
+  if (target <= local_time_) {
+    return;  // idempotent
+  }
+  while (local_time_ < target) {
     const TimeMasterDeltaT dot_cost = DotCost(h_, v_, field_);
     const TimeMasterDeltaT remaining_dot = dot_cost - partial_dot_cycles_;
-    const TimeMasterDeltaT available = budget - consumed;
+    const TimeMasterDeltaT available = target - local_time_;
 
     if (available < remaining_dot) {
-      // Budget runs out mid-dot. Bank the partial progress on the PPU side
-      // (via partial_dot_cycles_) and return. No pixel emit yet — the dot
-      // emits when its final cycle completes in a later Tick.
+      // Target lands mid-dot. Bank the partial progress without emitting yet.
       partial_dot_cycles_ += available;
-      consumed += available;
-      return {consumed, TickStopReason::kBudgetExhausted};
+      local_time_ += available;
+      return;
     }
 
-    // Enough budget to finish the current dot. Drain writes up to the dot's
-    // nominal start cycle so EmitPixel observes the state that was valid
-    // when this dot began.
+    // Enough time to finish this dot. Drain writes up to the dot's nominal
+    // start cycle so EmitPixel observes the state valid at dot-start.
     const TimeMasterT dot_start_time =
-        local_time_ + consumed - static_cast<TimeMasterDeltaT>(partial_dot_cycles_);
+        local_time_ - static_cast<TimeMasterDeltaT>(partial_dot_cycles_);
     DrainPendingWritesUpTo(dot_start_time);
     EmitPixel(h_, v_);
+
+    // Track that this pixel has been drawn in the current frame.
+    const uint32_t idx = FramebufferIndexFor(h_, v_);
+    if (idx < sppu::regs::kFrameBufferPixels) {
+      (*drawn_mask_)[idx >> 3U] |= static_cast<uint8_t>(1U << (idx & 7U));
+    }
+
     AdvanceHv();
-    consumed += remaining_dot;
+    local_time_ += remaining_dot;
     partial_dot_cycles_ = 0;
 
     if (h_ == 0 && v_ == 0) {
-      // VSYNC: frame just ended. Swap buffers, fire the frontend callback,
-      // toggle `field_` for the next frame's short-line selection, and
-      // yield — next_wake = committed_time so AlignDeviceTime is a no-op
-      // and the next dispatch picks up at the start of the new frame.
+      // Frame boundary: swap buffers, fire frontend callback, toggle field,
+      // clear drawn mask for the new frame.
       OnEndOfFrame();
       field_ = !field_;
-      const TimeMasterT next_wake = local_time_ + consumed;
-      return {consumed, TickStopReason::kReachedLocalBoundary, 0, next_wake};
+      drawn_mask_->fill(0);
     }
   }
-  // Budget exhausted mid-frame — we'll be redispatched at committed_time.
-  return {consumed, TickStopReason::kBudgetExhausted};
 }
 
-void Ppu::OnEvent(const SchedulerEvent& /*event*/) {
-  // Phase D populates this with scanline-end handling (swap buffers at V=261,
-  // recompute next wake time). Phase B/C ignore scheduler events.
+void Ppu::OnFrameEndSignal(TimeMasterT master_time) {
+  // MachineSync has already called our CatchUpTo(master_time), so the frame
+  // boundary (h==0, v==0) has already triggered OnEndOfFrame + buffer swap.
+  // Schedule the next frame's boundary signal.
+  const TimeMasterT next_frame_mcyc =
+      master_time + 262U * sppu::regs::kNormalLineCycles - (field_ ? 4U : 0U);
+  snes_->scheduler->ScheduleSignal(next_frame_mcyc, SignalKind::kFrameEnd,
+                                   [this](TimeMasterT t) { OnFrameEndSignal(t); });
 }
 
 MmioReadResult Ppu::ReadRegister(uint32_t offset, TimeMasterT current_time) {

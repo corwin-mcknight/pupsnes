@@ -69,8 +69,7 @@ class Ppu : public Device {
   // prime the first scanline-end scheduler event from here.
   void Reset();
 
-  [[nodiscard]] TickResult Tick(TimeMasterDeltaT budget) override;
-  void OnEvent(const SchedulerEvent& event) override;
+  void CatchUpTo(TimeMasterT target) override;
   [[nodiscard]] MmioReadResult ReadRegister(uint32_t offset, TimeMasterT current_time) override;
   void WriteRegister(uint32_t offset, uint8_t data, TimeMasterT current_time) override;
 
@@ -84,12 +83,11 @@ class Ppu : public Device {
   // dimensions (256 × 224/239 today; wider when interlace/hires land later).
   [[nodiscard]] FrameBufferView BuildFrontView() const;
 
-  // Scheduler hook: toggled around CatchUpDevice's Tick calls. While true, Tick
-  // must make forward progress — the catch-up loop fails if completed_cycles
-  // is zero. While false, Tick is free to yield with a future wake so peers
-  // (notably the CPU in budget-0 same-time collisions) don't starve.
-  void SetInSameClockCatchUp(bool on) { in_same_clock_catch_up_ = on; }
-  [[nodiscard]] bool IsInSameClockCatchUp() const { return in_same_clock_catch_up_; }
+  // Drawn-mask accessors — one bit per framebuffer pixel, set when CatchUpTo
+  // emits that pixel. Consumers (tests, PPU panel overlay) read this to know
+  // which pixels in the back buffer are valid for the current in-progress frame.
+  [[nodiscard]] const uint8_t* GetDrawnMask() const { return drawn_mask_->data(); }
+  [[nodiscard]] std::size_t GetDrawnMaskByteSize() const { return drawn_mask_->size(); }
 
   // Debugger / test accessors.
   [[nodiscard]] uint8_t GetShadow(uint16_t reg) const {
@@ -152,6 +150,9 @@ class Ppu : public Device {
   // was updated at enqueue time.
   void ReplayWrite(uint16_t offset, uint8_t data);
 
+  // Frame-end signal handler — re-schedules itself for the next frame boundary.
+  void OnFrameEndSignal(TimeMasterT master_time);
+
   // Dot-loop helpers.
   void AdvanceHv();
   void EmitPixel(uint32_t h, uint32_t v);
@@ -159,6 +160,11 @@ class Ppu : public Device {
   // view over the (now-front) completed frame, and toggle `field_` for the
   // next frame's short-line selection.
   void OnEndOfFrame();
+
+  // Linear framebuffer index for dot (h, v). Matches EmitPixel's own indexing.
+  [[nodiscard]] static constexpr uint32_t FramebufferIndexFor(uint32_t h, uint32_t v) {
+    return v * sppu::regs::kFrameBufferWidth + h;
+  }
 
   // VRAM helpers. Address translation maps the raw vmadd_ to a rotated layout
   // per VMAIN bits 3:2; prefetch caches the translated word; increment fires
@@ -217,14 +223,10 @@ class Ppu : public Device {
   uint32_t h_ = 0;
   uint32_t v_ = 0;
   bool field_ = false;
-  // Cycles already consumed toward the current dot from prior Tick calls.
-  // Range: [0, DotCost(h_, v_, field_)). Lets one dot span multiple Ticks
-  // when budget lands mid-dot — no budget overshoot permitted.
+  // Cycles already consumed toward the current dot from prior CatchUpTo calls.
+  // Range: [0, DotCost(h_, v_, field_)). Lets one dot span multiple calls
+  // when target lands mid-dot — no overshoot permitted.
   TimeMasterDeltaT partial_dot_cycles_ = 0;
-
-  // See SetInSameClockCatchUp. Disables Tick's phase-break yield while the
-  // scheduler is driving a same-clock catch-up loop that requires progress.
-  bool in_same_clock_catch_up_ = false;
 
   // --- Backing storage ---
   // Heap-allocated via unique_ptr<array> to keep the parent SNES object small
@@ -235,6 +237,10 @@ class Ppu : public Device {
 
   std::unique_ptr<std::array<uint16_t, sppu::regs::kFrameBufferPixels>> front_buffer_;
   std::unique_ptr<std::array<uint16_t, sppu::regs::kFrameBufferPixels>> back_buffer_;
+  // One bit per pixel; set by CatchUpTo when the dot is emitted. Cleared on
+  // frame wrap. Lets the PPU panel overlay distinguish "drawn this frame" from
+  // "stale from the previous frame."
+  std::unique_ptr<std::array<uint8_t, (sppu::regs::kFrameBufferPixels + 7U) / 8U>> drawn_mask_;
 
   // --- Pending-write log ---
   // Fixed-size to avoid allocation on the hot write path. DMA bursts and
