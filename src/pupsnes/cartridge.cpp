@@ -67,10 +67,6 @@ void Cartridge::OnMemSelChanged(SystemBus& bus, bool fast) {
   }
 }
 
-TickResult Cartridge::Tick(TimeMasterDeltaT budget) { return {budget, TickStopReason::kBudgetExhausted}; }
-
-void Cartridge::OnEvent(const SchedulerEvent& /*event*/) {}
-
 MmioReadResult Cartridge::ReadRegister(uint32_t offset, TimeMasterT /*current_time*/) {
   if (rom_.empty()) {
     return {0xFFU, 0xFFU};

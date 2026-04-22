@@ -30,10 +30,6 @@ void WRAM::MapSystemBus(SystemBus& bus) {
   }
 }
 
-TickResult WRAM::Tick(TimeMasterDeltaT budget) { return {budget, TickStopReason::kBudgetExhausted}; }
-
-void WRAM::OnEvent(const SchedulerEvent& /*event*/) {}
-
 MmioReadResult WRAM::ReadRegister(uint32_t offset, TimeMasterT /*current_time*/) {
   return {bytes_[static_cast<std::size_t>(offset) % kSize], 0xFFU};
 }

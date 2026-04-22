@@ -36,8 +36,6 @@ class Cartridge : public Device {
   // mapped (e.g. before LoadLoRom + MapLoRom have run, or for a HiROM image).
   void OnMemSelChanged(SystemBus& bus, bool fast);
 
-  [[nodiscard]] TickResult Tick(TimeMasterDeltaT budget) override;
-  void OnEvent(const SchedulerEvent& event) override;
   [[nodiscard]] MmioReadResult ReadRegister(uint32_t offset, TimeMasterT current_time) override;
   [[nodiscard]] std::optional<uint8_t> HandleDebugRead(uint32_t offset) const override;
 
