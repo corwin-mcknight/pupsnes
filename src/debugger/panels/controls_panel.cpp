@@ -52,6 +52,10 @@ void RenderControlsPanel(DebuggerApp& app) {
       app.GetRunControl().RequestStepOne();
     }
     ImGui::SameLine();
+    if (ImGui::Button("Step μop")) {
+      app.GetRunControl().RequestStepOne(StepGranularity::kMicroOp);
+    }
+    ImGui::SameLine();
     ImGui::SetNextItemWidth(80.0F);
     ImGui::InputScalar("##StepCount", ImGuiDataType_U64, &ui.step_count);
     ImGui::SameLine();
