@@ -204,6 +204,7 @@ if(BUILD_TESTING)
     ${CMAKE_CURRENT_SOURCE_DIR}/testroms/control_flow_smoke/control_flow_smoke.s
     ${CMAKE_CURRENT_SOURCE_DIR}/testroms/all_instr_loop/all_instr_loop.s
     ${CMAKE_CURRENT_SOURCE_DIR}/testroms/fastrom_smoke/fastrom_smoke.s
+    ${CMAKE_CURRENT_SOURCE_DIR}/testroms/ppu_blue_cgram/ppu_blue_cgram.s
   )
   set(PUPSNES_TEST_ROM_COMMON_INCLUDES
     ${CMAKE_CURRENT_SOURCE_DIR}/testroms/pupsnes.inc
