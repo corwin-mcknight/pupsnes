@@ -64,6 +64,7 @@ set(PUPSNES_TEST_SOURCES
   src/tests/error_log_tests.cpp
   src/tests/run_control_tests.cpp
   src/tests/microop_trace_tests.cpp
+  src/tests/machine_sync_tests.cpp
   src/tests/opcode_alu_abs_tests.cpp
   src/tests/opcode_alu_dpx_tests.cpp
   src/tests/opcode_alu_sr_tests.cpp
