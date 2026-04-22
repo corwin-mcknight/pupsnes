@@ -1,10 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <cstdint>
 #include <cstring>
-#include <vector>
 
-#include "pupsnes/hw/5a22/cpu.h"
-#include "pupsnes/hw/cartridge.h"
 #include "pupsnes/hw/scheduler.h"
 #include "pupsnes/hw/snes.h"
 #include "pupsnes/hw/sppu/ppu.h"
@@ -374,7 +371,7 @@ TEST_CASE("PPU runs a full NTSC frame, fires onFrameReady, emits backdrop pixels
 
   // One full NTSC non-interlace frame = 262 * 1364 = 357368 cycles.
   constexpr TimeMasterT kFrameEnd = 262U * 1364U;
-  snes.scheduler->CatchUpDevice(ppu.GetDeviceId(), kFrameEnd);
+  ppu.CatchUpTo(kFrameEnd);
 
   REQUIRE(probe.count == 1);
   REQUIRE(probe.last_view.width == 256);
@@ -400,13 +397,13 @@ TEST_CASE("Frame cadence: normal frames = 357368 mcyc, short-line frames = 35736
 
   // Frame 1 starts with field=false → V=240 is normal (1364). Total 357368.
   constexpr TimeMasterT kFrame1End = 262U * 1364U;
-  snes.scheduler->CatchUpDevice(ppu.GetDeviceId(), kFrame1End);
+  ppu.CatchUpTo(kFrame1End);
   REQUIRE(probe.count == 1);
   REQUIRE(ppu.GetField() == true);  // toggled at end-of-frame
 
   // Frame 2 has field=true → V=240 is the short 1360-cycle line. Total = 357364.
   constexpr TimeMasterT kFrame2End = kFrame1End + 261U * 1364U + 1360U;
-  snes.scheduler->CatchUpDevice(ppu.GetDeviceId(), kFrame2End);
+  ppu.CatchUpTo(kFrame2End);
   REQUIRE(probe.count == 2);
   REQUIRE(ppu.GetField() == false);  // toggled back
   REQUIRE(ppu.GetDotH() == 0);
@@ -426,7 +423,7 @@ TEST_CASE("PPU frame output is deterministic across runs", "[unit][ppu][integrat
     BusWrite(snes, sppu::regs::kInidisp, 0x07, /*now=*/3);
 
     constexpr TimeMasterT kFrameEnd = 262U * 1364U;
-    snes.scheduler->CatchUpDevice(ppu.GetDeviceId(), kFrameEnd);
+    ppu.CatchUpTo(kFrameEnd);
 
     std::memcpy(dest, ppu.GetFrontBuffer(),
                 sppu::regs::kFrameBufferPixels * sizeof(uint16_t));
@@ -452,7 +449,7 @@ TEST_CASE("Forced blank keeps the backbuffer black inside the visible window", "
   BusWrite(snes, sppu::regs::kCgData, 0x00, /*now=*/2);
 
   constexpr TimeMasterT kFrameEnd = 262U * 1364U;
-  snes.scheduler->CatchUpDevice(ppu.GetDeviceId(), kFrameEnd);
+  ppu.CatchUpTo(kFrameEnd);
 
   REQUIRE(probe.count == 1);
   REQUIRE(ppu.IsForcedBlank());
@@ -461,55 +458,44 @@ TEST_CASE("Forced blank keeps the backbuffer black inside the visible window", "
   REQUIRE(center == 0x0000);
 }
 
-TEST_CASE("PPU flushes every scanline when the scheduler runs the CPU", "[unit][ppu][integration]") {
-  // Regression: Phase D intentionally stopped Ppu::Reset from auto-scheduling
-  // a kDeviceRun event (to avoid collision with CPU micro-op overshoot).
-  // Without another driver the PPU never advanced and frame callbacks never
-  // fired — running the CPU for 700M cycles produced zero output. The fix:
-  // Scheduler::Step now flushes every "continuous" device to master_time
-  // after each dispatch, so the PPU flushes scanline-by-scanline regardless
-  // of whether a CPU read triggered catch-up.
-  SNES snes;
-  int frame_count = 0;
-  snes.SetFrameReadyCallback([&](const FrameBufferView&) { ++frame_count; });
 
-  // Minimal ROM: BRA self at reset vector $8000. The CPU will loop forever
-  // without touching any PPU register, so the only way the PPU advances is
-  // via post-step sync.
-  std::vector<uint8_t> rom(Cartridge::kLoROMWindowSize, 0xEAU);  // NOPs
-  rom[0x0000U] = 0x80U;  // BRA
-  rom[0x0001U] = 0xFEU;  // target = self
-  rom[0x7FFCU] = 0x00U;
-  rom[0x7FFDU] = 0x80U;
-  snes.LoadLoRom(rom);
+TEST_CASE("PPU drawn mask tracks pixels emitted since last frame start", "[unit][ppu]") {
+  // After Reset, drawn_mask is all-zero. Each call to CatchUpTo advances the
+  // dot loop and sets a bit per emitted pixel. Bits are stored LSB-first
+  // within each byte: pixel index N → byte N/8, bit N%8.
+  SNES snes;
+  snes.Reset();
+  Ppu& ppu = snes.GetPpu();
+  const uint8_t* mask = ppu.GetDrawnMask();
+
+  // Mask starts zero — no pixels have been emitted yet.
+  REQUIRE(mask[0] == 0);
+
+  // Each dot costs 4 mcyc (DotCost(0,0,false)==4). Advancing by 12 mcyc
+  // completes exactly 3 dots at positions idx 0, 1, 2 → bits 0, 1, 2.
+  ppu.CatchUpTo(ppu.GetTime() + 12);
+  REQUIRE((mask[0] & 0b0000'0111) == 0b0000'0111);
+}
+
+TEST_CASE("PPU reschedules kFrameEnd after every frame boundary", "[unit][ppu]") {
+  // Reset schedules the first kFrameEnd signal. FireEventsThrough must
+  // trigger OnFrameEndSignal, which chains the next event. The second event's
+  // master_time must be strictly greater than the first.
+  SNES snes;
   snes.Reset();
 
-  // Seed a visible red backdrop. These writes enqueue into the PPU's log
-  // without catching the PPU up.
-  BusWrite(snes, sppu::regs::kCgAdd, 0, /*now=*/0);
-  BusWrite(snes, sppu::regs::kCgData, 0x1F, /*now=*/1);
-  BusWrite(snes, sppu::regs::kCgData, 0x00, /*now=*/2);
-  BusWrite(snes, sppu::regs::kInidisp, 0x0F, /*now=*/3);
+  const TimeMasterT first = snes.GetScheduler().NextEventMasterTime();
+  REQUIRE(first > 0);
+  // One NTSC frame is at most 262 * 1364 = 357368 mcyc.
+  REQUIRE(first <= 262U * 1364U);
 
-  // Kick the CPU off.
-  snes.scheduler->ScheduleDeviceRun(&snes.GetCpu(), snes.GetCpu().GetTime());
+  // Drive the PPU up to the frame boundary so OnFrameEndSignal sees a
+  // consistent state, then fire the event.
+  snes.GetPpu().CatchUpTo(first);
+  snes.GetScheduler().FireEventsThrough(first);
 
-  // Run the scheduler long enough to cross at least one frame boundary
-  // (357368 mcyc). With kMaxCyclesStep=4096 and CPU yielding kNoWork when
-  // its budget is too tight to fit a micro-op, each PPU/CPU pair advances
-  // ~4096 mcyc; ~90 dispatch pairs per frame.
-  for (int i = 0; i < 500; ++i) {
-    if (!snes.scheduler->HasPendingEvents()) {
-      break;
-    }
-    snes.scheduler->Step();
-  }
-
-  REQUIRE(frame_count >= 1);
-  // The backdrop writes must have replayed during sync, so a visible pixel
-  // carries the configured colour.
-  const uint16_t pixel = snes.GetPpu().GetFrontBuffer()[100U * sppu::regs::kFrameBufferWidth + 100U];
-  REQUIRE(pixel == 0x001F);
+  const TimeMasterT second = snes.GetScheduler().NextEventMasterTime();
+  REQUIRE(second > first);
 }
 
 TEST_CASE("Shadow captures every write in $2100-$213F for debugger round-trip", "[unit][ppu]") {
