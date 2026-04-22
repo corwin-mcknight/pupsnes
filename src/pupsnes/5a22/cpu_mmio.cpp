@@ -42,18 +42,6 @@ void CpuMmio::MapSystemBus(SystemBus& bus) {
   }
 }
 
-TickResult CpuMmio::Tick(TimeMasterDeltaT budget) {
-  // CpuMmio has no background work — it only reacts to bus accesses. Returning
-  // kNoWork with no wake time tells HandleRunResult to clear the pending run
-  // instead of re-scheduling. Critically, kSameClockMmio catch-up calls Tick
-  // on us every time the CPU pokes $4200-$43FF; kBudgetExhausted would make
-  // the scheduler enqueue a fresh DeviceRun at the caught-up time, which
-  // later dispatches with a 0-byte budget and trips the zero-progress guard.
-  return {budget, TickStopReason::kNoWork};
-}
-
-void CpuMmio::OnEvent(const SchedulerEvent& /*event*/) {}
-
 MmioReadResult CpuMmio::ReadRegister(uint32_t offset, TimeMasterT /*current_time*/) {
   const uint32_t reg = offset & 0xFFFFU;
   if (reg == kMemSelOffset) {

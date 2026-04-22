@@ -32,8 +32,6 @@ class CpuMmio : public Device {
   // page table matches the cleared register.
   void Reset();
 
-  [[nodiscard]] TickResult Tick(TimeMasterDeltaT budget) override;
-  void OnEvent(const SchedulerEvent& event) override;
   [[nodiscard]] MmioReadResult ReadRegister(uint32_t offset, TimeMasterT current_time) override;
   void WriteRegister(uint32_t offset, uint8_t data, TimeMasterT current_time) override;
   [[nodiscard]] std::optional<uint8_t> HandleDebugRead(uint32_t offset) const override;
