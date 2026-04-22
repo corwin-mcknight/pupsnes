@@ -267,6 +267,7 @@ void CPU::Reset() {
   refresh_cycles_remaining_ = 0;
   retired_refresh_windows_ = 0;
   retired_refresh_cycles_ = 0;
+  partial_op_cycles_ = 0;
 
   const uint8_t vector_lo = ReadResetVectorByte(0x00FFFCU);
   const uint8_t vector_hi = ReadResetVectorByte(0x00FFFDU);
@@ -1000,46 +1001,45 @@ TickResult CPU::TickToTarget(TimeMasterT target_master_time) {
       continue;
     }
 
-    // Strict no-overshoot: if the next step wouldn't fit, yield on this
-    // micro-op boundary. Events fire next, then RunControl calls us again.
-    // Exception: when a user-directed step is pending (step_target > 0), the
-    // scheduler boundary must not deadlock the step — let the instruction run
-    // even if it slightly overshoots the event boundary.
-    //
-    // Edge case: when the next instruction cost exceeds the remaining budget
-    // but we still haven't reached the target, advancing master_time to target
-    // lets FireEventsThrough(now) fire the scheduled event. Without this, the
-    // outer TickFrame loop spins with zero CPU progress and events never fire
-    // (the tight-loop freeze when a ROM reaches an infinite BRA).
-    const TimeMasterDeltaT next_cost = EstimateNextStepCostOrZero();
-    if (debugger_contract_.step_target == 0 &&
-        snes_->GetMasterTime() + next_cost > target_master_time) {
+    // Partial-op bookkeeping: determine how many cycles the next micro-op
+    // still needs after deducting cycles already banked from a prior call.
+    const TimeMasterDeltaT cost = EstimateNextStepCostOrZero();
+    const TimeMasterDeltaT remaining =
+        (cost > partial_op_cycles_) ? cost - partial_op_cycles_ : 0;
+
+    if (remaining > 0 && snes_->GetMasterTime() + remaining > target_master_time) {
+      // Target lands mid-op. Bank the partial progress, don't execute the op.
+      // On the next TickToTarget call, remaining cost = cost - partial_op_cycles_.
+      const TimeMasterDeltaT avail = target_master_time - snes_->GetMasterTime();
+      partial_op_cycles_ += avail;
       snes_->SetMasterTime(target_master_time);
-      local_time_ = target_master_time;
-      return {target_master_time - start, TickStopReason::kReachedTarget};
+      local_time_ = snes_->GetMasterTime();
+      return {snes_->GetMasterTime() - start, TickStopReason::kReachedTarget};
     }
+
+    // Op fits (or estimator returned 0). Advance master_time FIRST to op-end
+    // so that bus accesses inside the micro-op see the op-end timestamp —
+    // hardware-accurate: bus write/read lands at the end of the bus cycle.
+    snes_->SetMasterTime(snes_->GetMasterTime() + remaining);
+    local_time_ = snes_->GetMasterTime();
+    partial_op_cycles_ = 0;
 
     StepResult step = ShouldFetchInstruction() ? FetchOpcode(0) : ExecuteMicroOp(0);
     if (step.stopped) {
-      // Map internal stop reasons into the four-value enum.
       return {snes_->GetMasterTime() - start,
               step.reason == TickStopReason::kFault ? TickStopReason::kFault
                                                     : TickStopReason::kBreakpoint};
     }
-    if (step.master_cycles > 0) {
-      snes_->SetMasterTime(snes_->GetMasterTime() + step.master_cycles);
-      local_time_ = snes_->GetMasterTime();
 
-      const bool at_instruction_boundary = ShouldFetchInstruction();
-      const bool microop_mode =
-          debugger_contract_.step_granularity == DebuggerContract::StepGranularity::kMicroOp;
-      const bool yield_for_step = (at_instruction_boundary || microop_mode);
+    const bool at_instruction_boundary = ShouldFetchInstruction();
+    const bool microop_mode =
+        debugger_contract_.step_granularity == DebuggerContract::StepGranularity::kMicroOp;
+    const bool yield_for_step = (at_instruction_boundary || microop_mode);
 
-      if (yield_for_step && debugger_contract_.step_target > 0) {
-        --debugger_contract_.step_target;
-        if (debugger_contract_.step_target == 0) {
-          return {snes_->GetMasterTime() - start, TickStopReason::kRetiredStepTarget};
-        }
+    if (yield_for_step && debugger_contract_.step_target > 0) {
+      --debugger_contract_.step_target;
+      if (debugger_contract_.step_target == 0) {
+        return {snes_->GetMasterTime() - start, TickStopReason::kRetiredStepTarget};
       }
     }
   }

@@ -330,6 +330,13 @@ class CPU : public MasterClockDriver {
   uint64_t retired_refresh_windows_ = 0;
   uint64_t retired_refresh_cycles_ = 0;
 
+  // Partial-op bookkeeping: cycles already banked into the next micro-op that
+  // hasn't executed yet. When a TickToTarget call ends mid-op (the next op
+  // would overshoot the target), master_time is advanced to target and the
+  // consumed cycles are stored here. On resume, the pending op's remaining
+  // cost is (cost - partial_op_cycles_); the op executes when it fits.
+  TimeMasterDeltaT partial_op_cycles_ = 0;
+
   [[nodiscard]] bool ShouldFetchInstruction() const { return micro_op_index_ == 0; }
 
   // Fetch/execute pipeline. All definitions in cpu.cpp.
