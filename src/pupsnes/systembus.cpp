@@ -220,7 +220,7 @@ BusFollowResult SystemBus::FollowInline(const BusPlan& plan, TimeMasterT current
   // append to the device's pending-write log (inside WriteRegister) without
   // paying per-write catch-up overhead.
   if (entry.kind == PageDeviceKind::kSameClockMmio && plan.access_type == BusAccessType::kRead) {
-    snes_->scheduler->CatchUpDevice(plan.target_device, current_time);
+    device->CatchUpTo(current_time);
   }
   // TODO: kArbitrated — when a contended mapper (SA-1 / SuperFX shared SRAM)
   // lands, arbitrate bus ownership here before dispatching to the device.
