@@ -209,7 +209,7 @@ constexpr std::string_view NormalizeAddressing(std::string_view internal) {
 // One row per currently implemented opcode. Add rows as new opcodes land.
 // Columns lifted verbatim from docs/plans/6502opcodes.md. Flag masks built
 // with FlagsFrom() from Clark's nvmxdizc column.
-constexpr std::array<SpecEntry, 109> kSpec = {{
+constexpr std::array<SpecEntry, 117> kSpec = {{
     // Misc
     {0xEA, "NOP", "impl", "1", "2", FlagsFrom("........")},
 
@@ -349,6 +349,18 @@ constexpr std::array<SpecEntry, 109> kSpec = {{
     {0x05, "ORA", "dir", "2", "4-m+w", FlagsFrom("n.m...m."), 0U, true},
     {0x45, "EOR", "dir", "2", "4-m+w", FlagsFrom("n.m...m."), 0U, true},
     {0xC5, "CMP", "dir", "2", "4-m+w", FlagsFrom("n.m...mm"), 0U, true},
+
+    // ALU / Load abs,X (plan 01-07). Our lowering always pays the index-add
+    // penalty, so the effective formula is 5-m (LDY: 5-x). Bruce Clark's
+    // formula is "4-m+x+x*p" but with unconditional penalty it collapses.
+    {0x7D, "ADC", "abs,X", "3", "5-m", FlagsFrom("nvm...mm")},
+    {0xFD, "SBC", "abs,X", "3", "5-m", FlagsFrom("nvm...mm")},
+    {0x3D, "AND", "abs,X", "3", "5-m", FlagsFrom("n.m...m.")},
+    {0x1D, "ORA", "abs,X", "3", "5-m", FlagsFrom("n.m...m.")},
+    {0x5D, "EOR", "abs,X", "3", "5-m", FlagsFrom("n.m...m.")},
+    {0xDD, "CMP", "abs,X", "3", "5-m", FlagsFrom("n.m...mm")},
+    {0xBD, "LDA", "abs,X", "3", "5-m", FlagsFrom("n.....z.")},
+    {0xBC, "LDY", "abs,X", "3", "5-x", FlagsFrom("n.....z.")},
 
     // Jumps
     {0x4C, "JMP", "abs", "3", "3", FlagsFrom("........")},

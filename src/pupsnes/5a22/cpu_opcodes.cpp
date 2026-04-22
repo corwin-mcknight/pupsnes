@@ -778,6 +778,51 @@ constexpr auto MakeAluSrSpecs() {
   };
 }
 
+// ALU / Load abs,X specs (plan 01-07) — 8 mnemonics. FetchAbsoluteIndexed
+// always pays the index-add cycle (matches the STA abs,X store lowering),
+// so the effective formula is 5-m for ALU reads and LDA, 5-x for LDY —
+// equivalent to Bruce Clark's "4-m+x+x*p" with x=1/p=1 collapsed to an
+// unconditional penalty. Low-16 index overflow carries into the bank byte
+// (bank_wrap=false packed in PackAddIndex for DBR-banked absolute-indexed).
+// LDX abs,X does not exist as an opcode; LDX uses abs,Y (0xBE, a separate
+// family handled alongside abs,Y).
+constexpr auto MakeAluAbsXSpecs() {
+  return std::array{
+      Opcode(0x7D, "ADC", "absolute indexed X")
+          .Then(FetchAbsoluteIndexed(Reg::kX))
+          .Then(AluFromAddr(AluOp::kAdc, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0xFD, "SBC", "absolute indexed X")
+          .Then(FetchAbsoluteIndexed(Reg::kX))
+          .Then(AluFromAddr(AluOp::kSbc, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0x3D, "AND", "absolute indexed X")
+          .Then(FetchAbsoluteIndexed(Reg::kX))
+          .Then(AluFromAddr(AluOp::kAnd, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0x1D, "ORA", "absolute indexed X")
+          .Then(FetchAbsoluteIndexed(Reg::kX))
+          .Then(AluFromAddr(AluOp::kOra, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0x5D, "EOR", "absolute indexed X")
+          .Then(FetchAbsoluteIndexed(Reg::kX))
+          .Then(AluFromAddr(AluOp::kEor, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0xDD, "CMP", "absolute indexed X")
+          .Then(FetchAbsoluteIndexed(Reg::kX))
+          .Then(AluFromAddr(AluOp::kCmp, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0xBD, "LDA", "absolute indexed X")
+          .Then(FetchAbsoluteIndexed(Reg::kX))
+          .Then(LoadRegFromAddr(Reg::kA, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0xBC, "LDY", "absolute indexed X")
+          .Then(FetchAbsoluteIndexed(Reg::kX))
+          .Then(LoadRegFromAddr(Reg::kY, TimingCondition::kIndex16))
+          .Build(),
+  };
+}
+
 // ALU / Load / Store long,X specs (plan 01-06) — 8 mnemonics. Cycle formula
 // 6-m per Bruce Clark §6.1.1.1 / §6.1.2.2. Uses FetchAbsoluteLongIndexedX,
 // which packs the index-add with bank_wrap=false so a low-16 overflow carries
@@ -832,7 +877,7 @@ constexpr auto kExplicitOpcodeSpecs = ConcatArrays(
                              ConcatArrays(MakeAluSpecs(), MakeShiftSpecs()))),
             ConcatArrays(MakeAluAbsSpecs(), MakeBitDpxSpec())),
         ConcatArrays(MakeAluDpxSpecs(), MakeAluSrSpecs())),
-    MakeLongXSpecs());
+    ConcatArrays(MakeLongXSpecs(), MakeAluAbsXSpecs()));
 
 static_assert(ValidateOpcodeSpecs(kExplicitOpcodeSpecs), "Opcode specification validation failed");
 

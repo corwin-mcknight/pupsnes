@@ -66,6 +66,7 @@ set(PUPSNES_TEST_SOURCES
   src/tests/opcode_alu_dpx_tests.cpp
   src/tests/opcode_alu_sr_tests.cpp
   src/tests/opcode_alu_longx_tests.cpp
+  src/tests/opcode_alu_absx_tests.cpp
   src/tests/opcode_bcd_tests.cpp
 )
 
