@@ -4,6 +4,7 @@
 #include <iostream>
 
 #include "pupsnes/hw/5a22/cpu.h"
+#include "pupsnes/hw/5a22/cpu_mmio.h"
 #include "pupsnes/hw/cartridge.h"
 #include "pupsnes/hw/device.h"
 #include "pupsnes/hw/scheduler.h"
@@ -25,14 +26,22 @@ pupsnes::SNES::SNES()
       cartridge(std::make_unique<Cartridge>(this)),
       scheduler(std::make_unique<Scheduler>(this)),
       system_bus(std::make_unique<SystemBus>(this)),
-      wram(std::make_unique<WRAM>(this)) {
+      wram(std::make_unique<WRAM>(this)),
+      cpu_mmio(std::make_unique<CpuMmio>(this)) {
   wram->MapSystemBus(*system_bus);
+  cpu_mmio->MapSystemBus(*system_bus);
 }
 
 pupsnes::SNES::~SNES() = default;
 pupsnes::Device* pupsnes::SNES::GetDevice(DeviceIdT id) const { return id < devices_.size() ? devices_[id] : nullptr; }
 
 void pupsnes::SNES::LoadLoRom(std::span<const uint8_t> rom_data) {
+  // Mirror power-cycle semantics: a fresh cartridge insert drops FASTROM back
+  // to slow regardless of what the previous ROM left in $420D. Reset the MMIO
+  // register *before* re-mapping so the cached memsel_ and the new page table
+  // agree from the first cycle. Without this, the debugger's FASTROM indicator
+  // stays green after Load across cartridge swaps.
+  cpu_mmio->Reset();
   cartridge->LoadLoRom(rom_data);
   cartridge->MapLoRom(*system_bus);
 }
@@ -45,6 +54,7 @@ void pupsnes::SNES::Reset() {
       device->SetLocalTime(0);
     }
   }
+  cpu_mmio->Reset();
   cpu->Reset();
 }
 
@@ -62,6 +72,9 @@ const pupsnes::SystemBus& pupsnes::SNES::GetSystemBus() const { return *system_b
 
 pupsnes::WRAM& pupsnes::SNES::GetWram() { return *wram; }
 const pupsnes::WRAM& pupsnes::SNES::GetWram() const { return *wram; }
+
+pupsnes::CpuMmio& pupsnes::SNES::GetCpuMmio() { return *cpu_mmio; }
+const pupsnes::CpuMmio& pupsnes::SNES::GetCpuMmio() const { return *cpu_mmio; }
 
 pupsnes::DeviceIdT pupsnes::SNES::RegisterDevice(Device* device) {
   auto id = static_cast<DeviceIdT>(devices_.size());

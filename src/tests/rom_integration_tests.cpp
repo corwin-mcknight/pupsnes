@@ -33,6 +33,7 @@ enum class GoalObservationKind : uint8_t {
   kWramByte = 2,
   kCpuSp = 3,
   kCpuDbr = 4,
+  kCpuPbr = 5,
 };
 
 struct GoalSpec {
@@ -160,6 +161,9 @@ GoalObservationKind ParseGoalKind(const std::string& value, const std::filesyste
   }
   if (value == "cpu_dbr") {
     return GoalObservationKind::kCpuDbr;
+  }
+  if (value == "cpu_pbr") {
+    return GoalObservationKind::kCpuPbr;
   }
 
   std::ostringstream out;
@@ -342,6 +346,7 @@ uint32_t ReadObservationValue(const GoalSpec& goal, const CPU& cpu, const WRAM& 
     case GoalObservationKind::kWramByte: return wram.Peek(goal.address);
     case GoalObservationKind::kCpuSp: return cpu.GetRegs().SP;
     case GoalObservationKind::kCpuDbr: return cpu.GetRegs().DBR;
+    case GoalObservationKind::kCpuPbr: return cpu.GetRegs().PBR;
   }
 
   return 0;
@@ -358,6 +363,7 @@ std::string ObservationLabel(const GoalSpec& goal) {
     }
     case GoalObservationKind::kCpuSp: return "cpu.sp";
     case GoalObservationKind::kCpuDbr: return "cpu.dbr";
+    case GoalObservationKind::kCpuPbr: return "cpu.pbr";
   }
 
   return "unknown";

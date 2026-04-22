@@ -1,0 +1,46 @@
+rom_name = "fastrom_smoke"
+title = "FASTROM Smoke"
+purpose = "Drive MEMSEL ($420D) bit 0 to 1, JML into the fast-bank mirror, and prove the CPU reaches fast_loop with PBR=$80 and every stage marker in WRAM."
+why_expected_to_fail = "Would fail before the CpuMmio device accepted writes to $420D and before the LoROM mapper re-mapped banks $80-$FD."
+cycle_budget = 600
+expected_current_status = "pass"
+
+[goal]
+name = "booted-in-slow-bank"
+description = "Marker0: first store after PLB writes $AA at $7E:0000 from the slow bank."
+kind = "wram_byte"
+address = 0x0000
+expected_value = 0xAA
+
+[goal]
+name = "memsel-enabled-in-slow-bank"
+description = "Marker1: after STA $420D, control still executed in slow bank and wrote $BB at $7E:0001."
+kind = "wram_byte"
+address = 0x0001
+expected_value = 0xBB
+
+[goal]
+name = "reached-fast-bank-mirror"
+description = "Marker2: JML into bank $80 landed at fast_entry; first store there wrote $CC at $7E:0002."
+kind = "wram_byte"
+address = 0x0002
+expected_value = 0xCC
+
+[goal]
+name = "completed-fast-bank-work"
+description = "Marker3: DEX/BNE loop in the fast bank finished and stored $DD at $7E:0003."
+kind = "wram_byte"
+address = 0x0003
+expected_value = 0xDD
+
+[goal]
+name = "parked-in-fast-bank"
+description = "Final PBR should be $80 — the BRA-loop park is mirrored into the fast bank, proving the CPU is still fetching from banks $80-$FD."
+kind = "cpu_pbr"
+expected_value = 0x80
+
+[goal]
+name = "plb-sets-data-bank"
+description = "PLB pulled $7E into DBR so the a:$xxxx stores landed in WRAM."
+kind = "cpu_dbr"
+expected_value = 0x7E

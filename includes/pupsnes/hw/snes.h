@@ -9,6 +9,7 @@
 namespace pupsnes {
 class CPU;
 class Cartridge;
+class CpuMmio;
 class Scheduler;
 class SystemBus;
 class Device;
@@ -25,6 +26,7 @@ class SNES {
   std::unique_ptr<Scheduler> scheduler;
   std::unique_ptr<SystemBus> system_bus;
   std::unique_ptr<WRAM> wram;
+  std::unique_ptr<CpuMmio> cpu_mmio;
 
   SNES();
   ~SNES();
@@ -45,6 +47,8 @@ class SNES {
   [[nodiscard]] const SystemBus& GetSystemBus() const;
   [[nodiscard]] WRAM& GetWram();
   [[nodiscard]] const WRAM& GetWram() const;
+  [[nodiscard]] CpuMmio& GetCpuMmio();
+  [[nodiscard]] const CpuMmio& GetCpuMmio() const;
 
   DeviceIdT RegisterDevice(Device* device);
   [[nodiscard]] Device* GetDevice(DeviceIdT id) const;

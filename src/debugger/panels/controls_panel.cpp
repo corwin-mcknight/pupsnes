@@ -4,6 +4,8 @@
 #include "imgui.h"
 #include "imgui_internal.h"
 #include "panels.h"
+#include "pupsnes/hw/5a22/cpu_mmio.h"
+#include "pupsnes/hw/cartridge.h"
 
 namespace pupsnes::debugger {
 
@@ -17,6 +19,15 @@ const char* RunStateLabel(RunState state) {
     case RunState::kRunUntilBreak: return "Running";
   }
   return "Unknown";
+}
+
+const char* MapperLabel(MapperKind kind) {
+  switch (kind) {
+    case MapperKind::kNone: return "—";
+    case MapperKind::kLoROM: return "LoROM";
+    case MapperKind::kHiROM: return "HiROM";
+  }
+  return "?";
 }
 
 }  // namespace
@@ -70,6 +81,22 @@ void RenderControlsPanel(DebuggerApp& app) {
       ImGui::TextUnformatted("ROM:");
       ImGui::SameLine();
       ImGui::TextUnformatted(rom_path.data(), rom_path.data() + rom_path.size());
+
+      ImGui::SameLine();
+      ImGui::TextUnformatted("|");
+      ImGui::SameLine();
+      const MapperKind mapper = app.GetSnes().GetCartridge().GetMapperKind();
+      ImGui::Text("Mapper: %s", MapperLabel(mapper));
+
+      ImGui::SameLine();
+      const bool fast = app.GetSnes().GetCpuMmio().IsFastRomEnabled();
+      // Dim label when FASTROM is off so the toolbar still reads "FASTROM" at
+      // a glance without screaming when it's inactive.
+      if (fast) {
+        ImGui::TextColored(ImVec4(0.45F, 0.85F, 0.45F, 1.0F), "FASTROM");
+      } else {
+        ImGui::TextDisabled("FASTROM");
+      }
     }
 
     if (const ErrorEvent* latest = app.GetErrorLog().Latest(); latest != nullptr) {

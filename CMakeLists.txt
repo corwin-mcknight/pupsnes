@@ -4,6 +4,7 @@ project(pupsnes LANGUAGES CXX)
 
 set(PUPSNES_LIB_SOURCES
   src/pupsnes/5a22/cpu.cpp
+  src/pupsnes/5a22/cpu_mmio.cpp
   src/pupsnes/5a22/cpu_opcodes.cpp
   src/pupsnes/5a22/micro_op_strings.cpp
   src/pupsnes/cartridge.cpp
@@ -46,7 +47,9 @@ set(PUPSNES_DEBUGGER_SOURCES
 set(PUPSNES_TEST_SOURCES
   src/tests/unit/catch2_smoke_tests.cpp
   src/tests/cpu_tests.cpp
+  src/tests/cpu_mmio_tests.cpp
   src/tests/cpu_opcode_defs_tests.cpp
+  src/tests/fastrom_tests.cpp
   src/tests/rom_integration_tests.cpp
   src/tests/scheduler_tests.cpp
   src/tests/test_rom_builder_tests.cpp
@@ -196,6 +199,7 @@ if(BUILD_TESTING)
     ${CMAKE_CURRENT_SOURCE_DIR}/testroms/transfer_smoke/transfer_smoke.s
     ${CMAKE_CURRENT_SOURCE_DIR}/testroms/control_flow_smoke/control_flow_smoke.s
     ${CMAKE_CURRENT_SOURCE_DIR}/testroms/all_instr_loop/all_instr_loop.s
+    ${CMAKE_CURRENT_SOURCE_DIR}/testroms/fastrom_smoke/fastrom_smoke.s
   )
   set(PUPSNES_TEST_ROM_COMMON_INCLUDES
     ${CMAKE_CURRENT_SOURCE_DIR}/testroms/pupsnes.inc
@@ -263,6 +267,7 @@ set(PUPSNES_HEADERS
   ${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/app.h
   ${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/panels/panels.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/5a22/cpu.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/5a22/cpu_mmio.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/5a22/cpu_regs.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/5a22/micro_op_strings.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/bus_event.h
