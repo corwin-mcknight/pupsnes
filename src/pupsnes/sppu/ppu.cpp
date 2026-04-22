@@ -259,11 +259,14 @@ FrameBufferView Ppu::BuildFrontView() const {
 
 bool Ppu::EnqueueWrite(uint16_t offset, uint8_t data, TimeMasterT cycle) {
   if (pending_writes_count_ >= kPendingWriteLogSize) {
-    // Phase D: on overflow, force an internal catch-up flush by calling the
-    // replay loop here. For the scaffold we just drop the entry so we don't
-    // corrupt the log; the scaffold has no live writer that can fill 16K
-    // entries in a single bus transaction.
-    return false;
+    // Soft-limit flush: the log filled without any intervening read/Tick
+    // draining it. Apply everything synchronously up to the new entry's
+    // cycle so no write is lost. Because enqueues are monotonic in cycle,
+    // all queued entries have cycle <= this one and the drain clears the
+    // whole log. The pixel-accurate replay timing for any pixels the dot
+    // loop hasn't yet emitted is traded away here — this is a fail-safe,
+    // not the hot path.
+    DrainPendingWritesUpTo(cycle);
   }
   (*pending_writes_)[pending_writes_count_++] = {cycle, offset, data};
   return true;

@@ -458,6 +458,182 @@ TEST_CASE("Forced blank keeps the backbuffer black inside the visible window", "
   REQUIRE(center == 0x0000);
 }
 
+TEST_CASE("Shadow captures every write in $2100-$213F for debugger round-trip", "[unit][ppu]") {
+  // Phase F coverage: the debugger panel reads Ppu::GetShadow to show the
+  // last-written value for any PPU register, independent of whether the
+  // register has a real decoded representation. Every $2100-$213F write
+  // must land in the shadow byte at `reg - 0x2100`.
+  SNES snes;
+  Ppu& ppu = snes.GetPpu();
+  ppu.Reset();
+
+  for (uint16_t reg = sppu::regs::kBase; reg < sppu::regs::kEnd; ++reg) {
+    const uint8_t marker = static_cast<uint8_t>(0x40U + (reg - sppu::regs::kBase));
+    BusWrite(snes, reg, marker, /*now=*/static_cast<TimeMasterT>(reg - sppu::regs::kBase));
+  }
+
+  // A read drains the log. Shadows are updated at enqueue time already, so
+  // this mostly checks that replay doesn't stomp them.
+  (void)BusRead(snes, sppu::regs::kStat77, /*now=*/0x1000);
+
+  for (uint16_t reg = sppu::regs::kBase; reg < sppu::regs::kEnd; ++reg) {
+    const uint8_t expected = static_cast<uint8_t>(0x40U + (reg - sppu::regs::kBase));
+    INFO("reg=$" << std::hex << reg);
+    REQUIRE(ppu.GetShadow(reg) == expected);
+  }
+}
+
+TEST_CASE("VMAIN step size selects +1, +32, +128 VMADD advance", "[unit][ppu]") {
+  // Exercise every step encoding (0b00=+1, 0b01=+32, 0b10=+128, 0b11=+128).
+  // After two VMDATAL writes, VMADD has advanced by 2 × step. Seeding vram
+  // at the advance target and reading back through mode 0 verifies the
+  // second write landed at the expected byte address.
+  auto verify_step = [](uint8_t vmain_low_bits, uint16_t expected_step) {
+    SNES snes;
+    Ppu& ppu = snes.GetPpu();
+    ppu.Reset();
+
+    // Step bits in [1:0], mode 0 in [3:2], inc on VMDATAL write (bit 7 clear).
+    const uint8_t vmain = vmain_low_bits;
+    BusWrite(snes, sppu::regs::kVmain, vmain, /*now=*/0);
+    BusWrite(snes, sppu::regs::kVmAddL, 0x00, /*now=*/1);
+    BusWrite(snes, sppu::regs::kVmAddH, 0x00, /*now=*/2);
+
+    BusWrite(snes, sppu::regs::kVmDataL, 0xAA, /*now=*/3);
+    BusWrite(snes, sppu::regs::kVmDataL, 0xBB, /*now=*/4);
+
+    // Re-seed VMADD to `expected_step` (where the second write should have
+    // landed). Prefetch fires on $2117, RDVRAML returns the low byte.
+    BusWrite(snes, sppu::regs::kVmAddL, static_cast<uint8_t>(expected_step & 0xFFU), /*now=*/5);
+    BusWrite(snes, sppu::regs::kVmAddH, static_cast<uint8_t>((expected_step >> 8U) & 0xFFU), /*now=*/6);
+    const BusFollowResult second = BusRead(snes, sppu::regs::kRdVramL, /*now=*/7);
+    REQUIRE(second.data == 0xBB);
+    (void)ppu;
+  };
+
+  SECTION("step +1") { verify_step(0x00, 1); }
+  SECTION("step +32") { verify_step(0x01, 32); }
+  SECTION("step +128 (bits 10)") { verify_step(0x02, 128); }
+  SECTION("step +128 (bits 11)") { verify_step(0x03, 128); }
+}
+
+TEST_CASE("VMAIN address translation modes rotate the low address bits", "[unit][ppu]") {
+  // Fullsnes: modes 01/10/11 rotate the low 8/9/10 bits of the VRAM word
+  // address. Writing at raw VMADD X with translation mode M lands at
+  // translated(M, X). We verify by writing through a translated path and
+  // re-reading via mode 0 at the expected translated address.
+  auto verify_translate = [](uint8_t mode_bits, uint16_t raw_word_addr, uint16_t expected_translated_word_addr) {
+    SNES snes;
+    Ppu& ppu = snes.GetPpu();
+    ppu.Reset();
+
+    const uint8_t vmain = static_cast<uint8_t>(
+        sppu::regs::kVmainIncrementOnHighMask | (mode_bits << sppu::regs::kVmainTranslateShift));
+    BusWrite(snes, sppu::regs::kVmain, vmain, /*now=*/0);
+    BusWrite(snes, sppu::regs::kVmAddL, static_cast<uint8_t>(raw_word_addr & 0xFFU), /*now=*/1);
+    BusWrite(snes, sppu::regs::kVmAddH, static_cast<uint8_t>((raw_word_addr >> 8U) & 0xFFU), /*now=*/2);
+    BusWrite(snes, sppu::regs::kVmDataL, 0xAA, /*now=*/3);
+    BusWrite(snes, sppu::regs::kVmDataH, 0xBB, /*now=*/4);
+
+    // Read back through mode 0 (no translation).
+    BusWrite(snes, sppu::regs::kVmain, sppu::regs::kVmainIncrementOnHighMask, /*now=*/5);
+    BusWrite(snes, sppu::regs::kVmAddL, static_cast<uint8_t>(expected_translated_word_addr & 0xFFU), /*now=*/6);
+    BusWrite(snes, sppu::regs::kVmAddH, static_cast<uint8_t>((expected_translated_word_addr >> 8U) & 0xFFU),
+             /*now=*/7);
+    const BusFollowResult lo = BusRead(snes, sppu::regs::kRdVramL, /*now=*/8);
+    const BusFollowResult hi = BusRead(snes, sppu::regs::kRdVramH, /*now=*/9);
+    REQUIRE(lo.data == 0xAA);
+    REQUIRE(hi.data == 0xBB);
+    (void)ppu;
+  };
+
+  // Mode 01: aaaaaaaa YYYxxxxx → aaaaaaaa xxxxxYYY
+  // raw 0x001F (YYY=000, xxxxx=11111) → 0x00F8 (11111 000)
+  SECTION("mode 01 (8x32)") { verify_translate(1, 0x001F, 0x00F8); }
+
+  // Mode 10: aaaaaaa YYYxxxxxx → aaaaaaa xxxxxxYYY
+  // raw 0x003F (YYY=000, xxxxxx=111111) → 0x01F8 (111111 000)
+  SECTION("mode 10 (8x64)") { verify_translate(2, 0x003F, 0x01F8); }
+
+  // Mode 11: aaaaaa YYYxxxxxxx → aaaaaa xxxxxxxYYY
+  // raw 0x007F (YYY=000, xxxxxxx=1111111) → 0x03F8 (1111111 000)
+  SECTION("mode 11 (8x128)") { verify_translate(3, 0x007F, 0x03F8); }
+}
+
+TEST_CASE("DMA-style burst: hundreds of writes never tick the PPU", "[unit][ppu][integration]") {
+  // Plan F3: a burst of writes to $2122 (or any PPU reg) must not trigger a
+  // per-write catch-up. The PPU's local_time stays at 0 throughout; the log
+  // grows monotonically; a single subsequent read drains everything.
+  SNES snes;
+  Ppu& ppu = snes.GetPpu();
+  ppu.Reset();
+
+  constexpr uint32_t kBurst = 500;
+  for (uint32_t i = 0; i < kBurst; ++i) {
+    BusWrite(snes, sppu::regs::kCgData, static_cast<uint8_t>(i & 0xFFU), static_cast<TimeMasterT>(i));
+    REQUIRE(ppu.GetTime() == 0);
+    REQUIRE(ppu.GetPendingWriteCount() == i + 1U);
+  }
+
+  (void)BusRead(snes, sppu::regs::kStat77, /*now=*/kBurst + 100);
+  REQUIRE(ppu.GetPendingWriteCount() == 0);
+}
+
+TEST_CASE("Pending-write log overflow flushes synchronously without losing writes", "[unit][ppu][integration]") {
+  // Plan B4: the 16384-entry log is a soft limit; overflow forces an
+  // internal flush rather than dropping writes. We prove that the final
+  // write (the 16385th) is still observable after draining.
+  SNES snes;
+  Ppu& ppu = snes.GetPpu();
+  ppu.Reset();
+
+  // Fill the log with shadow-only writes that ReplayWrite treats as no-ops
+  // (BGMODE at $2105 is in range but not implemented). This keeps the
+  // flush cheap while still exercising the overflow path.
+  constexpr uint32_t kLogSize = 16384;
+  for (uint32_t i = 0; i < kLogSize; ++i) {
+    BusWrite(snes, 0x2105U, static_cast<uint8_t>(i & 0xFFU), static_cast<TimeMasterT>(i));
+  }
+  REQUIRE(ppu.GetPendingWriteCount() == kLogSize);
+
+  // The next enqueue must trigger the internal flush. Use a real register
+  // (INIDISP) with a recognisable marker so we can verify it survived.
+  BusWrite(snes, sppu::regs::kInidisp, 0x0F, /*now=*/kLogSize);
+  // After the flush, the queue holds only the most recent entry.
+  REQUIRE(ppu.GetPendingWriteCount() == 1);
+
+  (void)BusRead(snes, sppu::regs::kStat77, /*now=*/kLogSize + 1);
+  REQUIRE(ppu.IsForcedBlank() == false);
+  REQUIRE(ppu.GetBrightness() == 0x0F);
+}
+
+TEST_CASE("Read drains writes queued after the PPU last ticked", "[unit][ppu][integration]") {
+  // Plan F3 / lazy-replay contract: any write with cycle <= bus_read_time
+  // must be visible to the read, even if the dot loop's per-dot drain
+  // stopped short of that cycle. ReadRegister calls DrainPendingWritesUpTo
+  // to guarantee this.
+  SNES snes;
+  Ppu& ppu = snes.GetPpu();
+  ppu.Reset();
+
+  // First catch-up leaves the PPU at T=500, mid-scanline. The dot loop
+  // drains writes up to each dot's start time.
+  (void)BusRead(snes, sppu::regs::kStat77, /*now=*/500);
+  const TimeMasterT ppu_time = ppu.GetTime();
+  REQUIRE(ppu_time >= 500);
+
+  // Queue a write at cycle = ppu_time + 1 — a cycle the next Tick would
+  // drain naturally, but we read at exactly that cycle and expect the
+  // read's drain to surface the write.
+  const TimeMasterT write_cycle = ppu_time + 1;
+  BusWrite(snes, sppu::regs::kInidisp, 0x0F, write_cycle);
+
+  const TimeMasterT read_cycle = write_cycle;
+  (void)BusRead(snes, sppu::regs::kStat77, read_cycle);
+  REQUIRE(ppu.IsForcedBlank() == false);
+  REQUIRE(ppu.GetBrightness() == 0x0F);
+}
+
 TEST_CASE("Lazy replay — many writes incur a single catch-up", "[unit][ppu]") {
   // Regression: DMA-style bursts should not force one PPU Tick per write.
   // The pending-write log accumulates, and a single read drains all of them.
