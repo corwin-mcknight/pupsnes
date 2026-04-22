@@ -43,6 +43,66 @@ struct DebuggerFixture {
 
 }  // namespace
 
+TEST_CASE("RunControl StepOne retires exactly one instruction", "[unit][debugger]") {
+  DebuggerFixture fixture;
+  fixture.SetBytes({0xA9, 0x11, 0xEA, 0xA9, 0x22});
+
+  RunControl run_control = fixture.BuildRunControl();
+  run_control.RequestStepOne();
+  run_control.TickFrame(std::chrono::seconds(1));
+
+  REQUIRE(run_control.GetState() == RunState::kPaused);
+  REQUIRE(run_control.GetPauseReason() == PauseReason::kUser);
+  REQUIRE(fixture.snes.GetCpu().GetRetiredInstructionCount() == 1);
+  REQUIRE(fixture.snes.GetCpu().GetRegs().PC == 0x8002);
+  REQUIRE(fixture.trace.Size() == 1);
+}
+
+TEST_CASE("RunControl StepOne after Pause retires one instruction", "[unit][debugger]") {
+  DebuggerFixture fixture;
+  // BRA self: a 0x80 0xFE tight loop so Run can execute indefinitely without
+  // hitting undefined instructions / faults. 0xEA (NOP) in every other cell
+  // is never executed; present only so the reset vector still lands here.
+  fixture.SetBytes({0x80, 0xFE});
+
+  RunControl run_control = fixture.BuildRunControl();
+  run_control.RequestRunUntilBreak();
+  run_control.TickFrame(std::chrono::milliseconds(5));
+  run_control.Pause();
+  REQUIRE(run_control.GetState() == RunState::kPaused);
+  REQUIRE(run_control.GetPauseReason() == PauseReason::kUser);
+  const uint64_t retired_at_pause = fixture.snes.GetCpu().GetRetiredInstructionCount();
+
+  run_control.RequestStepOne();
+  run_control.TickFrame(std::chrono::seconds(1));
+
+  REQUIRE(run_control.GetState() == RunState::kPaused);
+  REQUIRE(run_control.GetPauseReason() == PauseReason::kUser);
+  REQUIRE(fixture.snes.GetCpu().GetRetiredInstructionCount() == retired_at_pause + 1);
+}
+
+TEST_CASE("RunControl StepOne after a breakpoint pause retires one instruction", "[unit][debugger]") {
+  DebuggerFixture fixture;
+  fixture.SetBytes({0xEA, 0xEA, 0xEA, 0xEA, 0xEA});
+  fixture.breakpoints.Set(0x008002);
+
+  RunControl run_control = fixture.BuildRunControl();
+  run_control.RequestRunUntilBreak();
+  run_control.TickFrame(std::chrono::seconds(1));
+  REQUIRE(run_control.GetState() == RunState::kPaused);
+  REQUIRE(run_control.GetPauseReason() == PauseReason::kBreakpoint);
+  REQUIRE(fixture.snes.GetCpu().GetRegs().PC == 0x8002);
+  const uint64_t retired_at_pause = fixture.snes.GetCpu().GetRetiredInstructionCount();
+
+  run_control.RequestStepOne();
+  run_control.TickFrame(std::chrono::seconds(1));
+
+  REQUIRE(run_control.GetState() == RunState::kPaused);
+  REQUIRE(run_control.GetPauseReason() == PauseReason::kUser);
+  REQUIRE(fixture.snes.GetCpu().GetRetiredInstructionCount() == retired_at_pause + 1);
+  REQUIRE(fixture.snes.GetCpu().GetRegs().PC == 0x8003);
+}
+
 TEST_CASE("RunControl StepN stops after N instruction boundaries", "[unit][debugger]") {
   DebuggerFixture fixture;
   fixture.SetBytes({0xA9, 0x11, 0xEA, 0xA9, 0x22});
