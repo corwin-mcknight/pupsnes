@@ -187,7 +187,7 @@ struct MicroOpCpuHarness {
   void RunOneInstruction() {
     const uint64_t start = snes.GetCpu().GetRetiredInstructionCount();
     for (int i = 0; i < 64 && snes.GetCpu().GetRetiredInstructionCount() == start; ++i) {
-      (void)snes.GetCpu().Tick(1);
+      (void)snes.GetCpu().TickToTarget(snes.GetMasterTime() + 100);
     }
   }
 };

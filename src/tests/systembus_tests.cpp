@@ -18,9 +18,6 @@ class MockMemoryDevice : public Device {
 
   explicit MockMemoryDevice(SNES* snes) : Device(snes) {}
 
-  TickResult Tick(TimeMasterDeltaT budget) override { return {budget, TickStopReason::kBudgetExhausted}; }
-  void OnEvent(const SchedulerEvent&) override {}
-
   MmioReadResult ReadRegister(uint32_t offset, TimeMasterT /*current_time*/) override {
     return {memory[offset % kSize], 0xFFU};
   }
@@ -35,15 +32,14 @@ class MockMMIODevice : public Device {
   uint32_t last_write_offset = 0;
   uint8_t last_write_data = 0;
   uint8_t read_value = 0x42;
-  int tick_calls = 0;
+  int catch_up_calls = 0;
 
   explicit MockMMIODevice(SNES* snes) : Device(snes) {}
 
-  TickResult Tick(TimeMasterDeltaT budget) override {
-    ++tick_calls;
-    return {budget, TickStopReason::kBudgetExhausted};
+  void CatchUpTo(TimeMasterT target) override {
+    ++catch_up_calls;
+    local_time_ = target;
   }
-  void OnEvent(const SchedulerEvent&) override {}
 
   MmioReadResult ReadRegister(uint32_t offset, TimeMasterT /*current_time*/) override {
     last_read_offset = offset;
@@ -106,7 +102,7 @@ TEST_CASE("plan is pure and idempotent", "[unit]") {
   REQUIRE(p1.target_device == p2.target_device);
   REQUIRE(p1.device_offset == p2.device_offset);
   REQUIRE(p1.access_cycles == p2.access_cycles);
-  REQUIRE(dev.tick_calls == 0);
+  REQUIRE(dev.catch_up_calls == 0);
 }
 
 TEST_CASE("follow InlineComplete read/write for Memory", "[unit]") {
@@ -142,7 +138,7 @@ TEST_CASE("follow InlineComplete for SameClockMMIO triggers catch-up", "[unit]")
   REQUIRE(result.outcome == BusPlanOutcome::kInlineComplete);
   REQUIRE(result.data == 0x42);        // MockMMIODevice returns 0x42
   REQUIRE(mmio_dev.GetTime() == 100);  // Caught up
-  REQUIRE(mmio_dev.tick_calls == 1);
+  REQUIRE(mmio_dev.catch_up_calls == 1);
   REQUIRE(mmio_dev.last_read_offset == 0x100);  // base_offset + (0x00 & 0xFF)
 }
 
@@ -160,7 +156,7 @@ TEST_CASE("follow InlineComplete for SameClockMMIO write does not catch up", "[u
 
   REQUIRE(result.outcome == BusPlanOutcome::kInlineComplete);
   REQUIRE(mmio_dev.GetTime() == 0);   // Device time unchanged — no catch-up.
-  REQUIRE(mmio_dev.tick_calls == 0);  // No catch-up tick.
+  REQUIRE(mmio_dev.catch_up_calls == 0);  // No catch-up call.
   REQUIRE(mmio_dev.last_write_offset == 0x05);
   REQUIRE(mmio_dev.last_write_data == 0xFF);
 }
@@ -227,7 +223,7 @@ TEST_CASE("catch-up does not tick device already at or past target time", "[unit
   BusFollowResult result = snes.system_bus->Follow(p, 100, mmio_dev.GetDeviceId());
 
   REQUIRE(result.outcome == BusPlanOutcome::kInlineComplete);
-  REQUIRE(mmio_dev.tick_calls == 0);   // No catch-up needed
+  REQUIRE(mmio_dev.catch_up_calls == 0);   // No catch-up needed
   REQUIRE(mmio_dev.GetTime() == 200);  // Unchanged
 }
 

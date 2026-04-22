@@ -31,7 +31,7 @@ TEST_CASE("ADC absolute 8-bit adds DBR-banked operand", "[unit][opcode][cpu][abs
     r.DBR = 0x7E;
   });
 
-  TickResult r = f.cpu.Tick(32);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 32);
 
   REQUIRE(r.completed_cycles == 32);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x0F);
@@ -51,7 +51,7 @@ TEST_CASE("SBC absolute 8-bit subtracts with carry-in", "[unit][opcode][cpu][abs
     r.DBR = 0x7E;
   });
 
-  TickResult r = f.cpu.Tick(32);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 32);
 
   REQUIRE(r.completed_cycles == 32);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x0D);
@@ -69,7 +69,7 @@ TEST_CASE("AND absolute 8-bit masks with memory", "[unit][opcode][cpu][abs]") {
     r.DBR = 0x7E;
   });
 
-  TickResult r = f.cpu.Tick(32);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 32);
 
   REQUIRE(r.completed_cycles == 32);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0xF0);
@@ -88,7 +88,7 @@ TEST_CASE("ORA absolute 8-bit combines with memory", "[unit][opcode][cpu][abs]")
     r.DBR = 0x7E;
   });
 
-  TickResult r = f.cpu.Tick(32);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 32);
 
   REQUIRE(r.completed_cycles == 32);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0xFF);
@@ -106,7 +106,7 @@ TEST_CASE("EOR absolute 8-bit clears A to zero", "[unit][opcode][cpu][abs]") {
     r.DBR = 0x7E;
   });
 
-  TickResult r = f.cpu.Tick(32);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 32);
 
   REQUIRE(r.completed_cycles == 32);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x00);
@@ -124,7 +124,7 @@ TEST_CASE("CMP absolute 8-bit equal sets Z and C", "[unit][opcode][cpu][abs]") {
     r.DBR = 0x7E;
   });
 
-  TickResult r = f.cpu.Tick(32);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 32);
 
   REQUIRE(r.completed_cycles == 32);
   REQUIRE(f.cpu.GetRegs().P.Z == true);
@@ -146,7 +146,7 @@ TEST_CASE("BIT absolute sets N and V from memory and Z from (A AND mem)", "[unit
     r.DBR = 0x7E;
   });
 
-  TickResult r = f.cpu.Tick(32);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 32);
 
   REQUIRE(r.completed_cycles == 32);
   REQUIRE(f.cpu.GetRegs().P.N == true);  // bit 7 of $C0
@@ -168,7 +168,7 @@ TEST_CASE("BIT absolute N=0 V=1 Z=0 combination", "[unit][opcode][cpu][abs]") {
     r.DBR = 0x7E;
   });
 
-  TickResult r = f.cpu.Tick(32);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 32);
 
   REQUIRE(r.completed_cycles == 32);
   REQUIRE(f.cpu.GetRegs().P.N == false);
@@ -193,7 +193,7 @@ TEST_CASE("ADC absolute 16-bit uses 5-cycle path", "[unit][opcode][cpu][abs]") {
   SetDataBank(f.cpu, 0x7E);
   f.ModifyRegs([](auto& r) { r.P.C = false; });
 
-  TickResult r = f.cpu.Tick(40);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 40);
 
   REQUIRE(r.completed_cycles == 40);
   REQUIRE(f.cpu.GetRegs().A == 0x2234);
@@ -210,7 +210,7 @@ TEST_CASE("SBC absolute 16-bit subtracts with carry-in", "[unit][opcode][cpu][ab
   SetDataBank(f.cpu, 0x7E);
   f.ModifyRegs([](auto& r) { r.P.C = true; });
 
-  TickResult r = f.cpu.Tick(40);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 40);
 
   REQUIRE(r.completed_cycles == 40);
   REQUIRE(f.cpu.GetRegs().A == 0x0001);
@@ -227,7 +227,7 @@ TEST_CASE("AND absolute 16-bit masks wide accumulator", "[unit][opcode][cpu][abs
   SetAccumulator16(f.cpu, 0xFFFF);
   SetDataBank(f.cpu, 0x7E);
 
-  TickResult r = f.cpu.Tick(40);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 40);
 
   REQUIRE(r.completed_cycles == 40);
   REQUIRE(f.cpu.GetRegs().A == 0xFF00);
@@ -245,7 +245,7 @@ TEST_CASE("ORA absolute 16-bit fills all bits", "[unit][opcode][cpu][abs]") {
   SetAccumulator16(f.cpu, 0xFF00);
   SetDataBank(f.cpu, 0x7E);
 
-  TickResult r = f.cpu.Tick(40);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 40);
 
   REQUIRE(r.completed_cycles == 40);
   REQUIRE(f.cpu.GetRegs().A == 0xFFFF);
@@ -262,7 +262,7 @@ TEST_CASE("EOR absolute 16-bit sets Z", "[unit][opcode][cpu][abs]") {
   SetAccumulator16(f.cpu, 0xFFFF);
   SetDataBank(f.cpu, 0x7E);
 
-  TickResult r = f.cpu.Tick(40);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 40);
 
   REQUIRE(r.completed_cycles == 40);
   REQUIRE(f.cpu.GetRegs().A == 0x0000);
@@ -279,7 +279,7 @@ TEST_CASE("CMP absolute 16-bit equal", "[unit][opcode][cpu][abs]") {
   SetAccumulator16(f.cpu, 0x1234);
   SetDataBank(f.cpu, 0x7E);
 
-  TickResult r = f.cpu.Tick(40);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 40);
 
   REQUIRE(r.completed_cycles == 40);
   REQUIRE(f.cpu.GetRegs().P.Z == true);
@@ -299,7 +299,7 @@ TEST_CASE("BIT absolute 16-bit reads N from bit 15 and V from bit 14", "[unit][o
   SetAccumulator16(f.cpu, 0x3FFF);
   SetDataBank(f.cpu, 0x7E);
 
-  TickResult r = f.cpu.Tick(40);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 40);
 
   REQUIRE(r.completed_cycles == 40);
   REQUIRE(f.cpu.GetRegs().P.N == true);
@@ -324,7 +324,7 @@ TEST_CASE("ADC absolute long 8-bit loads from 24-bit address", "[unit][opcode][c
     r.P.C = false;
   });
 
-  TickResult r = f.cpu.Tick(40);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 40);
 
   REQUIRE(r.completed_cycles == 40);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x03);
@@ -342,7 +342,7 @@ TEST_CASE("SBC absolute long 8-bit", "[unit][opcode][cpu][abs]") {
     r.P.C = true;
   });
 
-  TickResult r = f.cpu.Tick(40);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 40);
 
   REQUIRE(r.completed_cycles == 40);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x0F);
@@ -356,7 +356,7 @@ TEST_CASE("AND absolute long 8-bit", "[unit][opcode][cpu][abs]") {
   f.wram.WriteRegister(0x0000, 0xF0, 0);
   f.ModifyRegs([](auto& r) { r.A = 0x00FF; });
 
-  TickResult r = f.cpu.Tick(40);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 40);
 
   REQUIRE(r.completed_cycles == 40);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0xF0);
@@ -370,7 +370,7 @@ TEST_CASE("ORA absolute long 8-bit", "[unit][opcode][cpu][abs]") {
   f.wram.WriteRegister(0x0000, 0x0F, 0);
   f.ModifyRegs([](auto& r) { r.A = 0x00F0; });
 
-  TickResult r = f.cpu.Tick(40);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 40);
 
   REQUIRE(r.completed_cycles == 40);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0xFF);
@@ -384,7 +384,7 @@ TEST_CASE("EOR absolute long 8-bit clears A", "[unit][opcode][cpu][abs]") {
   f.wram.WriteRegister(0x0000, 0xFF, 0);
   f.ModifyRegs([](auto& r) { r.A = 0x00FF; });
 
-  TickResult r = f.cpu.Tick(40);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 40);
 
   REQUIRE(r.completed_cycles == 40);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x00);
@@ -399,7 +399,7 @@ TEST_CASE("CMP absolute long 8-bit equal", "[unit][opcode][cpu][abs]") {
   f.wram.WriteRegister(0x0000, 0x10, 0);
   f.ModifyRegs([](auto& r) { r.A = 0x0010; });
 
-  TickResult r = f.cpu.Tick(40);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 40);
 
   REQUIRE(r.completed_cycles == 40);
   REQUIRE(f.cpu.GetRegs().P.Z == true);
@@ -421,7 +421,7 @@ TEST_CASE("ADC absolute long 16-bit uses 6 cycles", "[unit][opcode][cpu][abs]") 
   SetAccumulator16(f.cpu, 0x1000);
   f.ModifyRegs([](auto& r) { r.P.C = false; });
 
-  TickResult r = f.cpu.Tick(48);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 48);
 
   REQUIRE(r.completed_cycles == 48);
   REQUIRE(f.cpu.GetRegs().A == 0x2234);
@@ -437,7 +437,7 @@ TEST_CASE("SBC absolute long 16-bit", "[unit][opcode][cpu][abs]") {
   SetAccumulator16(f.cpu, 0x0002);
   f.ModifyRegs([](auto& r) { r.P.C = true; });
 
-  TickResult r = f.cpu.Tick(48);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 48);
 
   REQUIRE(r.completed_cycles == 48);
   REQUIRE(f.cpu.GetRegs().A == 0x0001);
@@ -453,7 +453,7 @@ TEST_CASE("AND absolute long 16-bit", "[unit][opcode][cpu][abs]") {
   f.wram.WriteRegister(0x0001, 0xFF, 0);
   SetAccumulator16(f.cpu, 0xFFFF);
 
-  TickResult r = f.cpu.Tick(48);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 48);
 
   REQUIRE(r.completed_cycles == 48);
   REQUIRE(f.cpu.GetRegs().A == 0xFF00);
@@ -469,7 +469,7 @@ TEST_CASE("ORA absolute long 16-bit", "[unit][opcode][cpu][abs]") {
   f.wram.WriteRegister(0x0001, 0x00, 0);
   SetAccumulator16(f.cpu, 0xFF00);
 
-  TickResult r = f.cpu.Tick(48);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 48);
 
   REQUIRE(r.completed_cycles == 48);
   REQUIRE(f.cpu.GetRegs().A == 0xFFFF);
@@ -484,7 +484,7 @@ TEST_CASE("EOR absolute long 16-bit sets Z", "[unit][opcode][cpu][abs]") {
   f.wram.WriteRegister(0x0001, 0xFF, 0);
   SetAccumulator16(f.cpu, 0xFFFF);
 
-  TickResult r = f.cpu.Tick(48);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 48);
 
   REQUIRE(r.completed_cycles == 48);
   REQUIRE(f.cpu.GetRegs().A == 0x0000);
@@ -500,7 +500,7 @@ TEST_CASE("CMP absolute long 16-bit equal", "[unit][opcode][cpu][abs]") {
   f.wram.WriteRegister(0x0001, 0x12, 0);
   SetAccumulator16(f.cpu, 0x1234);
 
-  TickResult r = f.cpu.Tick(48);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 48);
 
   REQUIRE(r.completed_cycles == 48);
   REQUIRE(f.cpu.GetRegs().P.Z == true);
@@ -520,7 +520,7 @@ TEST_CASE("LDA absolute loads 8-bit value from DBR-banked address", "[unit][opco
   f.wram.WriteRegister(0x0040, 0x42, 0);
   SetDataBank(f.cpu, 0x7E);
 
-  TickResult r = f.cpu.Tick(32);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 32);
 
   REQUIRE(r.completed_cycles == 32);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x42);
@@ -533,7 +533,7 @@ TEST_CASE("LDA absolute long loads from 24-bit address", "[unit][opcode][cpu][ab
   f.cpu.Reset();
   f.wram.WriteRegister(0x0000, 0xBB, 0);
 
-  TickResult r = f.cpu.Tick(40);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 40);
 
   REQUIRE(r.completed_cycles == 40);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0xBB);
@@ -547,7 +547,7 @@ TEST_CASE("LDX absolute 8-bit loads X low byte", "[unit][opcode][cpu][abs]") {
   f.wram.WriteRegister(0x0040, 0x55, 0);
   SetDataBank(f.cpu, 0x7E);
 
-  TickResult r = f.cpu.Tick(32);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 32);
 
   REQUIRE(r.completed_cycles == 32);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().X) == 0x55);
@@ -563,7 +563,7 @@ TEST_CASE("LDX absolute 16-bit uses 5-cycle path", "[unit][opcode][cpu][abs]") {
   SetIndex16X(f.cpu, 0x0000);
   SetDataBank(f.cpu, 0x7E);
 
-  TickResult r = f.cpu.Tick(40);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 40);
 
   REQUIRE(r.completed_cycles == 40);
   REQUIRE(f.cpu.GetRegs().X == 0x1234);
@@ -577,7 +577,7 @@ TEST_CASE("LDY absolute 8-bit loads Y low byte", "[unit][opcode][cpu][abs]") {
   f.wram.WriteRegister(0x0040, 0x33, 0);
   SetDataBank(f.cpu, 0x7E);
 
-  TickResult r = f.cpu.Tick(32);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 32);
 
   REQUIRE(r.completed_cycles == 32);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().Y) == 0x33);
@@ -593,7 +593,7 @@ TEST_CASE("LDY absolute 16-bit uses 5-cycle path", "[unit][opcode][cpu][abs]") {
   SetIndex16Y(f.cpu, 0x0000);
   SetDataBank(f.cpu, 0x7E);
 
-  TickResult r = f.cpu.Tick(40);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 40);
 
   REQUIRE(r.completed_cycles == 40);
   REQUIRE(f.cpu.GetRegs().Y == 0xABCD);
@@ -610,7 +610,7 @@ TEST_CASE("CPX absolute equal sets Z and C", "[unit][opcode][cpu][abs]") {
     r.DBR = 0x7E;
   });
 
-  TickResult r = f.cpu.Tick(32);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 32);
 
   REQUIRE(r.completed_cycles == 32);
   REQUIRE(f.cpu.GetRegs().P.Z == true);
@@ -630,7 +630,7 @@ TEST_CASE("CPY absolute Y > operand sets C but not Z", "[unit][opcode][cpu][abs]
     r.DBR = 0x7E;
   });
 
-  TickResult r = f.cpu.Tick(32);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 32);
 
   REQUIRE(r.completed_cycles == 32);
   REQUIRE(f.cpu.GetRegs().P.Z == false);

@@ -32,7 +32,7 @@ TEST_CASE("ADC long,X 8-bit adds indexed operand", "[unit][opcode][cpu][longx]")
     r.P.C = false;
   });
 
-  TickResult r = f.cpu.Tick(46);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 46);
 
   REQUIRE(r.completed_cycles == 46);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x06);
@@ -51,7 +51,7 @@ TEST_CASE("SBC long,X 8-bit subtracts indexed operand", "[unit][opcode][cpu][lon
     r.P.C = true;
   });
 
-  TickResult r = f.cpu.Tick(46);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 46);
 
   REQUIRE(r.completed_cycles == 46);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x0F);
@@ -68,7 +68,7 @@ TEST_CASE("AND long,X 8-bit", "[unit][opcode][cpu][longx]") {
     r.A = 0x00FF;
   });
 
-  TickResult r = f.cpu.Tick(46);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 46);
 
   REQUIRE(r.completed_cycles == 46);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0xF0);
@@ -86,7 +86,7 @@ TEST_CASE("ORA long,X 8-bit", "[unit][opcode][cpu][longx]") {
     r.A = 0x00F0;
   });
 
-  TickResult r = f.cpu.Tick(46);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 46);
 
   REQUIRE(r.completed_cycles == 46);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0xFF);
@@ -103,7 +103,7 @@ TEST_CASE("EOR long,X 8-bit clears to zero", "[unit][opcode][cpu][longx]") {
     r.A = 0x00FF;
   });
 
-  TickResult r = f.cpu.Tick(46);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 46);
 
   REQUIRE(r.completed_cycles == 46);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x00);
@@ -121,7 +121,7 @@ TEST_CASE("CMP long,X 8-bit equal sets Z and C", "[unit][opcode][cpu][longx]") {
     r.A = 0x0042;
   });
 
-  TickResult r = f.cpu.Tick(46);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 46);
 
   REQUIRE(r.completed_cycles == 46);
   REQUIRE(f.cpu.GetRegs().P.Z == true);
@@ -145,7 +145,7 @@ TEST_CASE("LDA long,X 8-bit loads indexed operand", "[unit][opcode][cpu][longx]"
     r.A = 0x0000;
   });
 
-  TickResult r = f.cpu.Tick(46);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 46);
 
   REQUIRE(r.completed_cycles == 46);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x81);
@@ -163,7 +163,7 @@ TEST_CASE("STA long,X 8-bit writes indexed operand", "[unit][opcode][cpu][longx]
     r.A = 0x0055;
   });
 
-  TickResult r = f.cpu.Tick(46);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 46);
 
   REQUIRE(r.completed_cycles == 46);
   REQUIRE(f.wram.ReadRegister(0x0030, 0).value == 0x55);
@@ -186,7 +186,7 @@ TEST_CASE("ADC long,X 16-bit uses 7 cycles", "[unit][opcode][cpu][longx]") {
   f.wram.WriteRegister(0x0010, 0x34, 0);
   f.wram.WriteRegister(0x0011, 0x12, 0);
 
-  TickResult r = f.cpu.Tick(54);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 54);
 
   REQUIRE(r.completed_cycles == 54);
   REQUIRE(f.cpu.GetRegs().A == 0x2234);
@@ -202,7 +202,7 @@ TEST_CASE("LDA long,X 16-bit loads wide operand", "[unit][opcode][cpu][longx]") 
   f.wram.WriteRegister(0x0010, 0xCD, 0);
   f.wram.WriteRegister(0x0011, 0xAB, 0);
 
-  TickResult r = f.cpu.Tick(54);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 54);
 
   REQUIRE(r.completed_cycles == 54);
   REQUIRE(f.cpu.GetRegs().A == 0xABCD);
@@ -225,7 +225,7 @@ TEST_CASE("LDA long,X carries into bank byte on overflow", "[unit][opcode][cpu][
     r.A = 0x0000;
   });
 
-  TickResult r = f.cpu.Tick(46);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 46);
 
   REQUIRE(r.completed_cycles == 46);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x77);
@@ -248,7 +248,7 @@ TEST_CASE("LDA long,X ignores DBR", "[unit][opcode][cpu][longx]") {
     r.A = 0x0000;
   });
 
-  TickResult r = f.cpu.Tick(46);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 46);
 
   REQUIRE(r.completed_cycles == 46);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x33);

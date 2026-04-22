@@ -32,7 +32,7 @@ TEST_CASE("ADC stack-relative 8-bit adds from bank-0 SP+offset", "[unit][opcode]
   });
   f.wram.WriteRegister(0x01F4, 0x05, 0);
 
-  TickResult r = f.cpu.Tick(38);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 38);
 
   REQUIRE(r.completed_cycles == 38);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x06);
@@ -51,7 +51,7 @@ TEST_CASE("SBC stack-relative 8-bit subtracts from stack", "[unit][opcode][cpu][
   });
   f.wram.WriteRegister(0x01F4, 0x01, 0);
 
-  TickResult r = f.cpu.Tick(38);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 38);
 
   REQUIRE(r.completed_cycles == 38);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x0F);
@@ -69,7 +69,7 @@ TEST_CASE("AND stack-relative 8-bit", "[unit][opcode][cpu][sr]") {
   });
   f.wram.WriteRegister(0x01F4, 0xF0, 0);
 
-  TickResult r = f.cpu.Tick(38);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 38);
 
   REQUIRE(r.completed_cycles == 38);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0xF0);
@@ -88,7 +88,7 @@ TEST_CASE("ORA stack-relative 8-bit", "[unit][opcode][cpu][sr]") {
   });
   f.wram.WriteRegister(0x01F4, 0x0F, 0);
 
-  TickResult r = f.cpu.Tick(38);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 38);
 
   REQUIRE(r.completed_cycles == 38);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0xFF);
@@ -106,7 +106,7 @@ TEST_CASE("EOR stack-relative 8-bit clears to zero", "[unit][opcode][cpu][sr]") 
   });
   f.wram.WriteRegister(0x01F4, 0xFF, 0);
 
-  TickResult r = f.cpu.Tick(38);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 38);
 
   REQUIRE(r.completed_cycles == 38);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x00);
@@ -124,7 +124,7 @@ TEST_CASE("CMP stack-relative 8-bit equal result", "[unit][opcode][cpu][sr]") {
   });
   f.wram.WriteRegister(0x01F4, 0x10, 0);
 
-  TickResult r = f.cpu.Tick(38);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 38);
 
   REQUIRE(r.completed_cycles == 38);
   REQUIRE(f.cpu.GetRegs().P.Z == true);
@@ -151,7 +151,7 @@ TEST_CASE("ADC stack-relative 16-bit uses 5 cycles", "[unit][opcode][cpu][sr]") 
   f.wram.WriteRegister(0x01F4, 0x34, 0);
   f.wram.WriteRegister(0x01F5, 0x12, 0);
 
-  TickResult r = f.cpu.Tick(46);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 46);
 
   REQUIRE(r.completed_cycles == 46);
   REQUIRE(f.cpu.GetRegs().A == 0x2234);
@@ -170,7 +170,7 @@ TEST_CASE("SBC stack-relative 16-bit", "[unit][opcode][cpu][sr]") {
   f.wram.WriteRegister(0x01F4, 0x01, 0);
   f.wram.WriteRegister(0x01F5, 0x00, 0);
 
-  TickResult r = f.cpu.Tick(46);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 46);
 
   REQUIRE(r.completed_cycles == 46);
   REQUIRE(f.cpu.GetRegs().A == 0x0001);
@@ -187,7 +187,7 @@ TEST_CASE("AND stack-relative 16-bit", "[unit][opcode][cpu][sr]") {
   f.wram.WriteRegister(0x01F4, 0x00, 0);
   f.wram.WriteRegister(0x01F5, 0xFF, 0);
 
-  TickResult r = f.cpu.Tick(46);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 46);
 
   REQUIRE(r.completed_cycles == 46);
   REQUIRE(f.cpu.GetRegs().A == 0xFF00);
@@ -204,7 +204,7 @@ TEST_CASE("ORA stack-relative 16-bit", "[unit][opcode][cpu][sr]") {
   f.wram.WriteRegister(0x01F4, 0xFF, 0);
   f.wram.WriteRegister(0x01F5, 0x00, 0);
 
-  TickResult r = f.cpu.Tick(46);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 46);
 
   REQUIRE(r.completed_cycles == 46);
   REQUIRE(f.cpu.GetRegs().A == 0x00FF);
@@ -221,7 +221,7 @@ TEST_CASE("EOR stack-relative 16-bit sets Z", "[unit][opcode][cpu][sr]") {
   f.wram.WriteRegister(0x01F4, 0xFF, 0);
   f.wram.WriteRegister(0x01F5, 0xFF, 0);
 
-  TickResult r = f.cpu.Tick(46);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 46);
 
   REQUIRE(r.completed_cycles == 46);
   REQUIRE(f.cpu.GetRegs().A == 0x0000);
@@ -238,7 +238,7 @@ TEST_CASE("CMP stack-relative 16-bit equal", "[unit][opcode][cpu][sr]") {
   f.wram.WriteRegister(0x01F4, 0x34, 0);
   f.wram.WriteRegister(0x01F5, 0x12, 0);
 
-  TickResult r = f.cpu.Tick(46);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 46);
 
   REQUIRE(r.completed_cycles == 46);
   REQUIRE(f.cpu.GetRegs().P.Z == true);
@@ -265,7 +265,7 @@ TEST_CASE("ADC stack-relative does not pay DL-nonzero penalty", "[unit][opcode][
   });
   f.wram.WriteRegister(0x01F4, 0x05, 0);
 
-  TickResult r = f.cpu.Tick(38);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 38);
 
   REQUIRE(r.completed_cycles == 38);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x06);

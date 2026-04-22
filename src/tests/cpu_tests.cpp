@@ -7,11 +7,9 @@
 #include "pupsnes/hw/5a22/cpu.h"
 #include "pupsnes/hw/cartridge.h"
 #include "pupsnes/hw/device.h"
-#include "pupsnes/hw/scheduler.h"
 #include "pupsnes/hw/snes.h"
 #include "pupsnes/hw/systembus.h"
 #include "pupsnes/hw/wram.h"
-#include "scheduler_test_access.h"
 
 using namespace pupsnes;  // NOLINT(google-build-using-namespace)
 
@@ -21,9 +19,6 @@ class TestROM : public Device {
   std::array<uint8_t, kSize> mem{};
 
   explicit TestROM(SNES* snes) : Device(snes) {}
-
-  TickResult Tick(TimeMasterDeltaT budget) override { return {budget, TickStopReason::kBudgetExhausted}; }
-  void OnEvent(const SchedulerEvent&) override {}
 
   MmioReadResult ReadRegister(uint32_t offset, TimeMasterT /*current_time*/) override {
     return {mem[offset % kSize], 0xFFU};
@@ -41,8 +36,7 @@ class ObservedMMIO : public Device {
 
   explicit ObservedMMIO(SNES* snes) : Device(snes) {}
 
-  TickResult Tick(TimeMasterDeltaT budget) override { return {budget, TickStopReason::kBudgetExhausted}; }
-  void OnEvent(const SchedulerEvent&) override {}
+  void CatchUpTo(TimeMasterT target) override { local_time_ = target; }
 
   MmioReadResult ReadRegister(uint32_t offset, TimeMasterT /*current_time*/) override {
     read_times.push_back(GetTime());
@@ -91,20 +85,6 @@ struct MMIOProgramFixture {
     for (uint8_t b : bytes) {
       program.mem[i++ & 0x1FFu] = b;
     }
-  }
-};
-
-struct AsyncProgramFixture {
-  SNES snes;
-  TestROM async_target{&snes};
-  CPU cpu{&snes};
-
-  AsyncProgramFixture() {
-    snes.system_bus->MapPage({0x00, 0x80, async_target.GetDeviceId(), 0x000, PageDeviceKind::kCrossClockMmio, 8});
-
-    auto r = cpu.GetRegs();
-    r.PC = 0x8000;
-    cpu.SetRegs(r);
   }
 };
 
@@ -182,7 +162,7 @@ TEST_CASE(
     r.P.D = true;
     r.P.C = true;
   });
-  (void)f.cpu.Tick(8);
+  (void)f.cpu.TickToTarget(f.snes.GetMasterTime() + 8);
   REQUIRE(f.cpu.GetMicroOpIndex() == 1);
 
   f.cpu.Reset();
@@ -200,10 +180,10 @@ TEST_CASE("CPU executes from the cartridge after reset", "[cpu]") {
   f.LoadInstruction({0xA9, 0x42});
 
   f.cpu.Reset();
-  TickResult r = f.cpu.Tick(16);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 16);
 
   REQUIRE(r.completed_cycles == 16);
-  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(r.reason == TickStopReason::kReachedTarget);
   REQUIRE(f.cpu.GetRegs().PC == 0x8002);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x42);
 }
@@ -217,10 +197,10 @@ TEST_CASE("BRA branches relative to the post-operand PC", "[cpu]") {
   f.SyncCartridge();
 
   f.cpu.Reset();
-  TickResult r = f.cpu.Tick(38);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 38);
 
   REQUIRE(r.completed_cycles == 38);
-  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(r.reason == TickStopReason::kReachedTarget);
   REQUIRE(f.cpu.GetRegs().PC == 0x8006);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x7F);
 }
@@ -230,10 +210,10 @@ TEST_CASE("BRA supports negative displacements for tight loops", "[cpu]") {
   f.LoadInstruction({0x80, 0xFE});
 
   f.cpu.Reset();
-  TickResult r = f.cpu.Tick(44);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 44);
 
   REQUIRE(r.completed_cycles == 44);
-  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(r.reason == TickStopReason::kReachedTarget);
   REQUIRE(f.cpu.GetRegs().PC == 0x8000);
 }
 
@@ -252,7 +232,7 @@ TEST_CASE("BNE not taken in emulation with DP-low nonzero does not spuriously ad
     r.DP = 0x0055;  // DL nonzero would spuriously set bit 4 without the fix
   });
 
-  TickResult r = f.cpu.Tick(16);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 16);
 
   REQUIRE(r.completed_cycles == 16);
   REQUIRE(f.cpu.GetRegs().PC == 0x8002);
@@ -265,10 +245,10 @@ TEST_CASE("BNE not taken falls through without the guarded branch cycle", "[cpu]
   f.cpu.Reset();
   f.ModifyRegs([](auto& r) { r.P.Z = true; });
 
-  TickResult r = f.cpu.Tick(16);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 16);
 
   REQUIRE(r.completed_cycles == 16);
-  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(r.reason == TickStopReason::kReachedTarget);
   REQUIRE(f.cpu.GetRegs().PC == 0x8002);
   REQUIRE(f.cpu.GetMicroOpIndex() == 0);
 }
@@ -282,10 +262,10 @@ TEST_CASE("BNE taken executes the guarded branch cycle", "[cpu]") {
   f.SyncCartridge();
 
   f.cpu.Reset();
-  TickResult r = f.cpu.Tick(38);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 38);
 
   REQUIRE(r.completed_cycles == 38);
-  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(r.reason == TickStopReason::kReachedTarget);
   REQUIRE(f.cpu.GetRegs().PC == 0x8006);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x7F);
 }
@@ -295,10 +275,10 @@ TEST_CASE("BNE supports negative displacements for tight loops", "[cpu]") {
   f.LoadInstruction({0xD0, 0xFE});
 
   f.cpu.Reset();
-  TickResult r = f.cpu.Tick(44);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 44);
 
   REQUIRE(r.completed_cycles == 44);
-  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(r.reason == TickStopReason::kReachedTarget);
   REQUIRE(f.cpu.GetRegs().PC == 0x8000);
 }
 
@@ -310,10 +290,10 @@ TEST_CASE("BRA adds a penalty cycle when a taken branch crosses a page in emulat
   f.SyncCartridge();
 
   f.cpu.Reset();
-  TickResult r = f.cpu.Tick(28);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 28);
 
   REQUIRE(r.completed_cycles == 28);
-  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(r.reason == TickStopReason::kReachedTarget);
   REQUIRE(f.cpu.GetRegs().PC == 0x8103);
 }
 
@@ -327,10 +307,10 @@ TEST_CASE("BRA page-cross penalty does not fire in native mode", "[cpu]") {
   f.cpu.Reset();
   f.ModifyRegs([](auto& r) { r.P.E = false; });
 
-  TickResult r = f.cpu.Tick(22);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 22);
 
   REQUIRE(r.completed_cycles == 22);
-  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(r.reason == TickStopReason::kReachedTarget);
   REQUIRE(f.cpu.GetRegs().PC == 0x8103);
 }
 
@@ -342,10 +322,10 @@ TEST_CASE("BNE taken with page cross in emulation mode consumes the penalty cycl
   f.SyncCartridge();
 
   f.cpu.Reset();
-  TickResult r = f.cpu.Tick(28);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 28);
 
   REQUIRE(r.completed_cycles == 28);
-  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(r.reason == TickStopReason::kReachedTarget);
   REQUIRE(f.cpu.GetRegs().PC == 0x8103);
 }
 
@@ -354,10 +334,10 @@ TEST_CASE("STA long writes accumulator low byte to mapped WRAM", "[cpu]") {
   f.LoadInstruction({0xA9, 0x5A, 0x8F, 0x00, 0x00, 0x7E});
 
   f.cpu.Reset();
-  TickResult r = f.cpu.Tick(56);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 56);
 
   REQUIRE(r.completed_cycles == 56);
-  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(r.reason == TickStopReason::kReachedTarget);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x5A);
   REQUIRE(f.cpu.GetRegs().PC == 0x8006);
   REQUIRE(f.wram.Peek(0x0000) == 0x5A);
@@ -373,10 +353,10 @@ TEST_CASE("STA absolute uses DBR and writes accumulator low byte to WRAM", "[cpu
     r.DBR = 0x7E;
   });
 
-  TickResult r = f.cpu.Tick(32);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 32);
 
   REQUIRE(r.completed_cycles == 32);
-  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(r.reason == TickStopReason::kReachedTarget);
   REQUIRE(f.cpu.GetRegs().PC == 0x8003);
   REQUIRE(f.wram.Peek(0x0000) == 0x5A);
 }
@@ -389,10 +369,10 @@ TEST_CASE("STX absolute uses DBR and writes X low byte to WRAM", "[cpu]") {
   SetDataBank(f.cpu, 0x7E);
   f.ModifyRegs([](auto& r) { r.X = 0x0034; });
 
-  TickResult r = f.cpu.Tick(32);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 32);
 
   REQUIRE(r.completed_cycles == 32);
-  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(r.reason == TickStopReason::kReachedTarget);
   REQUIRE(f.cpu.GetRegs().PC == 0x8003);
   REQUIRE(f.wram.Peek(0x0001) == 0x34);
 }
@@ -405,10 +385,10 @@ TEST_CASE("STY absolute uses DBR and writes Y low byte to WRAM", "[cpu]") {
   SetDataBank(f.cpu, 0x7E);
   f.ModifyRegs([](auto& r) { r.Y = 0x0078; });
 
-  TickResult r = f.cpu.Tick(32);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 32);
 
   REQUIRE(r.completed_cycles == 32);
-  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(r.reason == TickStopReason::kReachedTarget);
   REQUIRE(f.cpu.GetRegs().PC == 0x8003);
   REQUIRE(f.wram.Peek(0x0002) == 0x78);
 }
@@ -420,10 +400,10 @@ TEST_CASE("STA long writes both accumulator bytes when M is clear", "[cpu]") {
   f.cpu.Reset();
   SetAccumulator16(f.cpu, 0xBEEF);
 
-  TickResult r = f.cpu.Tick(48);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 48);
 
   REQUIRE(r.completed_cycles == 48);
-  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(r.reason == TickStopReason::kReachedTarget);
   REQUIRE(f.cpu.GetRegs().PC == 0x8004);
   REQUIRE(f.wram.Peek(0x0000) == 0xEF);
   REQUIRE(f.wram.Peek(0x0001) == 0xBE);
@@ -437,10 +417,10 @@ TEST_CASE("STX absolute writes both index bytes when X is clear", "[cpu]") {
   SetDataBank(f.cpu, 0x7E);
   SetIndex16X(f.cpu, 0x1234);
 
-  TickResult r = f.cpu.Tick(40);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 40);
 
   REQUIRE(r.completed_cycles == 40);
-  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(r.reason == TickStopReason::kReachedTarget);
   REQUIRE(f.cpu.GetRegs().PC == 0x8003);
   REQUIRE(f.wram.Peek(0x0010) == 0x34);
   REQUIRE(f.wram.Peek(0x0011) == 0x12);
@@ -454,10 +434,10 @@ TEST_CASE("STY absolute writes both index bytes when X is clear", "[cpu]") {
   SetDataBank(f.cpu, 0x7E);
   SetIndex16Y(f.cpu, 0xABCD);
 
-  TickResult r = f.cpu.Tick(40);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 40);
 
   REQUIRE(r.completed_cycles == 40);
-  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(r.reason == TickStopReason::kReachedTarget);
   REQUIRE(f.cpu.GetRegs().PC == 0x8003);
   REQUIRE(f.wram.Peek(0x0020) == 0xCD);
   REQUIRE(f.wram.Peek(0x0021) == 0xAB);
@@ -471,10 +451,10 @@ TEST_CASE("STA absolute writes both accumulator bytes when M is clear", "[cpu]")
   SetDataBank(f.cpu, 0x7E);
   SetAccumulator16(f.cpu, 0xCAFE);
 
-  TickResult r = f.cpu.Tick(40);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 40);
 
   REQUIRE(r.completed_cycles == 40);
-  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(r.reason == TickStopReason::kReachedTarget);
   REQUIRE(f.cpu.GetRegs().PC == 0x8003);
   REQUIRE(f.wram.Peek(0x0030) == 0xFE);
   REQUIRE(f.wram.Peek(0x0031) == 0xCA);
@@ -485,10 +465,10 @@ TEST_CASE("STA direct page writes accumulator low byte with DP=0 and no DL penal
   f.LoadInstruction({0xA9, 0x5A, 0x85, 0x10});
 
   f.cpu.Reset();
-  TickResult r = f.cpu.Tick(40);  // LDA#2 + STA dp (3 with M=1,DL=0)
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 40);  // LDA#2 + STA dp (3 with M=1,DL=0)
 
   REQUIRE(r.completed_cycles == 40);
-  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(r.reason == TickStopReason::kReachedTarget);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x5A);
   REQUIRE(f.cpu.GetRegs().PC == 0x8004);
   REQUIRE(f.wram.Peek(0x0010) == 0x5A);
@@ -504,10 +484,10 @@ TEST_CASE("STA direct page incurs +1 cycle penalty when DP low byte is nonzero",
     r.DP = 0x0020;  // DL nonzero → +1 cycle
   });
 
-  TickResult r = f.cpu.Tick(30);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 30);
 
   REQUIRE(r.completed_cycles == 30);
-  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(r.reason == TickStopReason::kReachedTarget);
   REQUIRE(f.cpu.GetRegs().PC == 0x8002);
   REQUIRE(f.wram.Peek(0x0030) == 0xA7);
 }
@@ -523,10 +503,10 @@ TEST_CASE("STA direct page writes both accumulator bytes when M is clear", "[cpu
     r.A = 0xBEEF;
   });
 
-  TickResult r = f.cpu.Tick(32);  // 4-m+w with m=0,w=0 = 4
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 32);  // 4-m+w with m=0,w=0 = 4
 
   REQUIRE(r.completed_cycles == 32);
-  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(r.reason == TickStopReason::kReachedTarget);
   REQUIRE(f.cpu.GetRegs().PC == 0x8002);
   REQUIRE(f.wram.Peek(0x0040) == 0xEF);
   REQUIRE(f.wram.Peek(0x0041) == 0xBE);
@@ -539,10 +519,10 @@ TEST_CASE("LDA direct page loads from bank 0 (DP + offset)", "[cpu]") {
   f.cpu.Reset();
   f.wram.WriteRegister(0x0050, 0x42, 0);
 
-  TickResult r = f.cpu.Tick(24);  // 4-m+w with m=1,w=0 = 3
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 24);  // 4-m+w with m=1,w=0 = 3
 
   REQUIRE(r.completed_cycles == 24);
-  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(r.reason == TickStopReason::kReachedTarget);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x42);
   REQUIRE(f.cpu.GetRegs().PC == 0x8002);
   REQUIRE(f.cpu.GetRegs().P.N == false);
@@ -561,10 +541,10 @@ TEST_CASE("LDA direct page loads 16-bit value when M is clear", "[cpu]") {
     r.P.M = false;
   });
 
-  TickResult r = f.cpu.Tick(32);  // 4-m+w with m=0,w=0 = 4
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 32);  // 4-m+w with m=0,w=0 = 4
 
   REQUIRE(r.completed_cycles == 32);
-  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(r.reason == TickStopReason::kReachedTarget);
   REQUIRE(f.cpu.GetRegs().A == 0xABCD);
   REQUIRE(f.cpu.GetRegs().PC == 0x8002);
   REQUIRE(f.cpu.GetRegs().P.N == true);
@@ -581,10 +561,10 @@ TEST_CASE("LDA direct page incurs DL-nonzero penalty cycle", "[cpu]") {
   });
   f.wram.WriteRegister(0x0133, 0x99, 0);
 
-  TickResult r = f.cpu.Tick(30);  // 4-m+w = 3 + w(1) = 4
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 30);  // 4-m+w = 3 + w(1) = 4
 
   REQUIRE(r.completed_cycles == 30);
-  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(r.reason == TickStopReason::kReachedTarget);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x99);
   REQUIRE(f.cpu.GetRegs().PC == 0x8002);
 }
@@ -600,10 +580,10 @@ TEST_CASE("LDX/LDY/STX/STY/STZ direct page cover register + zero paths", "[cpu]"
   f.wram.WriteRegister(0x0012, 0xFF, 0);  // STZ should overwrite this
 
   // Each op is 3 cycles (M=1/X=1, DL=0) = 15 total.
-  TickResult r = f.cpu.Tick(120);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 120);
 
   REQUIRE(r.completed_cycles == 120);
-  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(r.reason == TickStopReason::kReachedTarget);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().X) == 0x7A);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().Y) == 0x2B);
   REQUIRE(f.wram.Peek(0x0014) == 0x7A);
@@ -624,10 +604,10 @@ TEST_CASE("STZ direct page writes zero to both DP bytes when M is clear", "[cpu]
     r.P.M = false;
   });
 
-  TickResult r = f.cpu.Tick(32);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 32);
 
   REQUIRE(r.completed_cycles == 32);
-  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(r.reason == TickStopReason::kReachedTarget);
   REQUIRE(f.wram.Peek(0x0020) == 0x00);
   REQUIRE(f.wram.Peek(0x0021) == 0x00);
 }
@@ -642,10 +622,10 @@ TEST_CASE("LDA direct page indexed X reads (DP + offset + X) in bank 0", "[cpu]"
   });
   f.wram.WriteRegister(0x002A, 0x55, 0);
 
-  TickResult r = f.cpu.Tick(30);  // 5-m+w with m=1,w=0 = 4
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 30);  // 5-m+w with m=1,w=0 = 4
 
   REQUIRE(r.completed_cycles == 30);
-  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(r.reason == TickStopReason::kReachedTarget);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x55);
   REQUIRE(f.cpu.GetRegs().PC == 0x8002);
 }
@@ -659,10 +639,10 @@ TEST_CASE("LDX direct page indexed Y respects 16-bit index addition", "[cpu]") {
   f.wram.WriteRegister(0x0090, 0xCD, 0);
   f.wram.WriteRegister(0x0091, 0xAB, 0);
 
-  TickResult r = f.cpu.Tick(46);  // 5-x+w with x=0,w=0 = 5
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 46);  // 5-x+w with x=0,w=0 = 5
 
   REQUIRE(r.completed_cycles == 46);
-  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(r.reason == TickStopReason::kReachedTarget);
   REQUIRE(f.cpu.GetRegs().X == 0xABCD);
 }
 
@@ -677,10 +657,10 @@ TEST_CASE("STA direct page indexed X incurs DL-nonzero penalty", "[cpu]") {
     r.DP = 0x0040;  // DL nonzero → +1 cycle
   });
 
-  TickResult r = f.cpu.Tick(44);  // 5-m+w with m=1,w=1 = 5
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 44);  // 5-m+w with m=1,w=1 = 5
 
   REQUIRE(r.completed_cycles == 44);
-  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(r.reason == TickStopReason::kReachedTarget);
   REQUIRE(f.wram.Peek(0x0052) == 0x3C);
 }
 
@@ -692,10 +672,10 @@ TEST_CASE("STZ direct page indexed X clears bank 0 byte", "[cpu]") {
   f.ModifyRegs([](auto& r) { r.X = 0x0004; });
   f.wram.WriteRegister(0x0034, 0x77, 0);
 
-  TickResult r = f.cpu.Tick(38);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 38);
 
   REQUIRE(r.completed_cycles == 38);
-  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(r.reason == TickStopReason::kReachedTarget);
   REQUIRE(f.wram.Peek(0x0034) == 0x00);
 }
 
@@ -709,10 +689,10 @@ TEST_CASE("STZ absolute writes zero through DBR-banked effective address", "[cpu
   f.wram.WriteRegister(0x1234, 0xAB, 0);
 
   // 5-m with m=1 = 4 cycles.
-  TickResult r = f.cpu.Tick(32);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 32);
 
   REQUIRE(r.completed_cycles == 32);
-  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(r.reason == TickStopReason::kReachedTarget);
   REQUIRE(f.wram.Peek(0x1234) == 0x00);
   REQUIRE(f.cpu.GetRegs().PC == 0x8003);
 }
@@ -728,10 +708,10 @@ TEST_CASE("STZ absolute clears both bytes when M is clear", "[cpu]") {
   f.wram.WriteRegister(0x0041, 0xBB, 0);
 
   // 5-m with m=0 = 5 cycles.
-  TickResult r = f.cpu.Tick(40);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 40);
 
   REQUIRE(r.completed_cycles == 40);
-  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(r.reason == TickStopReason::kReachedTarget);
   REQUIRE(f.wram.Peek(0x0040) == 0x00);
   REQUIRE(f.wram.Peek(0x0041) == 0x00);
 }
@@ -749,10 +729,10 @@ TEST_CASE("STZ absolute indexed X adds X into the DBR-banked effective address",
   f.wram.WriteRegister(0x1234, 0x99, 0);
 
   // 6-m with m=1 = 5 cycles.
-  TickResult r = f.cpu.Tick(38);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 38);
 
   REQUIRE(r.completed_cycles == 38);
-  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(r.reason == TickStopReason::kReachedTarget);
   REQUIRE(f.wram.Peek(0x1234) == 0x00);
   REQUIRE(f.cpu.GetRegs().PC == 0x8003);
 }
@@ -774,10 +754,10 @@ TEST_CASE("STZ absolute indexed X carries across the bank boundary", "[cpu]") {
   // Prime WRAM $10000 (bank 0x7F:$0000) with nonzero so we can see the clear.
   f.wram.WriteRegister(0x10000, 0xDD, 0);
 
-  TickResult r = f.cpu.Tick(46);  // 6-m with m=1 = 5
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 46);  // 6-m with m=1 = 5
 
   REQUIRE(r.completed_cycles == 46);
-  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(r.reason == TickStopReason::kReachedTarget);
   REQUIRE(f.wram.Peek(0xFFFF) == 0xCC);
   REQUIRE(f.wram.Peek(0x10000) == 0x00);
 }
@@ -790,7 +770,7 @@ TEST_CASE("LDA stack-relative reads bank-0 (SP + offset)", "[cpu]") {
   f.ModifyRegs([](auto& r) { r.SP = 0x01F0; });
   f.wram.WriteRegister(0x01F4, 0x66, 0);
 
-  TickResult r = f.cpu.Tick(38);  // 5-m at m=1 = 4
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 38);  // 5-m at m=1 = 4
 
   REQUIRE(r.completed_cycles == 38);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x66);
@@ -806,7 +786,7 @@ TEST_CASE("STA stack-relative writes to bank-0 (SP + offset)", "[cpu]") {
     r.A = 0x0088;
   });
 
-  TickResult r = f.cpu.Tick(38);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 38);
 
   REQUIRE(r.completed_cycles == 38);
   REQUIRE(f.wram.Peek(0x0203) == 0x88);
@@ -823,7 +803,7 @@ TEST_CASE("STA absolute indexed X writes to DBR:(abs + X)", "[cpu]") {
     r.A = 0x0044;
   });
 
-  TickResult r = f.cpu.Tick(46);  // 6-m at m=1 = 5
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 46);  // 6-m at m=1 = 5
 
   REQUIRE(r.completed_cycles == 46);
   REQUIRE(f.wram.Peek(0x0020) == 0x44);
@@ -840,7 +820,7 @@ TEST_CASE("STA absolute indexed X can cross bank boundary", "[cpu]") {
     r.A = 0x005A;
   });
 
-  TickResult r = f.cpu.Tick(46);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 46);
 
   REQUIRE(r.completed_cycles == 46);
   // DBR=$7E, addr = $7EFFFE + 3 = $7F0001 → WRAM offset 0x10001
@@ -858,7 +838,7 @@ TEST_CASE("STZ absolute indexed X clears a bank-0 byte", "[cpu]") {
   });
   f.wram.WriteRegister(0x0044, 0x99, 0);
 
-  TickResult r = f.cpu.Tick(46);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 46);
 
   REQUIRE(r.completed_cycles == 46);
   REQUIRE(f.wram.Peek(0x0044) == 0x00);
@@ -874,7 +854,7 @@ TEST_CASE("LDA direct indirect reads through pointer at DBR:(high:low)", "[cpu]"
   f.wram.WriteRegister(0x0011, 0x12, 0);
   f.wram.WriteRegister(0x1234, 0x99, 0);
 
-  TickResult r = f.cpu.Tick(40);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 40);
 
   REQUIRE(r.completed_cycles == 40);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x99);
@@ -895,7 +875,7 @@ TEST_CASE("LDA direct indirect reads 16 bits when M is clear", "[cpu]") {
   f.wram.WriteRegister(0x2000, 0xCD, 0);
   f.wram.WriteRegister(0x2001, 0xAB, 0);
 
-  TickResult r = f.cpu.Tick(48);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 48);
 
   REQUIRE(r.completed_cycles == 48);
   REQUIRE(f.cpu.GetRegs().A == 0xABCD);
@@ -913,7 +893,7 @@ TEST_CASE("STA direct indirect writes through pointer", "[cpu]") {
   f.wram.WriteRegister(0x0030, 0x00, 0);
   f.wram.WriteRegister(0x0031, 0x40, 0);
 
-  TickResult r = f.cpu.Tick(40);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 40);
 
   REQUIRE(r.completed_cycles == 40);
   REQUIRE(f.wram.Peek(0x4000) == 0x44);
@@ -929,7 +909,7 @@ TEST_CASE("LDA direct indirect long reads through 24-bit pointer", "[cpu]") {
   f.wram.WriteRegister(0x0042, 0x7E, 0);
   f.wram.WriteRegister(0x3010, 0x11, 0);
 
-  TickResult r = f.cpu.Tick(48);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 48);
 
   REQUIRE(r.completed_cycles == 48);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x11);
@@ -945,7 +925,7 @@ TEST_CASE("STA direct indirect long writes through 24-bit pointer", "[cpu]") {
   f.wram.WriteRegister(0x0051, 0x50, 0);
   f.wram.WriteRegister(0x0052, 0x7E, 0);
 
-  TickResult r = f.cpu.Tick(48);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 48);
 
   REQUIRE(r.completed_cycles == 48);
   REQUIRE(f.wram.Peek(0x5000) == 0x77);
@@ -964,7 +944,7 @@ TEST_CASE("LDA direct indirect with DP-nonzero adds DL penalty cycle", "[cpu]") 
   f.wram.WriteRegister(0x0091, 0x60, 0);
   f.wram.WriteRegister(0x6000, 0x55, 0);
 
-  TickResult r = f.cpu.Tick(48);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 48);
 
   REQUIRE(r.completed_cycles == 48);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x55);
@@ -978,10 +958,10 @@ TEST_CASE("STA absolute 16-bit high-byte write carries into the next bank at $FF
   SetDataBank(f.cpu, 0x7E);
   SetAccumulator16(f.cpu, 0xBEEF);
 
-  TickResult r = f.cpu.Tick(40);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 40);
 
   REQUIRE(r.completed_cycles == 40);
-  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(r.reason == TickStopReason::kReachedTarget);
   REQUIRE(f.cpu.GetRegs().PC == 0x8003);
   REQUIRE(f.wram.Peek(0xFFFF) == 0xEF);
   REQUIRE(f.wram.Peek(0x10000) == 0xBE);
@@ -992,10 +972,10 @@ TEST_CASE("PHA 8-bit pushes accumulator low byte and decrements SP", "[cpu]") {
   f.LoadInstruction({0xA9, 0x42, 0x48});
 
   f.cpu.Reset();
-  TickResult r = f.cpu.Tick(38);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 38);
 
   REQUIRE(r.completed_cycles == 38);
-  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(r.reason == TickStopReason::kReachedTarget);
   REQUIRE(f.cpu.GetRegs().PC == 0x8003);
   REQUIRE(f.cpu.GetRegs().SP == 0x01FE);
   REQUIRE(f.wram.Peek(0x01FF) == 0x42);
@@ -1011,10 +991,10 @@ TEST_CASE("PHA 8-bit in emulation mode wraps SP across page 1", "[cpu]") {
     r.SP = 0x0100;
   });
 
-  TickResult r = f.cpu.Tick(30);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 30);
 
   REQUIRE(r.completed_cycles == 30);
-  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(r.reason == TickStopReason::kReachedTarget);
   REQUIRE(f.cpu.GetRegs().SP == 0x01FF);
   REQUIRE(f.wram.Peek(0x0100) == 0x7A);
 }
@@ -1026,10 +1006,10 @@ TEST_CASE("PHA 16-bit pushes both accumulator bytes when M is clear", "[cpu]") {
   f.cpu.Reset();
   SetAccumulator16(f.cpu, 0xBEEF);
 
-  TickResult r = f.cpu.Tick(38);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 38);
 
   REQUIRE(r.completed_cycles == 38);
-  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(r.reason == TickStopReason::kReachedTarget);
   REQUIRE(f.cpu.GetRegs().SP == 0x01FD);
   REQUIRE(f.wram.Peek(0x01FF) == 0xBE);
   REQUIRE(f.wram.Peek(0x01FE) == 0xEF);
@@ -1042,10 +1022,10 @@ TEST_CASE("PHB pushes data bank register and decrements SP", "[cpu]") {
   f.cpu.Reset();
   SetDataBank(f.cpu, 0x7E);
 
-  TickResult r = f.cpu.Tick(22);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 22);
 
   REQUIRE(r.completed_cycles == 22);
-  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(r.reason == TickStopReason::kReachedTarget);
   REQUIRE(f.cpu.GetRegs().PC == 0x8001);
   REQUIRE(f.cpu.GetRegs().DBR == 0x7E);
   REQUIRE(f.cpu.GetRegs().SP == 0x01FE);
@@ -1065,10 +1045,10 @@ TEST_CASE("PLB pulls data bank register from stack and updates DBR and flags", "
     r.P.Z = true;
   });
 
-  TickResult r = f.cpu.Tick(28);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 28);
 
   REQUIRE(r.completed_cycles == 28);
-  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(r.reason == TickStopReason::kReachedTarget);
   REQUIRE(f.cpu.GetRegs().PC == 0x8001);
   REQUIRE(f.cpu.GetRegs().DBR == 0x42);
   REQUIRE(f.cpu.GetRegs().SP == 0x01FF);
@@ -1087,7 +1067,7 @@ TEST_CASE("PLB sets Z when pulled value is zero", "[cpu]") {
     r.DBR = 0x7E;
   });
 
-  TickResult r = f.cpu.Tick(36);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 36);
 
   REQUIRE(r.completed_cycles == 36);
   REQUIRE(f.cpu.GetRegs().DBR == 0x00);
@@ -1103,7 +1083,7 @@ TEST_CASE("PLB sets N when pulled value has bit 7 set", "[cpu]") {
   f.wram.WriteRegister(0x01FF, 0x80, 0);
   f.ModifyRegs([](auto& r) { r.SP = 0x01FE; });
 
-  TickResult r = f.cpu.Tick(36);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 36);
 
   REQUIRE(r.completed_cycles == 36);
   REQUIRE(f.cpu.GetRegs().DBR == 0x80);
@@ -1119,7 +1099,7 @@ TEST_CASE("PLB in emulation mode wraps SP across page 1", "[cpu]") {
   f.wram.WriteRegister(0x0100, 0x33, 0);
   f.ModifyRegs([](auto& r) { r.SP = 0x01FF; });
 
-  TickResult r = f.cpu.Tick(36);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 36);
 
   REQUIRE(r.completed_cycles == 36);
   REQUIRE(f.cpu.GetRegs().DBR == 0x33);
@@ -1133,57 +1113,56 @@ TEST_CASE("PHB followed by PLB restores DBR", "[cpu]") {
   f.cpu.Reset();
   SetDataBank(f.cpu, 0x7E);
 
-  TickResult r = f.cpu.Tick(50);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 50);
 
   REQUIRE(r.completed_cycles == 50);
-  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(r.reason == TickStopReason::kReachedTarget);
   REQUIRE(f.cpu.GetRegs().PC == 0x8002);
   REQUIRE(f.cpu.GetRegs().DBR == 0x7E);
   REQUIRE(f.cpu.GetRegs().SP == 0x01FF);
 }
 
-TEST_CASE("Direct CPU tick advances execution state but not committed device time", "[cpu]") {
+TEST_CASE("Two consecutive TickToTarget calls compose correctly", "[cpu]") {
   TestFixture f;
   f.LoadAt(0, {0xEA, 0xA9, 0x42});
 
-  TickResult r1 = f.cpu.Tick(14);
+  TickResult r1 = f.cpu.TickToTarget(f.snes.GetMasterTime() + 14);
   REQUIRE(r1.completed_cycles == 14);
-  REQUIRE(r1.reason == TickStopReason::kBudgetExhausted);
+  REQUIRE(r1.reason == TickStopReason::kReachedTarget);
   REQUIRE(f.cpu.GetRegs().PC == 0x8001);
-  REQUIRE(f.cpu.GetTime() == 0);
+  REQUIRE(f.cpu.GetTime() == 14);
 
-  TickResult r2 = f.cpu.Tick(16);
+  TickResult r2 = f.cpu.TickToTarget(f.snes.GetMasterTime() + 16);
   REQUIRE(r2.completed_cycles == 16);
   REQUIRE(f.cpu.GetRegs().PC == 0x8003);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x42);
-  REQUIRE(f.cpu.GetTime() == 0);
+  REQUIRE(f.cpu.GetTime() == 30);
 }
 
-TEST_CASE("NOP tick slices still compose correctly without local_time mutation", "[cpu]") {
+TEST_CASE("NOP tick slices still compose correctly across boundaries", "[cpu]") {
   TestFixture f;
   f.LoadAt(0, {0xEA, 0xEA});
 
-  (void)f.cpu.Tick(8);
+  (void)f.cpu.TickToTarget(f.snes.GetMasterTime() + 8);
   REQUIRE(f.cpu.GetMicroOpIndex() == 1);
   REQUIRE(f.cpu.GetRegs().PC == 0x8001);
-  REQUIRE(f.cpu.GetTime() == 0);
+  REQUIRE(f.cpu.GetTime() == 8);
 
-  (void)f.cpu.Tick(6);
+  (void)f.cpu.TickToTarget(f.snes.GetMasterTime() + 6);
   REQUIRE(f.cpu.GetMicroOpIndex() == 0);
   REQUIRE(f.cpu.GetRegs().PC == 0x8001);
-  REQUIRE(f.cpu.GetTime() == 0);
+  REQUIRE(f.cpu.GetTime() == 14);
 }
 
 static void CheckImm8Load(uint8_t opcode, RegPtr reg) {
   TestFixture f;
   f.LoadAt(0, {opcode, 0x80});
-  TickResult r = f.cpu.Tick(24);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 24);
   auto regs = f.cpu.GetRegs();
   REQUIRE(r.completed_cycles == 24);
   REQUIRE(static_cast<uint8_t>(regs.*reg) == 0x80);
   REQUIRE(regs.P.N == true);
   REQUIRE(regs.P.Z == false);
-  REQUIRE(f.cpu.GetTime() == 0);
 }
 
 TEST_CASE("LDA immediate updates A and flags through direct tick", "[cpu]") { CheckImm8Load(0xA9, &CPU::Regs::A); }
@@ -1198,7 +1177,7 @@ static void CheckImm16Load(uint8_t opcode, uint8_t lo, uint8_t hi, uint16_t expe
   regs.P.E = false;
   (clear_m ? regs.P.M : regs.P.X) = false;
   f.cpu.SetRegs(regs);
-  TickResult r = f.cpu.Tick(24);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 24);
   auto out = f.cpu.GetRegs();
   REQUIRE(r.completed_cycles == 24);
   REQUIRE(out.*reg == expected);
@@ -1229,69 +1208,57 @@ TEST_CASE("Fetch from unmapped address advances PC via open-bus value", "[cpu]")
   regs.PBR = 0x40;
   cpu.SetRegs(regs);
 
-  TickResult r = cpu.Tick(8);
-  REQUIRE(r.reason == TickStopReason::kBudgetExhausted);
+  TickResult r = cpu.TickToTarget(snes.GetMasterTime() + 8);
+  REQUIRE(r.reason == TickStopReason::kReachedTarget);
   REQUIRE(cpu.GetRegs().PBR == 0x40);
   // The opcode fetch at 0x400000 completed (PC advanced past the opcode byte).
   REQUIRE(cpu.GetRegs().PC == 0x0001);
   REQUIRE_FALSE(cpu.GetFault().has_value());
 }
 
-TEST_CASE("Consecutive same-tick bus accesses use increasing absolute timestamps", "[cpu]") {
+TEST_CASE("Consecutive bus accesses within one TickToTarget use increasing absolute timestamps", "[cpu]") {
   MMIOProgramFixture f;
   f.LoadAt(0, {0xA9, 0x42});
-  f.cpu.AdvanceLocalTime(100);
 
-  TickResult r = f.cpu.Tick(16);
+  // Run LDA #$42 — two bus reads: opcode fetch at t=0, immediate at t=8.
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 16);
 
   REQUIRE(r.completed_cycles == 16);
-  // Both bus accesses land in the same Tick call, so local_time_ is not
-  // committed between them; the second access's timestamp is the first plus
-  // the access_speed (8) of the MMIO page.
-  REQUIRE(f.program.read_times == std::vector<TimeMasterT>{100, 108});
-  REQUIRE(f.cpu.GetTime() == 100);
+  // Each bus access timestamp equals local_time_ + cycle_time at the moment of
+  // the access. The second access's timestamp is the first plus the MMIO page's
+  // access_speed (8).
+  REQUIRE(f.program.read_times == std::vector<TimeMasterT>{0, 8});
+  REQUIRE(f.cpu.GetTime() == 16);
 }
 
-TEST_CASE(
-    "Scheduler-driven CPU execution commits time and reschedules after "
-    "BudgetExhausted",
-    "[cpu]") {
+TEST_CASE("CPU executes NOP then LDA via two successive TickToTarget slices", "[cpu]") {
   TestFixture f;
   f.LoadAt(0, {0xEA, 0xA9, 0x42});
 
-  // NOP in slow ROM costs 14 master cycles (8 fetch + 6 internal); LDA #$42
-  // costs 16 (two bus fetches). Schedule the wake-sample boundaries at those
-  // exact instants so each scheduler step aligns with an instruction retire.
-  f.snes.scheduler->ScheduleDeviceRun(&f.cpu, 0);
-  f.snes.scheduler->ScheduleEvent(14, &f.rom, SchedulerPhase::kWakeSample, EventType::kDeviceBoundary);
-  f.snes.scheduler->ScheduleEvent(30, &f.rom, SchedulerPhase::kWakeSample, EventType::kDeviceBoundary);
-
-  f.snes.scheduler->Step();
+  // NOP in slow ROM costs 14 master cycles; run exactly that much.
+  TickResult r1 = f.cpu.TickToTarget(f.snes.GetMasterTime() + 14);
+  REQUIRE(r1.reason == TickStopReason::kReachedTarget);
+  REQUIRE(r1.completed_cycles == 14);
   REQUIRE(f.cpu.GetRegs().PC == 0x8001);
   REQUIRE(f.cpu.GetTime() == 14);
-  REQUIRE(SchedulerTestAccess::HasPendingRun(*f.snes.scheduler, f.cpu.GetDeviceId()));
-  REQUIRE(SchedulerTestAccess::PendingRunTime(*f.snes.scheduler, f.cpu.GetDeviceId()) == 14);
 
-  f.snes.scheduler->Step();
-  REQUIRE(f.snes.GetMasterTime() == 14);
-
-  f.snes.scheduler->Step();
+  // LDA #$42 costs 16 more master cycles.
+  TickResult r2 = f.cpu.TickToTarget(f.snes.GetMasterTime() + 16);
+  REQUIRE(r2.reason == TickStopReason::kReachedTarget);
+  REQUIRE(r2.completed_cycles == 16);
   REQUIRE(f.cpu.GetRegs().PC == 0x8003);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x42);
   REQUIRE(f.cpu.GetTime() == 30);
-  REQUIRE(SchedulerTestAccess::PendingRunTime(*f.snes.scheduler, f.cpu.GetDeviceId()) == 30);
 }
 
-TEST_CASE("Direct CPU tick faults on unimplemented opcode fetch", "[cpu]") {
+TEST_CASE("TickToTarget faults on unimplemented opcode fetch", "[cpu]") {
   TestFixture f;
   f.LoadAt(0, {0x00});
 
-  TickResult r = f.cpu.Tick(8);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 8);
 
-  REQUIRE(r.completed_cycles == 8);
-  REQUIRE(r.reason == TickStopReason::kFaulted);
+  REQUIRE(r.reason == TickStopReason::kFault);
   REQUIRE(f.cpu.GetRegs().PC == 0x8001);
-  REQUIRE(f.cpu.GetTime() == 0);
   const auto& fault = f.cpu.GetFault();
   REQUIRE(fault.has_value());
   if (!fault) return;
@@ -1299,57 +1266,34 @@ TEST_CASE("Direct CPU tick faults on unimplemented opcode fetch", "[cpu]") {
   REQUIRE(fault->opcode_address == 0x008000U);
 }
 
-TEST_CASE("Scheduler-driven CPU faults are terminal and do not reschedule", "[cpu]") {
+TEST_CASE("TickToTarget on unimplemented opcode returns kFault without advancing master time", "[cpu]") {
   TestFixture f;
   f.LoadAt(0, {0x00});
 
-  f.snes.scheduler->ScheduleDeviceRun(&f.cpu, 0);
-  f.snes.scheduler->Step();
+  const TimeMasterT before = f.snes.GetMasterTime();
+  TickResult r = f.cpu.TickToTarget(before + 8);
 
-  // The faulting opcode fetch costs 8 master cycles (ROM access_speed).
-  REQUIRE(f.cpu.GetTime() == 8);
+  REQUIRE(r.reason == TickStopReason::kFault);
   const auto& fault = f.cpu.GetFault();
   REQUIRE(fault.has_value());
   if (!fault) return;
   REQUIRE(fault->opcode == 0x00);
-  REQUIRE_FALSE(SchedulerTestAccess::HasPendingRun(*f.snes.scheduler, f.cpu.GetDeviceId()));
 }
 
 TEST_CASE(
-    "Cross-clock token completion wakes a blocked CPU through authoritative "
-    "run scheduling",
-    "[cpu]") {
-  AsyncProgramFixture f;
-
-  f.snes.scheduler->ScheduleDeviceRun(&f.cpu, 0);
-
-  f.snes.scheduler->Step();
-  const auto blocked_token = SchedulerTestAccess::BlockedToken(*f.snes.scheduler, f.cpu.GetDeviceId());
-  REQUIRE(blocked_token != 0);
-  REQUIRE_FALSE(SchedulerTestAccess::HasPendingRun(*f.snes.scheduler, f.cpu.GetDeviceId()));
-  REQUIRE(f.cpu.GetTime() == 0);
-
-  f.snes.scheduler->Step();
-  REQUIRE(f.snes.GetMasterTime() == 8);
-  REQUIRE(SchedulerTestAccess::HasPendingRun(*f.snes.scheduler, f.cpu.GetDeviceId()));
-  REQUIRE(SchedulerTestAccess::PendingRunTime(*f.snes.scheduler, f.cpu.GetDeviceId()) == 8);
-}
-
-TEST_CASE(
-    "Same-clock scheduler-driven fetches keep absolute bus timestamps and CPU "
-    "time aligned",
+    "Same-master-time bus accesses within TickToTarget use increasing timestamps",
     "[cpu]") {
   MMIOProgramFixture f;
   f.LoadAt(0, {0xA9, 0x7F});
 
-  // LDA #$7F is two bus reads (opcode + immediate operand). Each MMIO page
-  // has access_speed 8, so the two fetches land at t=100 and t=108, and the
-  // instruction completes at t=116.
-  f.snes.scheduler->ScheduleDeviceRun(&f.cpu, 100);
-  f.snes.scheduler->ScheduleEvent(116, &f.program, SchedulerPhase::kWakeSample, EventType::kDeviceBoundary);
+  // Set SNES master time to 100 and CPU local time to 100 so bus accesses
+  // are timestamped from there. LDA #$7F: opcode at t=100, immediate at t=108.
+  f.snes.SetMasterTime(100);
+  f.cpu.SetLocalTime(100);
 
-  f.snes.scheduler->Step();
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 16);
 
+  REQUIRE(r.reason == TickStopReason::kReachedTarget);
   REQUIRE(f.program.read_times == std::vector<TimeMasterT>{100, 108});
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x7F);
   REQUIRE(f.cpu.GetTime() == 116);
@@ -1408,7 +1352,7 @@ TEST_CASE("INX 8-bit increments X low byte and updates N/Z", "[cpu][inc]") {
   f.cpu.Reset();
   f.ModifyRegs([](auto& r) { r.X = 0x007F; });
 
-  TickResult r = f.cpu.Tick(14);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 14);
 
   REQUIRE(r.completed_cycles == 14);
   REQUIRE(f.cpu.GetRegs().PC == 0x8001);
@@ -1426,7 +1370,7 @@ TEST_CASE("INX 8-bit wraps to zero and sets Z", "[cpu][inc]") {
     r.X = 0x12FF;  // high byte preserved in 8-bit mode
   });
 
-  (void)f.cpu.Tick(100);
+  (void)f.cpu.TickToTarget(f.snes.GetMasterTime() + 100);
 
   REQUIRE(f.cpu.GetRegs().X == 0x1200);
   REQUIRE(f.cpu.GetRegs().P.Z == true);
@@ -1440,7 +1384,7 @@ TEST_CASE("INX 16-bit increments full register across page", "[cpu][inc]") {
   f.cpu.Reset();
   SetIndex16X(f.cpu, 0x7FFF);
 
-  (void)f.cpu.Tick(100);
+  (void)f.cpu.TickToTarget(f.snes.GetMasterTime() + 100);
 
   REQUIRE(f.cpu.GetRegs().X == 0x8000);
   REQUIRE(f.cpu.GetRegs().P.N == true);
@@ -1454,7 +1398,7 @@ TEST_CASE("INY 8-bit increments Y and sets Z on wrap", "[cpu][inc]") {
   f.cpu.Reset();
   f.ModifyRegs([](auto& r) { r.Y = 0x00FF; });
 
-  (void)f.cpu.Tick(100);
+  (void)f.cpu.TickToTarget(f.snes.GetMasterTime() + 100);
 
   REQUIRE(f.cpu.GetRegs().Y == 0x0000);
   REQUIRE(f.cpu.GetRegs().P.Z == true);
@@ -1467,7 +1411,7 @@ TEST_CASE("INY 16-bit wraps at $FFFF to 0", "[cpu][inc]") {
   f.cpu.Reset();
   SetIndex16Y(f.cpu, 0xFFFF);
 
-  (void)f.cpu.Tick(100);
+  (void)f.cpu.TickToTarget(f.snes.GetMasterTime() + 100);
 
   REQUIRE(f.cpu.GetRegs().Y == 0x0000);
   REQUIRE(f.cpu.GetRegs().P.Z == true);
@@ -1481,7 +1425,7 @@ TEST_CASE("DEX 8-bit wraps to $FF and sets N", "[cpu][dec]") {
   f.cpu.Reset();
   f.ModifyRegs([](auto& r) { r.X = 0x0000; });
 
-  (void)f.cpu.Tick(100);
+  (void)f.cpu.TickToTarget(f.snes.GetMasterTime() + 100);
 
   REQUIRE(f.cpu.GetRegs().X == 0x00FF);
   REQUIRE(f.cpu.GetRegs().P.N == true);
@@ -1495,7 +1439,7 @@ TEST_CASE("DEX 16-bit decrements full register", "[cpu][dec]") {
   f.cpu.Reset();
   SetIndex16X(f.cpu, 0x0001);
 
-  (void)f.cpu.Tick(100);
+  (void)f.cpu.TickToTarget(f.snes.GetMasterTime() + 100);
 
   REQUIRE(f.cpu.GetRegs().X == 0x0000);
   REQUIRE(f.cpu.GetRegs().P.Z == true);
@@ -1509,7 +1453,7 @@ TEST_CASE("DEY 8-bit decrements Y", "[cpu][dec]") {
   f.cpu.Reset();
   f.ModifyRegs([](auto& r) { r.Y = 0x0001; });
 
-  (void)f.cpu.Tick(100);
+  (void)f.cpu.TickToTarget(f.snes.GetMasterTime() + 100);
 
   REQUIRE(f.cpu.GetRegs().Y == 0x0000);
   REQUIRE(f.cpu.GetRegs().P.Z == true);
@@ -1524,7 +1468,7 @@ TEST_CASE("INC A 8-bit increments accumulator low byte, preserves high", "[cpu][
     r.A = 0xAB7F;  // high byte preserved in 8-bit mode
   });
 
-  (void)f.cpu.Tick(100);
+  (void)f.cpu.TickToTarget(f.snes.GetMasterTime() + 100);
 
   REQUIRE(f.cpu.GetRegs().A == 0xAB80);
   REQUIRE(f.cpu.GetRegs().P.N == true);
@@ -1538,7 +1482,7 @@ TEST_CASE("INC A 16-bit increments full accumulator", "[cpu][inc]") {
   f.cpu.Reset();
   SetAccumulator16(f.cpu, 0xFFFF);
 
-  (void)f.cpu.Tick(100);
+  (void)f.cpu.TickToTarget(f.snes.GetMasterTime() + 100);
 
   REQUIRE(f.cpu.GetRegs().A == 0x0000);
   REQUIRE(f.cpu.GetRegs().P.Z == true);
@@ -1552,7 +1496,7 @@ TEST_CASE("DEC A 8-bit decrements accumulator low byte", "[cpu][dec]") {
   f.cpu.Reset();
   f.ModifyRegs([](auto& r) { r.A = 0x1200; });
 
-  (void)f.cpu.Tick(100);
+  (void)f.cpu.TickToTarget(f.snes.GetMasterTime() + 100);
 
   REQUIRE(f.cpu.GetRegs().A == 0x12FF);
   REQUIRE(f.cpu.GetRegs().P.N == true);
@@ -1566,10 +1510,54 @@ TEST_CASE("DEC A 16-bit decrements full accumulator", "[cpu][dec]") {
   f.cpu.Reset();
   SetAccumulator16(f.cpu, 0x0001);
 
-  (void)f.cpu.Tick(100);
+  (void)f.cpu.TickToTarget(f.snes.GetMasterTime() + 100);
 
   REQUIRE(f.cpu.GetRegs().A == 0x0000);
   REQUIRE(f.cpu.GetRegs().P.Z == true);
+}
+
+// ============================================================================
+// TickToTarget surface tests
+// ============================================================================
+
+TEST_CASE("CPU::TickToTarget stops exactly at target on a NOP stream", "[cpu][unit]") {
+  ResetFixture f;
+  for (std::size_t i = 0; i < 2000; ++i) f.SetRomByte(i, 0xEA);
+  f.SyncCartridge();
+  f.cpu.Reset();
+
+  f.snes.SetMasterTime(0);
+  TickResult r = f.cpu.TickToTarget(100);
+  REQUIRE(r.reason == TickStopReason::kReachedTarget);
+  REQUIRE(f.snes.GetMasterTime() <= 100);
+  REQUIRE(f.cpu.GetTime() == f.snes.GetMasterTime());
+}
+
+TEST_CASE("CPU::TickToTarget returns kRetiredStepTarget after N instructions", "[cpu][unit]") {
+  ResetFixture f;
+  for (std::size_t i = 0; i < 2000; ++i) f.SetRomByte(i, 0xEA);
+  f.SyncCartridge();
+  f.cpu.Reset();
+
+  f.cpu.MutableDebuggerContract().step_target = 3;
+  f.cpu.MutableDebuggerContract().step_granularity = DebuggerContract::StepGranularity::kInstruction;
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 1'000'000);
+  REQUIRE(r.reason == TickStopReason::kRetiredStepTarget);
+  REQUIRE(f.cpu.GetRetiredInstructionCount() == 3);
+}
+
+TEST_CASE("CPU::TickToTarget with microop granularity yields after one micro-op", "[cpu][unit]") {
+  ResetFixture f;
+  f.SetRomByte(0, 0xA9);  // LDA #$11
+  f.SetRomByte(1, 0x11);
+  f.SyncCartridge();
+  f.cpu.Reset();
+
+  f.cpu.MutableDebuggerContract().step_target = 1;
+  f.cpu.MutableDebuggerContract().step_granularity = DebuggerContract::StepGranularity::kMicroOp;
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 1'000'000);
+  REQUIRE(r.reason == TickStopReason::kRetiredStepTarget);
+  REQUIRE(f.cpu.GetRetiredInstructionCount() == 0);
 }
 
 TEST_CASE("DRAM refresh stalls the CPU for 40 cycles mid-scanline", "[cpu][refresh]") {
@@ -1588,7 +1576,7 @@ TEST_CASE("DRAM refresh stalls the CPU for 40 cycles mid-scanline", "[cpu][refre
   // Run exactly one full scanline's worth of master cycles. Refresh steals
   // 40 cycles; the remainder (1324) fits 94 complete 14-cycle NOPs with a
   // partial NOP straddling the refresh boundary, so 94 instructions retire.
-  TickResult r = f.cpu.Tick(kMasterCyclesPerScanline);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + kMasterCyclesPerScanline);
   const uint64_t retired = f.cpu.GetRetiredInstructionCount() - retired_before;
 
   REQUIRE(r.completed_cycles == kMasterCyclesPerScanline);
@@ -1606,10 +1594,11 @@ TEST_CASE("DRAM refresh fires once per scanline", "[cpu][refresh]") {
   f.cpu.Reset();
 
   // Three scanlines → three refresh windows → 120 stall cycles total.
-  // A whole micro-op may push completed_cycles a few cycles past the budget.
-  TickResult r = f.cpu.Tick(3 * kMasterCyclesPerScanline);
+  // With strict-no-overshoot, completed_cycles may be slightly less than the
+  // full budget (by up to one internal CPU cycle = 6 mcyc).
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 3 * kMasterCyclesPerScanline);
 
-  REQUIRE(r.completed_cycles >= 3 * kMasterCyclesPerScanline);
+  REQUIRE(r.completed_cycles >= 3 * kMasterCyclesPerScanline - 6);
   REQUIRE(f.cpu.GetRefreshStallWindows() == 3);
   REQUIRE(f.cpu.GetRefreshStallCycles() == 3 * kDramRefreshDurationCycles);
 }
@@ -1625,14 +1614,14 @@ TEST_CASE("DRAM refresh does not fire before kDramRefreshStartCycle", "[cpu][ref
   const uint64_t retired_before = f.cpu.GetRetiredInstructionCount();
 
   // Run up to just before the refresh window. 38 complete NOPs fit in 532
-  // cycles; one more fetch overshoots to 540 and triggers budget exhaustion
-  // before refresh can arm.
-  TickResult r = f.cpu.Tick(kDramRefreshStartCycle);
+  // cycles; the 39th would cost 14 and exceed the 538-cycle target, so the
+  // strict-no-overshoot model stops at 532 (< kDramRefreshStartCycle).
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + kDramRefreshStartCycle);
   const uint64_t retired = f.cpu.GetRetiredInstructionCount() - retired_before;
 
   REQUIRE(retired == 38);
   REQUIRE(f.cpu.GetRefreshStallWindows() == 0);
-  REQUIRE(r.completed_cycles >= kDramRefreshStartCycle);
+  REQUIRE(r.completed_cycles <= kDramRefreshStartCycle);
 }
 
 TEST_CASE("CLC clears the carry flag in two cycles", "[cpu][opcode]") {
@@ -1642,7 +1631,7 @@ TEST_CASE("CLC clears the carry flag in two cycles", "[cpu][opcode]") {
   regs.P.C = true;
   f.cpu.SetRegs(regs);
 
-  TickResult r = f.cpu.Tick(14);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 14);
 
   REQUIRE(r.completed_cycles == 14);
   REQUIRE(f.cpu.GetRegs().P.C == false);
@@ -1656,7 +1645,7 @@ TEST_CASE("SEC sets the carry flag", "[cpu][opcode]") {
   regs.P.C = false;
   f.cpu.SetRegs(regs);
 
-  TickResult r = f.cpu.Tick(22);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 22);
 
   REQUIRE(r.completed_cycles == 22);
   REQUIRE(f.cpu.GetRegs().P.C == true);
@@ -1667,11 +1656,11 @@ TEST_CASE("CLI / SEI toggle the interrupt-disable flag", "[cpu][opcode]") {
   f.LoadAt(0, {0x58, 0x78});
 
   REQUIRE(f.cpu.GetRegs().P.I == true);
-  TickResult r1 = f.cpu.Tick(14);
+  TickResult r1 = f.cpu.TickToTarget(f.snes.GetMasterTime() + 14);
   REQUIRE(r1.completed_cycles == 14);
   REQUIRE(f.cpu.GetRegs().P.I == false);
 
-  TickResult r2 = f.cpu.Tick(14);
+  TickResult r2 = f.cpu.TickToTarget(f.snes.GetMasterTime() + 14);
   REQUIRE(r2.completed_cycles == 14);
   REQUIRE(f.cpu.GetRegs().P.I == true);
 }
@@ -1680,11 +1669,11 @@ TEST_CASE("CLD / SED toggle the decimal flag", "[cpu][opcode]") {
   TestFixture f;
   f.LoadAt(0, {0xF8, 0xD8});
 
-  TickResult r1 = f.cpu.Tick(14);
+  TickResult r1 = f.cpu.TickToTarget(f.snes.GetMasterTime() + 14);
   REQUIRE(r1.completed_cycles == 14);
   REQUIRE(f.cpu.GetRegs().P.D == true);
 
-  TickResult r2 = f.cpu.Tick(14);
+  TickResult r2 = f.cpu.TickToTarget(f.snes.GetMasterTime() + 14);
   REQUIRE(r2.completed_cycles == 14);
   REQUIRE(f.cpu.GetRegs().P.D == false);
 }
@@ -1698,7 +1687,7 @@ TEST_CASE("CLV clears overflow without touching other flags", "[cpu][opcode]") {
   regs.P.Z = true;
   f.cpu.SetRegs(regs);
 
-  TickResult r = f.cpu.Tick(22);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 22);
 
   REQUIRE(r.completed_cycles == 22);
   const auto out = f.cpu.GetRegs().P;
@@ -1721,7 +1710,7 @@ TEST_CASE("XCE swaps C and E flags and enforces emulation forcing", "[cpu][opcod
   regs.SP = 0x1FF0;
   f.cpu.SetRegs(regs);
 
-  TickResult r = f.cpu.Tick(22);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 22);
 
   REQUIRE(r.completed_cycles == 22);
   const auto out = f.cpu.GetRegs();
@@ -1739,7 +1728,7 @@ TEST_CASE("XCE from emulation to native leaves widths as chosen by later REP/SEP
   // Default after reset is E=1, C=0. XCE -> E=0, C=1. M/X stay 1.
   f.LoadAt(0, {0xFB});
 
-  TickResult r = f.cpu.Tick(22);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 22);
 
   REQUIRE(r.completed_cycles == 22);
   const auto out = f.cpu.GetRegs();
@@ -1760,7 +1749,7 @@ TEST_CASE("REP in native mode clears the specified P bits", "[cpu][opcode]") {
   regs.P.C = true;
   f.cpu.SetRegs(regs);
 
-  TickResult r = f.cpu.Tick(22);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 22);
 
   REQUIRE(r.completed_cycles == 22);
   const auto out = f.cpu.GetRegs().P;
@@ -1781,7 +1770,7 @@ TEST_CASE("SEP in native mode sets the specified P bits", "[cpu][opcode]") {
   regs.P.C = false;
   f.cpu.SetRegs(regs);
 
-  TickResult r = f.cpu.Tick(30);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 30);
 
   REQUIRE(r.completed_cycles == 30);
   const auto out = f.cpu.GetRegs().P;
@@ -1798,7 +1787,7 @@ TEST_CASE("TAX in emulation mode copies A low byte to X low and sets N/Z", "[cpu
   regs.X = 0x00FF;
   f.cpu.SetRegs(regs);
 
-  TickResult r = f.cpu.Tick(22);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 22);
 
   REQUIRE(r.completed_cycles == 22);
   const auto out = f.cpu.GetRegs();
@@ -1817,7 +1806,7 @@ TEST_CASE("TXA 16-bit copies full 16 bits when M is clear", "[cpu][opcode]") {
   regs.A = 0x1234;
   f.cpu.SetRegs(regs);
 
-  TickResult r = f.cpu.Tick(22);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 22);
 
   REQUIRE(r.completed_cycles == 22);
   REQUIRE(f.cpu.GetRegs().A == 0xBEEF);
@@ -1831,7 +1820,7 @@ TEST_CASE("TXS in emulation mode forces SH back to $01", "[cpu][opcode]") {
   regs.X = 0xBEEF;
   f.cpu.SetRegs(regs);
 
-  TickResult r = f.cpu.Tick(22);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 22);
 
   REQUIRE(r.completed_cycles == 22);
   REQUIRE(f.cpu.GetRegs().SP == 0x01EF);
@@ -1846,7 +1835,7 @@ TEST_CASE("TXS in native 16-bit mode transfers the full 16 bits", "[cpu][opcode]
   regs.X = 0x1234;
   f.cpu.SetRegs(regs);
 
-  TickResult r = f.cpu.Tick(22);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 22);
 
   REQUIRE(r.completed_cycles == 22);
   REQUIRE(f.cpu.GetRegs().SP == 0x1234);
@@ -1861,7 +1850,7 @@ TEST_CASE("TCD transfers the full 16-bit accumulator to DP regardless of M", "[c
   regs.DP = 0x0000;
   f.cpu.SetRegs(regs);
 
-  TickResult r = f.cpu.Tick(22);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 22);
 
   REQUIRE(r.completed_cycles == 22);
   REQUIRE(f.cpu.GetRegs().DP == 0x8000);
@@ -1877,7 +1866,7 @@ TEST_CASE("TDC sets Z when the result is zero", "[cpu][opcode]") {
   regs.DP = 0x0000;
   f.cpu.SetRegs(regs);
 
-  TickResult r = f.cpu.Tick(22);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 22);
 
   REQUIRE(r.completed_cycles == 22);
   REQUIRE(f.cpu.GetRegs().A == 0x0000);
@@ -1892,7 +1881,7 @@ TEST_CASE("TCS in emulation mode forces SH back to $01", "[cpu][opcode]") {
   regs.A = 0xBEEF;
   f.cpu.SetRegs(regs);
 
-  TickResult r = f.cpu.Tick(22);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 22);
 
   REQUIRE(r.completed_cycles == 22);
   REQUIRE(f.cpu.GetRegs().SP == 0x01EF);
@@ -1906,7 +1895,7 @@ TEST_CASE("TSC reads the full 16-bit SP into A", "[cpu][opcode]") {
   regs.A = 0x0000;
   f.cpu.SetRegs(regs);
 
-  TickResult r = f.cpu.Tick(22);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 22);
 
   REQUIRE(r.completed_cycles == 22);
   REQUIRE(f.cpu.GetRegs().A == 0x01F0);
@@ -1921,7 +1910,7 @@ TEST_CASE("BEQ taken when Z=1 jumps forward", "[cpu][opcode]") {
   regs.P.Z = true;
   f.cpu.SetRegs(regs);
 
-  TickResult r = f.cpu.Tick(46);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 46);
 
   REQUIRE(r.completed_cycles == 46);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x42);
@@ -1934,7 +1923,7 @@ TEST_CASE("BCS not taken when C=0 falls through", "[cpu][opcode]") {
   regs.P.C = false;
   f.cpu.SetRegs(regs);
 
-  TickResult r = f.cpu.Tick(40);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 40);
 
   REQUIRE(r.completed_cycles == 40);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x11);
@@ -1947,7 +1936,7 @@ TEST_CASE("BMI taken when N=1", "[cpu][opcode]") {
   regs.P.N = true;
   f.cpu.SetRegs(regs);
 
-  TickResult r = f.cpu.Tick(46);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 46);
 
   REQUIRE(r.completed_cycles == 46);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x99);
@@ -1957,7 +1946,7 @@ TEST_CASE("BVC taken when V=0", "[cpu][opcode]") {
   TestFixture f;
   f.LoadAt(0, {0x50, 0x02, 0xEA, 0xEA, 0xA9, 0x55});
 
-  TickResult r = f.cpu.Tick(46);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 46);
 
   REQUIRE(r.completed_cycles == 46);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x55);
@@ -1969,7 +1958,7 @@ TEST_CASE("BRL applies signed 16-bit displacement in 4 cycles", "[cpu][opcode]")
   f.LoadAt(0, {0x82, 0x00, 0x01});
   f.LoadAt(0x103, {0xA9, 0x77});
 
-  TickResult r = f.cpu.Tick(46);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 46);
 
   REQUIRE(r.completed_cycles == 46);
   REQUIRE(f.cpu.GetRegs().PC == 0x8105);
@@ -1981,7 +1970,7 @@ TEST_CASE("JMP absolute sets PC in 3 cycles", "[cpu][opcode]") {
   f.LoadAt(0, {0x4C, 0x10, 0x80});
   f.LoadAt(0x10, {0xA9, 0x33});
 
-  TickResult r = f.cpu.Tick(40);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 40);
 
   REQUIRE(r.completed_cycles == 40);
   REQUIRE(f.cpu.GetRegs().PC == 0x8012);
@@ -1996,7 +1985,7 @@ TEST_CASE("ADC immediate 8-bit adds with carry", "[cpu][opcode]") {
   regs.P.C = true;
   f.cpu.SetRegs(regs);
 
-  TickResult r = f.cpu.Tick(24);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 24);
 
   REQUIRE(r.completed_cycles == 24);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x43);
@@ -2012,7 +2001,7 @@ TEST_CASE("ADC immediate 8-bit sets carry and overflow on wrap", "[cpu][opcode]"
   regs.P.C = false;
   f.cpu.SetRegs(regs);
 
-  TickResult r = f.cpu.Tick(24);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 24);
 
   REQUIRE(r.completed_cycles == 24);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x80);
@@ -2030,7 +2019,7 @@ TEST_CASE("ADC immediate 16-bit uses 3-cycle path", "[cpu][opcode]") {
   regs.P.C = false;
   f.cpu.SetRegs(regs);
 
-  TickResult r = f.cpu.Tick(32);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 32);
 
   REQUIRE(r.completed_cycles == 32);
   REQUIRE(f.cpu.GetRegs().A == 0x2234);
@@ -2044,7 +2033,7 @@ TEST_CASE("SBC immediate 8-bit subtracts with borrow", "[cpu][opcode]") {
   regs.P.C = true;
   f.cpu.SetRegs(regs);
 
-  TickResult r = f.cpu.Tick(24);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 24);
 
   REQUIRE(r.completed_cycles == 24);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x04);
@@ -2058,7 +2047,7 @@ TEST_CASE("AND immediate masks A", "[cpu][opcode]") {
   regs.A = 0x00A5;
   f.cpu.SetRegs(regs);
 
-  (void)f.cpu.Tick(100);
+  (void)f.cpu.TickToTarget(f.snes.GetMasterTime() + 100);
 
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x05);
 }
@@ -2070,7 +2059,7 @@ TEST_CASE("ORA immediate ORs A", "[cpu][opcode]") {
   regs.A = 0x000F;
   f.cpu.SetRegs(regs);
 
-  (void)f.cpu.Tick(100);
+  (void)f.cpu.TickToTarget(f.snes.GetMasterTime() + 100);
 
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0xFF);
   REQUIRE(f.cpu.GetRegs().P.N == true);
@@ -2083,7 +2072,7 @@ TEST_CASE("EOR immediate XORs A", "[cpu][opcode]") {
   regs.A = 0x005A;
   f.cpu.SetRegs(regs);
 
-  (void)f.cpu.Tick(100);
+  (void)f.cpu.TickToTarget(f.snes.GetMasterTime() + 100);
 
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0xA5);
 }
@@ -2095,11 +2084,11 @@ TEST_CASE("CMP immediate sets Z when equal and C when >=", "[cpu][opcode]") {
   regs.A = 0x0042;
   f.cpu.SetRegs(regs);
 
-  (void)f.cpu.Tick(16);
+  (void)f.cpu.TickToTarget(f.snes.GetMasterTime() + 16);
   REQUIRE(f.cpu.GetRegs().P.Z == true);
   REQUIRE(f.cpu.GetRegs().P.C == true);
 
-  (void)f.cpu.Tick(16);
+  (void)f.cpu.TickToTarget(f.snes.GetMasterTime() + 16);
   REQUIRE(f.cpu.GetRegs().P.Z == false);
   REQUIRE(f.cpu.GetRegs().P.C == false);
   REQUIRE(f.cpu.GetRegs().P.N == true);
@@ -2112,7 +2101,7 @@ TEST_CASE("CPX immediate compares X", "[cpu][opcode]") {
   regs.X = 0x20;
   f.cpu.SetRegs(regs);
 
-  (void)f.cpu.Tick(100);
+  (void)f.cpu.TickToTarget(f.snes.GetMasterTime() + 100);
 
   REQUIRE(f.cpu.GetRegs().P.C == true);
   REQUIRE(f.cpu.GetRegs().P.Z == false);
@@ -2129,7 +2118,7 @@ TEST_CASE("ADC direct page 8-bit adds value at DP+offset", "[cpu][opcode]") {
     r.P.C = false;
   });
 
-  TickResult r = f.cpu.Tick(24);  // 4-m+w with m=1,w=0 = 3
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 24);  // 4-m+w with m=1,w=0 = 3
 
   REQUIRE(r.completed_cycles == 24);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x45);
@@ -2150,7 +2139,7 @@ TEST_CASE("ADC direct page 16-bit adds value at DP+offset", "[cpu][opcode]") {
     r.P.C = false;
   });
 
-  TickResult r = f.cpu.Tick(32);  // 4-m+w with m=0,w=0 = 4
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 32);  // 4-m+w with m=0,w=0 = 4
 
   REQUIRE(r.completed_cycles == 32);
   REQUIRE(f.cpu.GetRegs().A == 0x2234);
@@ -2168,7 +2157,7 @@ TEST_CASE("ADC direct page pays DL-nonzero penalty", "[cpu][opcode]") {
   });
   f.wram.WriteRegister(0x0133, 0x02, 0);
 
-  TickResult r = f.cpu.Tick(38);  // 4-m+w with m=1,w=1 = 4
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 38);  // 4-m+w with m=1,w=1 = 4
 
   REQUIRE(r.completed_cycles == 38);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x03);
@@ -2185,7 +2174,7 @@ TEST_CASE("SBC direct page subtracts with borrow", "[cpu][opcode]") {
     r.P.C = true;
   });
 
-  (void)f.cpu.Tick(100);
+  (void)f.cpu.TickToTarget(f.snes.GetMasterTime() + 100);
 
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x04);
   REQUIRE(f.cpu.GetRegs().P.C == true);
@@ -2203,7 +2192,7 @@ TEST_CASE("AND/ORA/EOR direct page combine A with memory", "[cpu][opcode]") {
   f.ModifyRegs([](auto& r) { r.A = 0x00A5; });
 
   // 3+3+3 = 9 cycles (all m=1, w=0).
-  TickResult r = f.cpu.Tick(72);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 72);
 
   REQUIRE(r.completed_cycles == 72);
   // A5 & 0F = 05 ; 05 | F0 = F5 ; F5 ^ FF = 0A
@@ -2218,7 +2207,7 @@ TEST_CASE("CMP direct page sets Z when equal", "[cpu][opcode]") {
   f.wram.WriteRegister(0x0020, 0x42, 0);
   f.ModifyRegs([](auto& r) { r.A = 0x0042; });
 
-  (void)f.cpu.Tick(100);
+  (void)f.cpu.TickToTarget(f.snes.GetMasterTime() + 100);
 
   REQUIRE(f.cpu.GetRegs().P.Z == true);
   REQUIRE(f.cpu.GetRegs().P.C == true);
@@ -2233,7 +2222,7 @@ TEST_CASE("ASL A shifts accumulator left, bit 7 into C", "[cpu][opcode]") {
   regs.P.C = false;
   f.cpu.SetRegs(regs);
 
-  TickResult r = f.cpu.Tick(22);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 22);
 
   REQUIRE(r.completed_cycles == 22);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x86);
@@ -2252,7 +2241,7 @@ TEST_CASE("ASL A 16-bit shifts full accumulator", "[cpu][opcode]") {
   regs.P.C = false;
   f.cpu.SetRegs(regs);
 
-  (void)f.cpu.Tick(100);
+  (void)f.cpu.TickToTarget(f.snes.GetMasterTime() + 100);
 
   REQUIRE(f.cpu.GetRegs().A == 0x8002);
   REQUIRE(f.cpu.GetRegs().P.C == false);
@@ -2267,7 +2256,7 @@ TEST_CASE("LSR A shifts right, bit 0 into C", "[cpu][opcode]") {
   regs.P.C = false;
   f.cpu.SetRegs(regs);
 
-  (void)f.cpu.Tick(100);
+  (void)f.cpu.TickToTarget(f.snes.GetMasterTime() + 100);
 
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x01);
   REQUIRE(f.cpu.GetRegs().P.C == true);
@@ -2282,7 +2271,7 @@ TEST_CASE("ROL A rotates through carry", "[cpu][opcode]") {
   regs.P.C = true;
   f.cpu.SetRegs(regs);
 
-  (void)f.cpu.Tick(100);
+  (void)f.cpu.TickToTarget(f.snes.GetMasterTime() + 100);
 
   // 0x81 << 1 | C=1 -> 0x03, C out = 1
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x03);
@@ -2297,7 +2286,7 @@ TEST_CASE("ROR A rotates right through carry", "[cpu][opcode]") {
   regs.P.C = true;
   f.cpu.SetRegs(regs);
 
-  (void)f.cpu.Tick(100);
+  (void)f.cpu.TickToTarget(f.snes.GetMasterTime() + 100);
 
   // 0x02 >> 1 with C=1 in bit 7 -> 0x81, C out = 0
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x81);
@@ -2314,7 +2303,7 @@ TEST_CASE("BIT immediate only affects Z", "[cpu][opcode]") {
   regs.P.V = false;
   f.cpu.SetRegs(regs);
 
-  (void)f.cpu.Tick(100);
+  (void)f.cpu.TickToTarget(f.snes.GetMasterTime() + 100);
 
   REQUIRE(f.cpu.GetRegs().P.Z == true);
   // N and V should not be touched in immediate mode per the 65C816 manual.
@@ -2329,7 +2318,7 @@ TEST_CASE("PHX pushes X low byte in emulation mode", "[cpu][opcode]") {
   regs.X = 0x55;
   f.cpu.SetRegs(regs);
 
-  TickResult r = f.cpu.Tick(30);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 30);
 
   REQUIRE(r.completed_cycles == 30);
   REQUIRE(f.cpu.GetRegs().SP == 0x01FE);
@@ -2346,7 +2335,7 @@ TEST_CASE("PHP + PLP round-trip preserves P (respecting emulation)", "[cpu][opco
   f.cpu.SetRegs(regs);
 
   // PHP (3) + CLC (2) + CLV (2) + PLP (4) = 11
-  TickResult r = f.cpu.Tick(86);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 86);
 
   REQUIRE(r.completed_cycles == 86);
   const auto out = f.cpu.GetRegs().P;
@@ -2363,14 +2352,14 @@ TEST_CASE("PHD + PLD round-trip restores DP with N/Z flags", "[cpu][opcode]") {
   regs.DP = 0xBEEF;
   f.cpu.SetRegs(regs);
 
-  TickResult r1 = f.cpu.Tick(30);  // PHD
+  TickResult r1 = f.cpu.TickToTarget(f.snes.GetMasterTime() + 30);  // PHD
   REQUIRE(r1.completed_cycles == 30);
 
   regs = f.cpu.GetRegs();
   regs.DP = 0;
   f.cpu.SetRegs(regs);
 
-  TickResult r2 = f.cpu.Tick(44);  // PLD
+  TickResult r2 = f.cpu.TickToTarget(f.snes.GetMasterTime() + 44);  // PLD
   REQUIRE(r2.completed_cycles == 44);
   REQUIRE(f.cpu.GetRegs().DP == 0xBEEF);
   REQUIRE(f.cpu.GetRegs().P.N == true);
@@ -2381,7 +2370,7 @@ TEST_CASE("PHK pushes PBR to the stack", "[cpu][opcode]") {
   TestFixture f;
   f.LoadAt(0, {0x4B});
 
-  TickResult r = f.cpu.Tick(30);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 30);
 
   REQUIRE(r.completed_cycles == 30);
   REQUIRE(f.cpu.GetRegs().SP == 0x01FE);
@@ -2392,7 +2381,7 @@ TEST_CASE("PEA pushes a 16-bit immediate (high byte first)", "[cpu][opcode]") {
   // PEA $1234 — pushes $12 then $34.
   f.LoadAt(0, {0xF4, 0x34, 0x12});
 
-  TickResult r = f.cpu.Tick(48);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 48);
 
   REQUIRE(r.completed_cycles == 48);
   REQUIRE(f.cpu.GetRegs().SP == 0x01FD);
@@ -2409,7 +2398,7 @@ TEST_CASE("PLA 16-bit pulls both bytes when M is clear", "[cpu][opcode]") {
   f.cpu.SetRegs(regs);
 
   // PHA 16-bit = 4 cycles, PLA 16-bit = 5 cycles = 9 total.
-  TickResult r = f.cpu.Tick(74);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 74);
 
   REQUIRE(r.completed_cycles == 74);
   REQUIRE(f.cpu.GetRegs().A == 0xABCD);
@@ -2422,7 +2411,7 @@ TEST_CASE("JSR + RTS round trip", "[cpu][opcode]") {
   f.LoadAt(0x10, {0xA9, 0x77, 0x60});
 
   // JSR (6) + LDA (2) + RTS (6) + LDA (2) = 16 cycles
-  TickResult r = f.cpu.Tick(128);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 128);
 
   REQUIRE(r.completed_cycles == 128);
   // After RTS returns, LDA #$42 has run.
@@ -2440,7 +2429,7 @@ TEST_CASE("JSL + RTL round trip crosses banks and restores PBR", "[cpu][opcode]"
   f.LoadAt(0x10, {0xA9, 0x22, 0x6B});
 
   // JSL (8) + LDA (2) + RTL (6) + LDA (2) = 18 cycles
-  TickResult r = f.cpu.Tick(146);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 146);
 
   REQUIRE(r.completed_cycles == 146);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x11);
@@ -2454,7 +2443,7 @@ TEST_CASE("JMP absolute long sets PC and PBR", "[cpu][opcode]") {
   f.LoadAt(0, {0x5C, 0x20, 0x80, 0x00});
   f.LoadAt(0x20, {0xA9, 0xAB});
 
-  TickResult r = f.cpu.Tick(48);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 48);
 
   REQUIRE(r.completed_cycles == 48);
   REQUIRE(f.cpu.GetRegs().PC == 0x8022);
@@ -2472,7 +2461,7 @@ TEST_CASE("TXY transfers X to Y using the index width", "[cpu][opcode]") {
   regs.Y = 0xAAAA;
   f.cpu.SetRegs(regs);
 
-  TickResult r = f.cpu.Tick(22);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 22);
 
   REQUIRE(r.completed_cycles == 22);
   REQUIRE(f.cpu.GetRegs().Y == 0x4321);
@@ -2483,7 +2472,7 @@ TEST_CASE("REP in emulation mode cannot clear M or X", "[cpu][opcode]") {
   // E=1; REP #$30 should NOT clear M/X because emulation forces them to 1.
   f.LoadAt(0, {0xC2, 0x30});
 
-  TickResult r = f.cpu.Tick(30);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 30);
 
   REQUIRE(r.completed_cycles == 30);
   const auto out = f.cpu.GetRegs().P;

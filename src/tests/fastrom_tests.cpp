@@ -16,7 +16,6 @@
 #include "pupsnes/hw/5a22/cpu_mmio.h"
 #include "pupsnes/hw/cartridge.h"
 #include "pupsnes/hw/device.h"
-#include "pupsnes/hw/scheduler.h"
 #include "pupsnes/hw/snes.h"
 #include "pupsnes/hw/systembus.h"
 #include "systembus_test_access.h"
@@ -206,7 +205,7 @@ TEST_CASE("FASTROM: a NOP in a fast bank retires 12 mcyc when MEMSEL=1", "[unit]
   cpu.Reset();
   JumpToFastBank(cpu);
 
-  TickResult r = cpu.Tick(12);
+  TickResult r = cpu.TickToTarget(snes.GetMasterTime() + 12);
   REQUIRE(r.completed_cycles == 12);
   REQUIRE(cpu.GetRegs().PC == 0x8001U);
 }
@@ -221,7 +220,7 @@ TEST_CASE("FASTROM: the same NOP retires 14 mcyc when MEMSEL=0", "[unit][fastrom
   cpu.Reset();
   JumpToFastBank(cpu);
 
-  TickResult r = cpu.Tick(14);
+  TickResult r = cpu.TickToTarget(snes.GetMasterTime() + 14);
   REQUIRE(r.completed_cycles == 14);
   REQUIRE(cpu.GetRegs().PC == 0x8001U);
 }
@@ -236,14 +235,14 @@ TEST_CASE("FASTROM: toggling MEMSEL mid-run changes retirement cost on the next 
   JumpToFastBank(cpu);
 
   // First NOP, slow: 14 mcyc.
-  TickResult slow = cpu.Tick(14);
+  TickResult slow = cpu.TickToTarget(snes.GetMasterTime() + 14);
   REQUIRE(slow.completed_cycles == 14);
   REQUIRE(cpu.GetRegs().PC == 0x8001U);
 
   WriteMemSel(snes, 0x01U);
 
   // Second NOP, fast: 12 mcyc.
-  TickResult fast = cpu.Tick(12);
+  TickResult fast = cpu.TickToTarget(snes.GetMasterTime() + 12);
   REQUIRE(fast.completed_cycles == 12);
   REQUIRE(cpu.GetRegs().PC == 0x8002U);
 }
@@ -303,15 +302,12 @@ TEST_CASE("FASTROM: LoadLoRom clears MEMSEL from a prior cartridge", "[unit][fas
 }
 
 // ---------------------------------------------------------------------------
-// Regression: scheduler must not trip the zero-progress guard after a
-// CatchUpDevice-driven MEMSEL write. Each kSameClockMmio access runs the
-// MMIO device's Tick; if that Tick returned kBudgetExhausted, the scheduler
-// would enqueue a follow-up DeviceRun at the caught-up time and a later
-// zero-budget dispatch would throw "Scheduler detected repeated same-time
-// zero-progress Run dispatch".
+// Regression: a CatchUpDevice-driven MEMSEL write must not cause any
+// invariant violations. Driving many TickToTarget calls past the MEMSEL
+// write exercises that state.
 // ---------------------------------------------------------------------------
 
-TEST_CASE("FASTROM: stepping through sta $420D does not trip the zero-progress guard", "[unit][fastrom]") {
+TEST_CASE("FASTROM: running through sta $420D does not cause invariant violations", "[unit][fastrom]") {
   SNES snes;
 
   // LDA #$01 / STA f:$00420D / BRA self.
@@ -329,15 +325,11 @@ TEST_CASE("FASTROM: stepping through sta $420D does not trip the zero-progress g
   snes.LoadLoRom(rom);
   snes.Reset();
 
-  Scheduler& scheduler = snes.GetScheduler();
-  scheduler.ScheduleDeviceRun(&snes.GetCpu(), snes.GetCpu().GetTime());
-
-  // The bug reproduces once there's a second queued event at the same master
-  // time as a CPU run dispatch. Driving many scheduler steps past the MEMSEL
-  // write exercises that state. The old behavior threw std::logic_error out
-  // of Step.
+  // Drive CPU through many short slices, passing through the STA $420D
+  // write and the BRA self loop, without needing scheduler Step machinery.
   for (int i = 0; i < 200; ++i) {
-    REQUIRE_NOTHROW(scheduler.Step());
+    const TimeMasterT target = snes.GetMasterTime() + 20;
+    (void)snes.GetCpu().TickToTarget(target);
   }
 
   REQUIRE(snes.GetCpuMmio().IsFastRomEnabled());
