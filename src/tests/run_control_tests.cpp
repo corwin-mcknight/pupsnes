@@ -135,6 +135,18 @@ TEST_CASE("RunControl RunUntilBreak halts on a breakpoint hit", "[unit][debugger
   REQUIRE(fixture.errors.Snapshot().empty());
 }
 
+TEST_CASE("RunControl StepOne microop stops after one bus access", "[unit][debugger]") {
+  DebuggerFixture fixture;
+  fixture.SetBytes({0xA9, 0x11, 0xEA});  // LDA #$11 ; NOP
+
+  RunControl run_control = fixture.BuildRunControl();
+  run_control.RequestStepOne(StepGranularity::kMicroOp);
+  run_control.TickFrame(std::chrono::seconds(1));
+
+  REQUIRE(run_control.GetState() == RunState::kPaused);
+  REQUIRE(fixture.snes.GetCpu().GetRetiredInstructionCount() == 0);
+}
+
 TEST_CASE("RunControl RunUntilBreak halts on CPU fault and logs it", "[unit][debugger]") {
   DebuggerFixture fixture;
   fixture.SetBytes({0xEA, 0x00, 0xEA});
