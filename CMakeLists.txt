@@ -279,6 +279,7 @@ set(PUPSNES_HEADERS
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/cartridge.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/debugger_contract.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/device.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/master_clock_driver.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/scheduler.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/signal_event.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/snes.h
