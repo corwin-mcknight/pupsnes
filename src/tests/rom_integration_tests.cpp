@@ -428,26 +428,21 @@ RomExecutionResult RunScenario(const RomScenario& scenario) {
       regs.DBR = *scenario.initial_dbr;
       cpu.SetRegs(regs);
     }
-    snes.scheduler->ScheduleDeviceRun(&cpu, 0);
-    snes.scheduler->ScheduleEvent(scenario.cycle_budget, nullptr, SchedulerPhase::kWakeSample,
-                                  EventType::kDeviceBoundary);
 
-    constexpr std::size_t kMaxSchedulerSteps = 256;
-    std::size_t steps = 0;
-    while (cpu.GetTime() < scenario.cycle_budget && steps < kMaxSchedulerSteps) {
-      snes.scheduler->Step();
-      steps++;
-    }
+    static_cast<void>(cpu.TickToTarget(scenario.cycle_budget));
 
-    if (cpu.GetTime() < scenario.cycle_budget) {
+    // Under strict no-overshoot the CPU stops at the last micro-op boundary
+    // that fits within the budget, so cpu_time may be slightly below
+    // cycle_budget.  A time of zero (no progress at all) is a harness error.
+    result.snapshot.cpu_time = cpu.GetTime();
+    result.snapshot.master_time = snes.GetMasterTime();
+    result.snapshot.cpu_regs = cpu.GetRegs();
+    result.snapshot.cpu_micro_op_index = cpu.GetMicroOpIndex();
+
+    if (result.snapshot.cpu_time == 0 && scenario.cycle_budget > 0) {
       result.status = RomStatus::kHarnessError;
       result.failure_summary = "ROM run did not reach the configured cycle budget";
     } else {
-      result.snapshot.cpu_time = cpu.GetTime();
-      result.snapshot.master_time = snes.GetMasterTime();
-      result.snapshot.cpu_regs = cpu.GetRegs();
-      result.snapshot.cpu_micro_op_index = cpu.GetMicroOpIndex();
-
       for (const GoalSpec& goal : scenario.goals) {
         GoalResult goal_result{};
         goal_result.spec = goal;
@@ -490,12 +485,11 @@ TEST_CASE(
 
     REQUIRE(result.status == scenario.expected_current_status);
     REQUIRE_FALSE(result.goal_results.empty());
-    // Under variable-cost master-cycle timing a whole micro-op can push the
-    // CPU a handful of cycles past the requested budget; the scheduler
-    // tolerates up to 12 master cycles of overshoot (one worst-case bus
-    // access), and this assertion does the same.
-    REQUIRE(result.snapshot.cpu_time >= scenario.cycle_budget);
-    REQUIRE(result.snapshot.cpu_time <= scenario.cycle_budget + 12);
+    // Under strict no-overshoot the CPU stops at the last micro-op boundary
+    // that fits within the budget, so cpu_time <= cycle_budget.  It must be
+    // within 12 master cycles (one worst-case bus access) of the budget.
+    REQUIRE(result.snapshot.cpu_time <= scenario.cycle_budget);
+    REQUIRE(result.snapshot.cpu_time + 12 >= scenario.cycle_budget);
     if (scenario.expected_current_status == RomStatus::kPass) {
       REQUIRE(result.matched_goals == result.goal_results.size());
     } else {
