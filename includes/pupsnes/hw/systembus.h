@@ -65,6 +65,8 @@ struct BusFollowResult {
   BusPlanOutcome outcome;
   uint8_t data;
   TokenIdT token;
+
+  [[nodiscard]] bool WasScheduled() const { return outcome == BusPlanOutcome::kScheduledComplete; }
 };
 
 enum class DebugAccessFailureKind : uint8_t {

@@ -31,7 +31,6 @@ class SNES {
   SNES();
   ~SNES();
 
-  void DebugPrintInfo();
   void LoadLoRom(std::span<const uint8_t> rom_data);
   void Reset();
 

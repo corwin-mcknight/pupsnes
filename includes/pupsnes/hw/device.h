@@ -48,6 +48,9 @@ struct TickResult {
   // kNoWakeTime means "not provided". Wake times earlier than the device's
   // committed local_time are scheduler bugs.
   TimeMasterT next_wake_time = kNoWakeTime;
+
+  [[nodiscard]] bool Stopped() const { return reason != TickStopReason::kContinue; }
+  [[nodiscard]] bool HasWakeTime() const { return next_wake_time != kNoWakeTime; }
 };
 
 class Device {

@@ -97,61 +97,30 @@ void Scheduler::ValidateTickResult(const Device& device, const TickResult& resul
     FailScheduler("Device tick exceeded scheduler budget");
   }
 
-  const TimeMasterT committed_time = device.GetTime() + result.completed_cycles;
-
-  switch (result.reason) {
-    case TickStopReason::kBudgetExhausted:
-      if (result.blocked_token != 0) {
-        FailScheduler("BudgetExhausted cannot carry a blocked token");
-      }
-      if (result.next_wake_time != kNoWakeTime) {
-        FailScheduler("BudgetExhausted cannot carry a wake time");
-      }
-      break;
-    case TickStopReason::kReachedLocalBoundary:
-      if (result.blocked_token != 0) {
-        FailScheduler("ReachedLocalBoundary cannot carry a blocked token");
-      }
-      if (result.next_wake_time == kNoWakeTime) {
-        FailScheduler("ReachedLocalBoundary requires next_wake_time");
-      }
-      break;
-    case TickStopReason::kBlockedOnToken:
-      if (result.blocked_token == 0) {
-        FailScheduler("BlockedOnToken requires a token");
-      }
-      if (result.next_wake_time != kNoWakeTime) {
-        FailScheduler("BlockedOnToken cannot carry a wake time");
-      }
-      break;
-    case TickStopReason::kNoWork:
-      if (result.blocked_token != 0) {
-        FailScheduler("NoWork cannot carry a blocked token");
-      }
-      break;
-    case TickStopReason::kFaulted:
-      if (result.blocked_token != 0) {
-        FailScheduler("Faulted cannot carry a blocked token");
-      }
-      if (result.next_wake_time != kNoWakeTime) {
-        FailScheduler("Faulted cannot carry a wake time");
-      }
-      break;
-    case TickStopReason::kDebuggerBreakpoint:
-    case TickStopReason::kDebuggerStepComplete:
-      if (result.blocked_token != 0) {
-        FailScheduler("Debugger stop cannot carry a blocked token");
-      }
-      if (result.next_wake_time != kNoWakeTime) {
-        FailScheduler("Debugger stop cannot carry a wake time");
-      }
-      break;
-    case TickStopReason::kContinue:
-      FailScheduler("kContinue is an internal sentinel and must not escape Tick()");
-      break;
+  if (result.reason == TickStopReason::kContinue) {
+    FailScheduler("kContinue is an internal sentinel and must not escape Tick()");
   }
 
-  if (result.next_wake_time != kNoWakeTime && result.next_wake_time < committed_time) {
+  // blocked_token is legal only for kBlockedOnToken, and required there.
+  const bool is_blocked = result.reason == TickStopReason::kBlockedOnToken;
+  if (is_blocked == (result.blocked_token == 0)) {
+    FailScheduler(is_blocked ? "kBlockedOnToken requires a token"
+                             : "Only kBlockedOnToken may carry a blocked token");
+  }
+
+  // next_wake_time is legal only for kReachedLocalBoundary / kNoWork,
+  // and required for kReachedLocalBoundary.
+  const bool wake_allowed = result.reason == TickStopReason::kReachedLocalBoundary ||
+                            result.reason == TickStopReason::kNoWork;
+  if (!wake_allowed && result.HasWakeTime()) {
+    FailScheduler("Only kReachedLocalBoundary / kNoWork may carry a wake time");
+  }
+  if (result.reason == TickStopReason::kReachedLocalBoundary && !result.HasWakeTime()) {
+    FailScheduler("kReachedLocalBoundary requires next_wake_time");
+  }
+
+  const TimeMasterT committed_time = device.GetTime() + result.completed_cycles;
+  if (result.HasWakeTime() && result.next_wake_time < committed_time) {
     FailScheduler("Scheduler received a wake time earlier than committed device time");
   }
 }
@@ -191,7 +160,7 @@ void Scheduler::HandleRunResult(Device* device, const TickResult& result) {
       token_table_.SetBlocked(result.blocked_token, device->GetDeviceId());
       return;
     case TickStopReason::kNoWork:
-      if (result.next_wake_time == kNoWakeTime) {
+      if (!result.HasWakeTime()) {
         ClearPendingRun(state);
         ResetZeroProgressGuard(state);
         return;
@@ -212,7 +181,7 @@ void Scheduler::HandleRunResult(Device* device, const TickResult& result) {
 
   TimeMasterT next_run_time = device->GetTime();
   if ((result.reason == TickStopReason::kReachedLocalBoundary || result.reason == TickStopReason::kNoWork) &&
-      result.next_wake_time != kNoWakeTime) {
+      result.HasWakeTime()) {
     next_run_time = result.next_wake_time;
   }
 
@@ -372,7 +341,7 @@ void Scheduler::CatchUpDevice(DeviceIdT device_id, TimeMasterT target_time) {
         }
         break;
       case TickStopReason::kReachedLocalBoundary:
-        if (result.next_wake_time == kNoWakeTime) {
+        if (!result.HasWakeTime()) {
           FailScheduler("ReachedLocalBoundary requires next_wake_time during catch-up");
         }
         if (reached_target) {
@@ -428,16 +397,6 @@ std::vector<SchedulerEventView> Scheduler::SnapshotQueue() const {
   }
 
   return snapshot;
-}
-
-void Scheduler::DebugPrintNextEvent() {
-  if (eventQueue_.empty()) {
-    std::cerr << "No scheduled events.\n";
-    return;
-  }
-  const SchedulerEvent& event = eventQueue_.top();
-  std::cerr << "Next Event:\n";
-  DebugPrintSchedulerEvent(event, true);
 }
 
 void Scheduler::DebugPrintEventQueue() {

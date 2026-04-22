@@ -343,7 +343,7 @@ uint8_t CPU::ReadResetVectorByte(SnesAddrT addr) {
   }
 
   auto result = PlanAndFollow(addr, BusAccessType::kRead, 0, 0);
-  if (result.outcome == BusPlanOutcome::kScheduledComplete) {
+  if (result.WasScheduled()) {
     throw std::logic_error("CPU reset vector fetch cannot block on asynchronous bus access");
   }
   return result.data;
@@ -353,7 +353,7 @@ TickResult CPU::BusReadSlow(SnesAddrT addr, TimeMasterDeltaT cycle_time) {
   auto plan = snes_->system_bus->Plan(addr, BusAccessType::kRead, 0);
   last_access_cycles_ = plan.access_cycles;
   auto result = snes_->system_bus->Follow(plan, local_time_ + cycle_time, device_id_);
-  if (result.outcome == BusPlanOutcome::kScheduledComplete) {
+  if (result.WasScheduled()) {
     return TickResult{cycle_time, TickStopReason::kBlockedOnToken, result.token};
   }
   fetch_data_ = result.data;
@@ -364,7 +364,7 @@ TickResult CPU::BusWriteSlow(SnesAddrT addr, uint8_t data, TimeMasterDeltaT cycl
   auto plan = snes_->system_bus->Plan(addr, BusAccessType::kWrite, data);
   last_access_cycles_ = plan.access_cycles;
   auto result = snes_->system_bus->Follow(plan, local_time_ + cycle_time, device_id_);
-  if (result.outcome == BusPlanOutcome::kScheduledComplete) {
+  if (result.WasScheduled()) {
     return TickResult{cycle_time, TickStopReason::kBlockedOnToken, result.token};
   }
   return TickResult{0, TickStopReason::kContinue};
@@ -779,7 +779,7 @@ CPU::StepResult CPU::FetchOpcode(TimeMasterDeltaT cycle_time) {
   pending_trace_ = TraceEntry{local_time_ + cycle_time, opcode_address, regs_};
 
   TickResult blocked = BusRead(opcode_address, cycle_time);
-  if (blocked.reason != TickStopReason::kContinue) {
+  if (blocked.Stopped()) {
     return StepResult{0, blocked};
   }
   const TimeMasterDeltaT fetch_cycles = last_access_cycles_;
@@ -825,7 +825,7 @@ TickResult CPU::PerformBusAction(MicroBusAction action, [[maybe_unused]] uint8_t
     case MicroBusAction::kNone: return TickResult{0, TickStopReason::kContinue};
     case MicroBusAction::kFetchPc: {
       TickResult blocked = BusRead(PcAddr(regs_), cycle_time);
-      if (blocked.reason != TickStopReason::kContinue) return blocked;
+      if (blocked.Stopped()) return blocked;
       regs_.PC = static_cast<uint16_t>(regs_.PC + 1U);
       return TickResult{0, TickStopReason::kContinue};
     }
@@ -897,7 +897,7 @@ CPU::StepResult CPU::ExecuteMicroOp(TimeMasterDeltaT cycle_time) {
   const MicroOp& mop = ops[op_idx];
   const SnesAddrT pre_pc = PcAddr(regs_);
   TickResult blocked = PerformBusAction(mop.bus_action, mop.params, cycle_time);
-  if (blocked.reason != TickStopReason::kContinue) {
+  if (blocked.Stopped()) {
     return StepResult{0, blocked};
   }
   // Bus micro-ops charge the targeted page's access_speed (set as a side
@@ -958,7 +958,7 @@ TickResult CPU::Tick(TimeMasterDeltaT budget) {
     }
 
     StepResult step = ShouldFetchInstruction() ? FetchOpcode(cycle_time) : ExecuteMicroOp(cycle_time);
-    if (step.stop.reason != TickStopReason::kContinue) {
+    if (step.stop.Stopped()) {
       return step.stop;
     }
     if (step.master_cycles > 0) {

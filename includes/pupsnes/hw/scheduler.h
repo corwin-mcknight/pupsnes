@@ -127,7 +127,6 @@ class Scheduler {
   [[nodiscard]] bool HasPendingRunAtOrBefore(DeviceIdT device_id, TimeMasterT time) const;
   [[nodiscard]] std::vector<SchedulerEventView> SnapshotQueue() const;
 
-  void DebugPrintNextEvent();
   void DebugPrintEventQueue();
 };
 

@@ -81,11 +81,3 @@ pupsnes::DeviceIdT pupsnes::SNES::RegisterDevice(Device* device) {
   devices_.push_back(device);
   return id;
 }
-
-void pupsnes::SNES::DebugPrintInfo() {
-  std::cerr << "SNES Info:\n";
-  std::cerr << std::format("  Time (master): {}\n", time_now_);
-
-  scheduler->DebugPrintNextEvent();
-  scheduler->DebugPrintEventQueue();
-}
