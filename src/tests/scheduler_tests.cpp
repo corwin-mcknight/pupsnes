@@ -302,7 +302,9 @@ TEST_CASE("Authoritative run replacement prefers the newest wake in both directi
 
   snes.scheduler->Step();
   REQUIRE(earlier.tick_calls == 1);
-  REQUIRE(snes.GetMasterTime() == 10);
+  // Master time tracks the simulated wall clock: event.time (10) + completed
+  // cycles from the tick (1).
+  REQUIRE(snes.GetMasterTime() == 11);
 
   snes.scheduler->Step();
   REQUIRE(earlier.tick_calls == 1);
@@ -313,7 +315,9 @@ TEST_CASE("Authoritative run replacement prefers the newest wake in both directi
 
   snes.scheduler->Step();
   REQUIRE(later.tick_calls == 1);
-  REQUIRE(snes.GetMasterTime() == 30);
+  // Master time tracks the simulated wall clock: event.time (30) + completed
+  // cycles from the tick (1).
+  REQUIRE(snes.GetMasterTime() == 31);
 }
 
 TEST_CASE(

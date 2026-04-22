@@ -263,6 +263,15 @@ void Scheduler::Step() {
       auto result = event.source->Tick(budget);
       ValidateTickResult(*event.source, result, budget);
       event.source->AdvanceLocalTime(result.completed_cycles);
+      // Master time is the simulated-wall-clock front, not just the dispatch
+      // pointer. The device has committed `completed_cycles` of work; advance
+      // master to match so later readers (debug UI, error logs, fault
+      // timestamps) see the true simulated present. The budget was clipped to
+      // the next pre-existing event, and the only mid-tick event source
+      // (FollowScheduled → CreateToken) pairs creation with immediate device
+      // block at the cycle of creation — both guarantee no queued event lands
+      // in `[event.time, event.time + completed_cycles)`.
+      snes_->SetMasterTime(event.time + result.completed_cycles);
       HandleRunResult(event.source, result);
       break;
     }
