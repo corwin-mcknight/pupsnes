@@ -2,6 +2,7 @@
 
 #include "debugger/app.h"
 #include "imgui.h"
+#include "panel_utils.h"
 #include "panels.h"
 
 namespace pupsnes::debugger {
@@ -36,7 +37,7 @@ void RenderMemoryPanel(DebuggerApp& app) {
   ImGui::Separator();
   for (int row = 0; row < 16; ++row) {
     const SnesAddrT row_addr = (base + static_cast<SnesAddrT>(row * 16)) & 0x00FFFFFFU;
-    ImGui::Text("$%02X:%04X", static_cast<unsigned>(row_addr >> 16), static_cast<unsigned>(row_addr & 0xFFFFU));
+    TextAddress24(row_addr);
     ImGui::SameLine();
 
     for (int col = 0; col < 16; ++col) {
@@ -63,8 +64,7 @@ void RenderMemoryPanel(DebuggerApp& app) {
 
   if (ui.selected_memory_address.has_value()) {
     ImGui::Separator();
-    ImGui::Text("Selected $%02X:%04X", static_cast<unsigned>(*ui.selected_memory_address >> 16),
-                static_cast<unsigned>(*ui.selected_memory_address & 0xFFFFU));
+    ImGui::Text("Selected %s", FormatAddress24(*ui.selected_memory_address).c_str());
     ImGui::SetNextItemWidth(80.0F);
     ImGui::InputScalar("Value", ImGuiDataType_U8, &ui.memory_edit_value, nullptr, nullptr, "%02X",
                        ImGuiInputTextFlags_CharsHexadecimal);

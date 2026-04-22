@@ -3,15 +3,13 @@
 #include <format>
 #include <string>
 
+#include "debugger/ui_utils.h"
+
 namespace pupsnes::debugger {
 
 namespace {
 
 SnesAddrT WrapAddress(SnesAddrT address) { return address & 0x00FFFFFFU; }
-
-std::string FormatAddress24(SnesAddrT address) {
-  return std::format("${:02X}:{:04X}", static_cast<unsigned>(address >> 16), static_cast<unsigned>(address & 0xFFFFU));
-}
 
 std::string FormatOperand(const OpcodeMetadataView& metadata, SnesAddrT pc, uint8_t length,
                           const std::array<uint8_t, 4>& bytes) {

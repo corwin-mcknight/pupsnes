@@ -1,4 +1,5 @@
 #include "debugger/app.h"
+#include "debugger/ui_utils.h"
 #include "imgui.h"
 #include "panels.h"
 #include "pupsnes/debugger/disasm.h"
@@ -34,12 +35,11 @@ void RenderDisasmPanel(DebuggerApp& app) {
     }
     ImGui::SameLine();
 
+    const std::string addr = FormatAddress24(line.pc);
     if (is_current) {
-      ImGui::TextColored(ImVec4(0.96F, 0.82F, 0.28F, 1.0F), "$%02X:%04X  %s", static_cast<unsigned>(line.pc >> 16),
-                         static_cast<unsigned>(line.pc & 0xFFFFU), line.text.c_str());
+      ImGui::TextColored(ImVec4(0.96F, 0.82F, 0.28F, 1.0F), "%s  %s", addr.c_str(), line.text.c_str());
     } else {
-      ImGui::Text("$%02X:%04X  %s", static_cast<unsigned>(line.pc >> 16), static_cast<unsigned>(line.pc & 0xFFFFU),
-                  line.text.c_str());
+      ImGui::Text("%s  %s", addr.c_str(), line.text.c_str());
     }
     ImGui::PopID();
 

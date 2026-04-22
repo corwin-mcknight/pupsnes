@@ -2,6 +2,7 @@
 
 #include "debugger/app.h"
 #include "imgui.h"
+#include "panel_utils.h"
 #include "panels.h"
 
 namespace pupsnes::debugger {
@@ -69,8 +70,7 @@ void RenderErrorsPanel(DebuggerApp& app) {
           app.JumpToAddress(*event.address);
         }
         ImGui::SameLine();
-        ImGui::Text("$%02X:%04X", static_cast<unsigned>(*event.address >> 16),
-                    static_cast<unsigned>(*event.address & 0xFFFFU));
+        TextAddress24(*event.address);
       } else {
         ImGui::TextUnformatted("-");
       }

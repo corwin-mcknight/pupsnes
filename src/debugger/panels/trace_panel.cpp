@@ -3,6 +3,7 @@
 
 #include "debugger/app.h"
 #include "imgui.h"
+#include "panel_utils.h"
 #include "panels.h"
 #include "pupsnes/debugger/disasm.h"
 
@@ -33,7 +34,7 @@ void RenderTracePanel(DebuggerApp& app) {
         ImGui::TableSetColumnIndex(0);
         ImGui::Text("%" PRIu64, entry.master_time);
         ImGui::TableSetColumnIndex(1);
-        ImGui::Text("$%02X:%04X", static_cast<unsigned>(entry.pc >> 16), static_cast<unsigned>(entry.pc & 0xFFFFU));
+        TextAddress24(entry.pc);
         ImGui::TableSetColumnIndex(2);
         ImGui::Text("%02X", view.opcode);
         ImGui::TableSetColumnIndex(3);

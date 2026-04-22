@@ -3,6 +3,7 @@
 
 #include "debugger/app.h"
 #include "imgui.h"
+#include "panel_utils.h"
 #include "panels.h"
 #include "pupsnes/debugger/bus_event_log.h"
 
@@ -65,8 +66,7 @@ void RenderBusEventPanel(DebuggerApp& app) {
         ImGui::TextColored(info.color, "%s", info.label);
 
         ImGui::TableSetColumnIndex(2);
-        ImGui::Text("$%02X:%04X", static_cast<unsigned>((e.address >> 16) & 0xFFU),
-                    static_cast<unsigned>(e.address & 0xFFFFU));
+        TextAddress24(e.address);
 
         ImGui::TableSetColumnIndex(3);
         ImGui::Text("%02X", e.data);

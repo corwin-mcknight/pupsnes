@@ -2,6 +2,7 @@
 
 #include "debugger/app.h"
 #include "imgui.h"
+#include "panel_utils.h"
 #include "panels.h"
 
 namespace pupsnes::debugger {
@@ -43,7 +44,7 @@ void RenderStackPanel(DebuggerApp& app) {
       }
 
       ImGui::TableSetColumnIndex(0);
-      ImGui::Text("$00:%04X", static_cast<unsigned>(target_sp));
+      TextAddress24(static_cast<SnesAddrT>(target_sp));
       ImGui::TableSetColumnIndex(1);
       if (cell.ok) {
         ImGui::Text("%02X", static_cast<unsigned>(cell.value));
