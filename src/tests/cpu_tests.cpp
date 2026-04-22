@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <vector>
 
+#include "cpu_test_fixture.h"
 #include "pupsnes/hw/5a22/cpu.h"
 #include "pupsnes/hw/cartridge.h"
 #include "pupsnes/hw/device.h"
@@ -105,58 +106,11 @@ struct AsyncProgramFixture {
 
 using RegPtr = uint16_t CPU::Regs::*;
 
-static void SetDataBank(CPU& cpu, uint8_t dbr) {
-  auto regs = cpu.GetRegs();
-  regs.DBR = dbr;
-  cpu.SetRegs(regs);
-}
-
-static void SetAccumulator16(CPU& cpu, uint16_t value) {
-  auto regs = cpu.GetRegs();
-  regs.P.E = false;
-  regs.P.M = false;
-  regs.A = value;
-  cpu.SetRegs(regs);
-}
-
-static void SetIndex16X(CPU& cpu, uint16_t value) {
-  auto regs = cpu.GetRegs();
-  regs.P.E = false;
-  regs.P.X = false;
-  regs.X = value;
-  cpu.SetRegs(regs);
-}
-
-static void SetIndex16Y(CPU& cpu, uint16_t value) {
-  auto regs = cpu.GetRegs();
-  regs.P.E = false;
-  regs.P.X = false;
-  regs.Y = value;
-  cpu.SetRegs(regs);
-}
-
-struct ResetFixture {
-  SNES snes;
-  Cartridge& cartridge;
-  WRAM& wram;
-  CPU& cpu;
-  std::array<uint8_t, Cartridge::kLoROMWindowSize> rom{};
-
-  ResetFixture() : cartridge(snes.GetCartridge()), wram(snes.GetWram()), cpu(snes.GetCpu()) {
-    rom.fill(0xEA);
-    SetResetVector(0x8000);
-    SyncCartridge();
-  }
-
-  void SetResetVector(uint16_t address) {
-    rom[0x7FFCU] = static_cast<uint8_t>(address & 0x00FFU);
-    rom[0x7FFDU] = static_cast<uint8_t>(address >> 8U);
-  }
-
-  void SetRomByte(std::size_t offset, uint8_t value) { rom[offset] = value; }
-
-  void SyncCartridge() { snes.LoadLoRom(rom); }
-};
+using pupsnes::test::ResetFixture;
+using pupsnes::test::SetAccumulator16;
+using pupsnes::test::SetDataBank;
+using pupsnes::test::SetIndex16X;
+using pupsnes::test::SetIndex16Y;
 
 TEST_CASE("CPU registers with SNES on construction", "[cpu]") {
   SNES snes;
@@ -215,17 +169,15 @@ TEST_CASE(
     "vector",
     "[cpu]") {
   ResetFixture f;
-  f.SetRomByte(0x0000U, 0xA9);
-  f.SetRomByte(0x0001U, 0x11);
-  f.SyncCartridge();
+  f.LoadInstruction({0xA9, 0x11});
 
-  auto regs = f.cpu.GetRegs();
-  regs.A = 0x00FF;
-  regs.PC = 0x8000;
-  regs.PBR = 0x00;
-  regs.P.D = true;
-  regs.P.C = true;
-  f.cpu.SetRegs(regs);
+  f.ModifyRegs([](auto& r) {
+    r.A = 0x00FF;
+    r.PC = 0x8000;
+    r.PBR = 0x00;
+    r.P.D = true;
+    r.P.C = true;
+  });
   (void)f.cpu.Tick(8);
   REQUIRE(f.cpu.GetMicroOpIndex() == 1);
 
@@ -241,9 +193,7 @@ TEST_CASE(
 
 TEST_CASE("CPU executes from the cartridge after reset", "[cpu]") {
   ResetFixture f;
-  f.SetRomByte(0x0000U, 0xA9);
-  f.SetRomByte(0x0001U, 0x42);
-  f.SyncCartridge();
+  f.LoadInstruction({0xA9, 0x42});
 
   f.cpu.Reset();
   TickResult r = f.cpu.Tick(16);
@@ -273,9 +223,7 @@ TEST_CASE("BRA branches relative to the post-operand PC", "[cpu]") {
 
 TEST_CASE("BRA supports negative displacements for tight loops", "[cpu]") {
   ResetFixture f;
-  f.SetRomByte(0x0000U, 0x80);
-  f.SetRomByte(0x0001U, 0xFE);
-  f.SyncCartridge();
+  f.LoadInstruction({0x80, 0xFE});
 
   f.cpu.Reset();
   TickResult r = f.cpu.Tick(44);
@@ -291,16 +239,14 @@ TEST_CASE("BNE not taken in emulation with DP-low nonzero does not spuriously ad
   // opcodes, branches that don't cross a page still trigger the emulation
   // page-cross penalty when (DP & 0xFF) != 0.
   ResetFixture f;
-  f.SetRomByte(0x0000U, 0xD0);
-  f.SetRomByte(0x0001U, 0x02);
-  f.SyncCartridge();
+  f.LoadInstruction({0xD0, 0x02});
 
   f.cpu.Reset();
-  auto regs = f.cpu.GetRegs();
-  regs.P.Z = true;   // BNE not taken
-  regs.P.E = true;   // Emulation mode
-  regs.DP = 0x0055;  // DL nonzero would spuriously set bit 4 without the fix
-  f.cpu.SetRegs(regs);
+  f.ModifyRegs([](auto& r) {
+    r.P.Z = true;   // BNE not taken
+    r.P.E = true;   // Emulation mode
+    r.DP = 0x0055;  // DL nonzero would spuriously set bit 4 without the fix
+  });
 
   TickResult r = f.cpu.Tick(16);
 
@@ -310,15 +256,10 @@ TEST_CASE("BNE not taken in emulation with DP-low nonzero does not spuriously ad
 
 TEST_CASE("BNE not taken falls through without the guarded branch cycle", "[cpu]") {
   ResetFixture f;
-  f.SetRomByte(0x0000U, 0xD0);
-  f.SetRomByte(0x0001U, 0x02);
-  f.SetRomByte(0x0002U, 0xEA);
-  f.SyncCartridge();
+  f.LoadInstruction({0xD0, 0x02, 0xEA});
 
   f.cpu.Reset();
-  auto regs = f.cpu.GetRegs();
-  regs.P.Z = true;
-  f.cpu.SetRegs(regs);
+  f.ModifyRegs([](auto& r) { r.P.Z = true; });
 
   TickResult r = f.cpu.Tick(16);
 
@@ -347,9 +288,7 @@ TEST_CASE("BNE taken executes the guarded branch cycle", "[cpu]") {
 
 TEST_CASE("BNE supports negative displacements for tight loops", "[cpu]") {
   ResetFixture f;
-  f.SetRomByte(0x0000U, 0xD0);
-  f.SetRomByte(0x0001U, 0xFE);
-  f.SyncCartridge();
+  f.LoadInstruction({0xD0, 0xFE});
 
   f.cpu.Reset();
   TickResult r = f.cpu.Tick(44);
@@ -382,9 +321,7 @@ TEST_CASE("BRA page-cross penalty does not fire in native mode", "[cpu]") {
   f.SyncCartridge();
 
   f.cpu.Reset();
-  auto regs = f.cpu.GetRegs();
-  regs.P.E = false;
-  f.cpu.SetRegs(regs);
+  f.ModifyRegs([](auto& r) { r.P.E = false; });
 
   TickResult r = f.cpu.Tick(22);
 
@@ -410,13 +347,7 @@ TEST_CASE("BNE taken with page cross in emulation mode consumes the penalty cycl
 
 TEST_CASE("STA long writes accumulator low byte to mapped WRAM", "[cpu]") {
   ResetFixture f;
-  f.SetRomByte(0x0000U, 0xA9);
-  f.SetRomByte(0x0001U, 0x5A);
-  f.SetRomByte(0x0002U, 0x8F);
-  f.SetRomByte(0x0003U, 0x00);
-  f.SetRomByte(0x0004U, 0x00);
-  f.SetRomByte(0x0005U, 0x7E);
-  f.SyncCartridge();
+  f.LoadInstruction({0xA9, 0x5A, 0x8F, 0x00, 0x00, 0x7E});
 
   f.cpu.Reset();
   TickResult r = f.cpu.Tick(56);
@@ -430,16 +361,13 @@ TEST_CASE("STA long writes accumulator low byte to mapped WRAM", "[cpu]") {
 
 TEST_CASE("STA absolute uses DBR and writes accumulator low byte to WRAM", "[cpu]") {
   ResetFixture f;
-  f.SetRomByte(0x0000U, 0x8D);
-  f.SetRomByte(0x0001U, 0x00);
-  f.SetRomByte(0x0002U, 0x00);
-  f.SyncCartridge();
+  f.LoadInstruction({0x8D, 0x00, 0x00});
 
   f.cpu.Reset();
-  auto regs = f.cpu.GetRegs();
-  regs.A = 0x005A;
-  regs.DBR = 0x7E;
-  f.cpu.SetRegs(regs);
+  f.ModifyRegs([](auto& r) {
+    r.A = 0x005A;
+    r.DBR = 0x7E;
+  });
 
   TickResult r = f.cpu.Tick(32);
 
@@ -451,16 +379,11 @@ TEST_CASE("STA absolute uses DBR and writes accumulator low byte to WRAM", "[cpu
 
 TEST_CASE("STX absolute uses DBR and writes X low byte to WRAM", "[cpu]") {
   ResetFixture f;
-  f.SetRomByte(0x0000U, 0x8E);
-  f.SetRomByte(0x0001U, 0x01);
-  f.SetRomByte(0x0002U, 0x00);
-  f.SyncCartridge();
+  f.LoadInstruction({0x8E, 0x01, 0x00});
 
   f.cpu.Reset();
   SetDataBank(f.cpu, 0x7E);
-  auto regs = f.cpu.GetRegs();
-  regs.X = 0x0034;
-  f.cpu.SetRegs(regs);
+  f.ModifyRegs([](auto& r) { r.X = 0x0034; });
 
   TickResult r = f.cpu.Tick(32);
 
@@ -472,16 +395,11 @@ TEST_CASE("STX absolute uses DBR and writes X low byte to WRAM", "[cpu]") {
 
 TEST_CASE("STY absolute uses DBR and writes Y low byte to WRAM", "[cpu]") {
   ResetFixture f;
-  f.SetRomByte(0x0000U, 0x8C);
-  f.SetRomByte(0x0001U, 0x02);
-  f.SetRomByte(0x0002U, 0x00);
-  f.SyncCartridge();
+  f.LoadInstruction({0x8C, 0x02, 0x00});
 
   f.cpu.Reset();
   SetDataBank(f.cpu, 0x7E);
-  auto regs = f.cpu.GetRegs();
-  regs.Y = 0x0078;
-  f.cpu.SetRegs(regs);
+  f.ModifyRegs([](auto& r) { r.Y = 0x0078; });
 
   TickResult r = f.cpu.Tick(32);
 
@@ -493,11 +411,7 @@ TEST_CASE("STY absolute uses DBR and writes Y low byte to WRAM", "[cpu]") {
 
 TEST_CASE("STA long writes both accumulator bytes when M is clear", "[cpu]") {
   ResetFixture f;
-  f.SetRomByte(0x0000U, 0x8F);
-  f.SetRomByte(0x0001U, 0x00);
-  f.SetRomByte(0x0002U, 0x00);
-  f.SetRomByte(0x0003U, 0x7E);
-  f.SyncCartridge();
+  f.LoadInstruction({0x8F, 0x00, 0x00, 0x7E});
 
   f.cpu.Reset();
   SetAccumulator16(f.cpu, 0xBEEF);
@@ -513,10 +427,7 @@ TEST_CASE("STA long writes both accumulator bytes when M is clear", "[cpu]") {
 
 TEST_CASE("STX absolute writes both index bytes when X is clear", "[cpu]") {
   ResetFixture f;
-  f.SetRomByte(0x0000U, 0x8E);
-  f.SetRomByte(0x0001U, 0x10);
-  f.SetRomByte(0x0002U, 0x00);
-  f.SyncCartridge();
+  f.LoadInstruction({0x8E, 0x10, 0x00});
 
   f.cpu.Reset();
   SetDataBank(f.cpu, 0x7E);
@@ -533,10 +444,7 @@ TEST_CASE("STX absolute writes both index bytes when X is clear", "[cpu]") {
 
 TEST_CASE("STY absolute writes both index bytes when X is clear", "[cpu]") {
   ResetFixture f;
-  f.SetRomByte(0x0000U, 0x8C);
-  f.SetRomByte(0x0001U, 0x20);
-  f.SetRomByte(0x0002U, 0x00);
-  f.SyncCartridge();
+  f.LoadInstruction({0x8C, 0x20, 0x00});
 
   f.cpu.Reset();
   SetDataBank(f.cpu, 0x7E);
@@ -553,10 +461,7 @@ TEST_CASE("STY absolute writes both index bytes when X is clear", "[cpu]") {
 
 TEST_CASE("STA absolute writes both accumulator bytes when M is clear", "[cpu]") {
   ResetFixture f;
-  f.SetRomByte(0x0000U, 0x8D);
-  f.SetRomByte(0x0001U, 0x30);
-  f.SetRomByte(0x0002U, 0x00);
-  f.SyncCartridge();
+  f.LoadInstruction({0x8D, 0x30, 0x00});
 
   f.cpu.Reset();
   SetDataBank(f.cpu, 0x7E);
@@ -573,11 +478,7 @@ TEST_CASE("STA absolute writes both accumulator bytes when M is clear", "[cpu]")
 
 TEST_CASE("STA direct page writes accumulator low byte with DP=0 and no DL penalty", "[cpu]") {
   ResetFixture f;
-  f.SetRomByte(0x0000U, 0xA9);
-  f.SetRomByte(0x0001U, 0x5A);
-  f.SetRomByte(0x0002U, 0x85);
-  f.SetRomByte(0x0003U, 0x10);
-  f.SyncCartridge();
+  f.LoadInstruction({0xA9, 0x5A, 0x85, 0x10});
 
   f.cpu.Reset();
   TickResult r = f.cpu.Tick(40);  // LDA#2 + STA dp (3 with M=1,DL=0)
@@ -591,15 +492,13 @@ TEST_CASE("STA direct page writes accumulator low byte with DP=0 and no DL penal
 
 TEST_CASE("STA direct page incurs +1 cycle penalty when DP low byte is nonzero", "[cpu]") {
   ResetFixture f;
-  f.SetRomByte(0x0000U, 0x85);
-  f.SetRomByte(0x0001U, 0x10);
-  f.SyncCartridge();
+  f.LoadInstruction({0x85, 0x10});
 
   f.cpu.Reset();
-  auto regs = f.cpu.GetRegs();
-  regs.A = 0x00A7;
-  regs.DP = 0x0020;  // DL nonzero → +1 cycle
-  f.cpu.SetRegs(regs);
+  f.ModifyRegs([](auto& r) {
+    r.A = 0x00A7;
+    r.DP = 0x0020;  // DL nonzero → +1 cycle
+  });
 
   TickResult r = f.cpu.Tick(30);
 
@@ -611,16 +510,14 @@ TEST_CASE("STA direct page incurs +1 cycle penalty when DP low byte is nonzero",
 
 TEST_CASE("STA direct page writes both accumulator bytes when M is clear", "[cpu]") {
   ResetFixture f;
-  f.SetRomByte(0x0000U, 0x85);
-  f.SetRomByte(0x0001U, 0x40);
-  f.SyncCartridge();
+  f.LoadInstruction({0x85, 0x40});
 
   f.cpu.Reset();
-  auto regs = f.cpu.GetRegs();
-  regs.P.E = false;
-  regs.P.M = false;
-  regs.A = 0xBEEF;
-  f.cpu.SetRegs(regs);
+  f.ModifyRegs([](auto& r) {
+    r.P.E = false;
+    r.P.M = false;
+    r.A = 0xBEEF;
+  });
 
   TickResult r = f.cpu.Tick(32);  // 4-m+w with m=0,w=0 = 4
 
@@ -633,9 +530,7 @@ TEST_CASE("STA direct page writes both accumulator bytes when M is clear", "[cpu
 
 TEST_CASE("LDA direct page loads from bank 0 (DP + offset)", "[cpu]") {
   ResetFixture f;
-  f.SetRomByte(0x0000U, 0xA5);
-  f.SetRomByte(0x0001U, 0x50);
-  f.SyncCartridge();
+  f.LoadInstruction({0xA5, 0x50});
 
   f.cpu.Reset();
   f.wram.WriteRegister(0x0050, 0x42);
@@ -652,17 +547,15 @@ TEST_CASE("LDA direct page loads from bank 0 (DP + offset)", "[cpu]") {
 
 TEST_CASE("LDA direct page loads 16-bit value when M is clear", "[cpu]") {
   ResetFixture f;
-  f.SetRomByte(0x0000U, 0xA5);
-  f.SetRomByte(0x0001U, 0x80);
-  f.SyncCartridge();
+  f.LoadInstruction({0xA5, 0x80});
 
   f.cpu.Reset();
   f.wram.WriteRegister(0x0080, 0xCD);
   f.wram.WriteRegister(0x0081, 0xAB);
-  auto regs = f.cpu.GetRegs();
-  regs.P.E = false;
-  regs.P.M = false;
-  f.cpu.SetRegs(regs);
+  f.ModifyRegs([](auto& r) {
+    r.P.E = false;
+    r.P.M = false;
+  });
 
   TickResult r = f.cpu.Tick(32);  // 4-m+w with m=0,w=0 = 4
 
@@ -676,14 +569,12 @@ TEST_CASE("LDA direct page loads 16-bit value when M is clear", "[cpu]") {
 
 TEST_CASE("LDA direct page incurs DL-nonzero penalty cycle", "[cpu]") {
   ResetFixture f;
-  f.SetRomByte(0x0000U, 0xA5);
-  f.SetRomByte(0x0001U, 0x10);
-  f.SyncCartridge();
+  f.LoadInstruction({0xA5, 0x10});
 
   f.cpu.Reset();
-  auto regs = f.cpu.GetRegs();
-  regs.DP = 0x0123;  // DL nonzero → +1 cycle
-  f.cpu.SetRegs(regs);
+  f.ModifyRegs([](auto& r) {
+    r.DP = 0x0123;  // DL nonzero → +1 cycle
+  });
   f.wram.WriteRegister(0x0133, 0x99);
 
   TickResult r = f.cpu.Tick(30);  // 4-m+w = 3 + w(1) = 4
@@ -697,17 +588,7 @@ TEST_CASE("LDA direct page incurs DL-nonzero penalty cycle", "[cpu]") {
 TEST_CASE("LDX/LDY/STX/STY/STZ direct page cover register + zero paths", "[cpu]") {
   ResetFixture f;
   // LDX $10 ; STX $14 ; LDY $11 ; STY $15 ; STZ $12
-  f.SetRomByte(0x0000U, 0xA6);
-  f.SetRomByte(0x0001U, 0x10);
-  f.SetRomByte(0x0002U, 0x86);
-  f.SetRomByte(0x0003U, 0x14);
-  f.SetRomByte(0x0004U, 0xA4);
-  f.SetRomByte(0x0005U, 0x11);
-  f.SetRomByte(0x0006U, 0x84);
-  f.SetRomByte(0x0007U, 0x15);
-  f.SetRomByte(0x0008U, 0x64);
-  f.SetRomByte(0x0009U, 0x12);
-  f.SyncCartridge();
+  f.LoadInstruction({0xA6, 0x10, 0x86, 0x14, 0xA4, 0x11, 0x84, 0x15, 0x64, 0x12});
 
   f.cpu.Reset();
   f.wram.WriteRegister(0x0010, 0x7A);
@@ -729,17 +610,15 @@ TEST_CASE("LDX/LDY/STX/STY/STZ direct page cover register + zero paths", "[cpu]"
 
 TEST_CASE("STZ direct page writes zero to both DP bytes when M is clear", "[cpu]") {
   ResetFixture f;
-  f.SetRomByte(0x0000U, 0x64);
-  f.SetRomByte(0x0001U, 0x20);
-  f.SyncCartridge();
+  f.LoadInstruction({0x64, 0x20});
 
   f.cpu.Reset();
   f.wram.WriteRegister(0x0020, 0xAA);
   f.wram.WriteRegister(0x0021, 0xBB);
-  auto regs = f.cpu.GetRegs();
-  regs.P.E = false;
-  regs.P.M = false;
-  f.cpu.SetRegs(regs);
+  f.ModifyRegs([](auto& r) {
+    r.P.E = false;
+    r.P.M = false;
+  });
 
   TickResult r = f.cpu.Tick(32);
 
@@ -751,14 +630,12 @@ TEST_CASE("STZ direct page writes zero to both DP bytes when M is clear", "[cpu]
 
 TEST_CASE("LDA direct page indexed X reads (DP + offset + X) in bank 0", "[cpu]") {
   ResetFixture f;
-  f.SetRomByte(0x0000U, 0xB5);
-  f.SetRomByte(0x0001U, 0x20);
-  f.SyncCartridge();
+  f.LoadInstruction({0xB5, 0x20});
 
   f.cpu.Reset();
-  auto regs = f.cpu.GetRegs();
-  regs.X = 0x000A;  // 8-bit X
-  f.cpu.SetRegs(regs);
+  f.ModifyRegs([](auto& r) {
+    r.X = 0x000A;  // 8-bit X
+  });
   f.wram.WriteRegister(0x002A, 0x55);
 
   TickResult r = f.cpu.Tick(30);  // 5-m+w with m=1,w=0 = 4
@@ -771,9 +648,7 @@ TEST_CASE("LDA direct page indexed X reads (DP + offset + X) in bank 0", "[cpu]"
 
 TEST_CASE("LDX direct page indexed Y respects 16-bit index addition", "[cpu]") {
   ResetFixture f;
-  f.SetRomByte(0x0000U, 0xB6);
-  f.SetRomByte(0x0001U, 0x10);
-  f.SyncCartridge();
+  f.LoadInstruction({0xB6, 0x10});
 
   f.cpu.Reset();
   SetIndex16Y(f.cpu, 0x0080);  // 16-bit Y so X=0 in P
@@ -789,16 +664,14 @@ TEST_CASE("LDX direct page indexed Y respects 16-bit index addition", "[cpu]") {
 
 TEST_CASE("STA direct page indexed X incurs DL-nonzero penalty", "[cpu]") {
   ResetFixture f;
-  f.SetRomByte(0x0000U, 0x95);
-  f.SetRomByte(0x0001U, 0x10);
-  f.SyncCartridge();
+  f.LoadInstruction({0x95, 0x10});
 
   f.cpu.Reset();
-  auto regs = f.cpu.GetRegs();
-  regs.A = 0x003C;
-  regs.X = 0x0002;
-  regs.DP = 0x0040;  // DL nonzero → +1 cycle
-  f.cpu.SetRegs(regs);
+  f.ModifyRegs([](auto& r) {
+    r.A = 0x003C;
+    r.X = 0x0002;
+    r.DP = 0x0040;  // DL nonzero → +1 cycle
+  });
 
   TickResult r = f.cpu.Tick(44);  // 5-m+w with m=1,w=1 = 5
 
@@ -809,14 +682,10 @@ TEST_CASE("STA direct page indexed X incurs DL-nonzero penalty", "[cpu]") {
 
 TEST_CASE("STZ direct page indexed X clears bank 0 byte", "[cpu]") {
   ResetFixture f;
-  f.SetRomByte(0x0000U, 0x74);
-  f.SetRomByte(0x0001U, 0x30);
-  f.SyncCartridge();
+  f.LoadInstruction({0x74, 0x30});
 
   f.cpu.Reset();
-  auto regs = f.cpu.GetRegs();
-  regs.X = 0x0004;
-  f.cpu.SetRegs(regs);
+  f.ModifyRegs([](auto& r) { r.X = 0x0004; });
   f.wram.WriteRegister(0x0034, 0x77);
 
   TickResult r = f.cpu.Tick(38);
@@ -829,10 +698,7 @@ TEST_CASE("STZ direct page indexed X clears bank 0 byte", "[cpu]") {
 TEST_CASE("STZ absolute writes zero through DBR-banked effective address", "[cpu]") {
   ResetFixture f;
   // STZ $1234
-  f.SetRomByte(0x0000U, 0x9C);
-  f.SetRomByte(0x0001U, 0x34);
-  f.SetRomByte(0x0002U, 0x12);
-  f.SyncCartridge();
+  f.LoadInstruction({0x9C, 0x34, 0x12});
 
   f.cpu.Reset();
   SetDataBank(f.cpu, 0x7E);
@@ -849,10 +715,7 @@ TEST_CASE("STZ absolute writes zero through DBR-banked effective address", "[cpu
 
 TEST_CASE("STZ absolute clears both bytes when M is clear", "[cpu]") {
   ResetFixture f;
-  f.SetRomByte(0x0000U, 0x9C);
-  f.SetRomByte(0x0001U, 0x40);
-  f.SetRomByte(0x0002U, 0x00);
-  f.SyncCartridge();
+  f.LoadInstruction({0x9C, 0x40, 0x00});
 
   f.cpu.Reset();
   SetDataBank(f.cpu, 0x7E);
@@ -872,16 +735,13 @@ TEST_CASE("STZ absolute clears both bytes when M is clear", "[cpu]") {
 TEST_CASE("STZ absolute indexed X adds X into the DBR-banked effective address", "[cpu]") {
   ResetFixture f;
   // STZ $1200,X
-  f.SetRomByte(0x0000U, 0x9E);
-  f.SetRomByte(0x0001U, 0x00);
-  f.SetRomByte(0x0002U, 0x12);
-  f.SyncCartridge();
+  f.LoadInstruction({0x9E, 0x00, 0x12});
 
   f.cpu.Reset();
   SetDataBank(f.cpu, 0x7E);
-  auto regs = f.cpu.GetRegs();
-  regs.X = 0x0034;  // 8-bit X
-  f.cpu.SetRegs(regs);
+  f.ModifyRegs([](auto& r) {
+    r.X = 0x0034;  // 8-bit X
+  });
   f.wram.WriteRegister(0x1234, 0x99);
 
   // 6-m with m=1 = 5 cycles.
@@ -896,19 +756,16 @@ TEST_CASE("STZ absolute indexed X adds X into the DBR-banked effective address",
 TEST_CASE("STZ absolute indexed X carries across the bank boundary", "[cpu]") {
   ResetFixture f;
   // STZ $FFFF,X  with X=1  -> effective bank 0x7F:$0000
-  f.SetRomByte(0x0000U, 0x9E);
-  f.SetRomByte(0x0001U, 0xFF);
-  f.SetRomByte(0x0002U, 0xFF);
-  f.SyncCartridge();
+  f.LoadInstruction({0x9E, 0xFF, 0xFF});
 
   f.cpu.Reset();
   SetDataBank(f.cpu, 0x7E);
   SetIndex16X(f.cpu, 0x0001);
   f.wram.WriteRegister(0xFFFF, 0xCC);  // not this one
   // 0x7F:$0000 = WRAM linear offset 0x10000; poke via bank 0x7F mapping
-  auto regs = f.cpu.GetRegs();
-  regs.P.M = true;  // 8-bit store
-  f.cpu.SetRegs(regs);
+  f.ModifyRegs([](auto& r) {
+    r.P.M = true;  // 8-bit store
+  });
 
   // Prime WRAM $10000 (bank 0x7F:$0000) with nonzero so we can see the clear.
   f.wram.WriteRegister(0x10000, 0xDD);
@@ -923,14 +780,10 @@ TEST_CASE("STZ absolute indexed X carries across the bank boundary", "[cpu]") {
 
 TEST_CASE("LDA stack-relative reads bank-0 (SP + offset)", "[cpu]") {
   ResetFixture f;
-  f.SetRomByte(0x0000U, 0xA3);
-  f.SetRomByte(0x0001U, 0x04);
-  f.SyncCartridge();
+  f.LoadInstruction({0xA3, 0x04});
 
   f.cpu.Reset();
-  auto regs = f.cpu.GetRegs();
-  regs.SP = 0x01F0;
-  f.cpu.SetRegs(regs);
+  f.ModifyRegs([](auto& r) { r.SP = 0x01F0; });
   f.wram.WriteRegister(0x01F4, 0x66);
 
   TickResult r = f.cpu.Tick(38);  // 5-m at m=1 = 4
@@ -941,15 +794,13 @@ TEST_CASE("LDA stack-relative reads bank-0 (SP + offset)", "[cpu]") {
 
 TEST_CASE("STA stack-relative writes to bank-0 (SP + offset)", "[cpu]") {
   ResetFixture f;
-  f.SetRomByte(0x0000U, 0x83);
-  f.SetRomByte(0x0001U, 0x03);
-  f.SyncCartridge();
+  f.LoadInstruction({0x83, 0x03});
 
   f.cpu.Reset();
-  auto regs = f.cpu.GetRegs();
-  regs.SP = 0x0200;
-  regs.A = 0x0088;
-  f.cpu.SetRegs(regs);
+  f.ModifyRegs([](auto& r) {
+    r.SP = 0x0200;
+    r.A = 0x0088;
+  });
 
   TickResult r = f.cpu.Tick(38);
 
@@ -959,17 +810,14 @@ TEST_CASE("STA stack-relative writes to bank-0 (SP + offset)", "[cpu]") {
 
 TEST_CASE("STA absolute indexed X writes to DBR:(abs + X)", "[cpu]") {
   ResetFixture f;
-  f.SetRomByte(0x0000U, 0x9D);
-  f.SetRomByte(0x0001U, 0x00);
-  f.SetRomByte(0x0002U, 0x00);
-  f.SyncCartridge();
+  f.LoadInstruction({0x9D, 0x00, 0x00});
 
   f.cpu.Reset();
-  auto regs = f.cpu.GetRegs();
-  regs.DBR = 0x7E;
-  regs.X = 0x0020;
-  regs.A = 0x0044;
-  f.cpu.SetRegs(regs);
+  f.ModifyRegs([](auto& r) {
+    r.DBR = 0x7E;
+    r.X = 0x0020;
+    r.A = 0x0044;
+  });
 
   TickResult r = f.cpu.Tick(46);  // 6-m at m=1 = 5
 
@@ -979,17 +827,14 @@ TEST_CASE("STA absolute indexed X writes to DBR:(abs + X)", "[cpu]") {
 
 TEST_CASE("STA absolute indexed X can cross bank boundary", "[cpu]") {
   ResetFixture f;
-  f.SetRomByte(0x0000U, 0x9D);
-  f.SetRomByte(0x0001U, 0xFE);
-  f.SetRomByte(0x0002U, 0xFF);
-  f.SyncCartridge();
+  f.LoadInstruction({0x9D, 0xFE, 0xFF});
 
   f.cpu.Reset();
-  auto regs = f.cpu.GetRegs();
-  regs.DBR = 0x7E;
-  regs.X = 0x0003;
-  regs.A = 0x005A;
-  f.cpu.SetRegs(regs);
+  f.ModifyRegs([](auto& r) {
+    r.DBR = 0x7E;
+    r.X = 0x0003;
+    r.A = 0x005A;
+  });
 
   TickResult r = f.cpu.Tick(46);
 
@@ -1000,16 +845,13 @@ TEST_CASE("STA absolute indexed X can cross bank boundary", "[cpu]") {
 
 TEST_CASE("STZ absolute indexed X clears a bank-0 byte", "[cpu]") {
   ResetFixture f;
-  f.SetRomByte(0x0000U, 0x9E);
-  f.SetRomByte(0x0001U, 0x40);
-  f.SetRomByte(0x0002U, 0x00);
-  f.SyncCartridge();
+  f.LoadInstruction({0x9E, 0x40, 0x00});
 
   f.cpu.Reset();
-  auto regs = f.cpu.GetRegs();
-  regs.DBR = 0x7E;
-  regs.X = 0x0004;
-  f.cpu.SetRegs(regs);
+  f.ModifyRegs([](auto& r) {
+    r.DBR = 0x7E;
+    r.X = 0x0004;
+  });
   f.wram.WriteRegister(0x0044, 0x99);
 
   TickResult r = f.cpu.Tick(46);
@@ -1020,14 +862,10 @@ TEST_CASE("STZ absolute indexed X clears a bank-0 byte", "[cpu]") {
 
 TEST_CASE("LDA direct indirect reads through pointer at DBR:(high:low)", "[cpu]") {
   ResetFixture f;
-  f.SetRomByte(0x0000U, 0xB2);
-  f.SetRomByte(0x0001U, 0x10);
-  f.SyncCartridge();
+  f.LoadInstruction({0xB2, 0x10});
 
   f.cpu.Reset();
-  auto regs = f.cpu.GetRegs();
-  regs.DBR = 0x7E;
-  f.cpu.SetRegs(regs);
+  f.ModifyRegs([](auto& r) { r.DBR = 0x7E; });
   f.wram.WriteRegister(0x0010, 0x34);
   f.wram.WriteRegister(0x0011, 0x12);
   f.wram.WriteRegister(0x1234, 0x99);
@@ -1040,16 +878,14 @@ TEST_CASE("LDA direct indirect reads through pointer at DBR:(high:low)", "[cpu]"
 
 TEST_CASE("LDA direct indirect reads 16 bits when M is clear", "[cpu]") {
   ResetFixture f;
-  f.SetRomByte(0x0000U, 0xB2);
-  f.SetRomByte(0x0001U, 0x20);
-  f.SyncCartridge();
+  f.LoadInstruction({0xB2, 0x20});
 
   f.cpu.Reset();
-  auto regs = f.cpu.GetRegs();
-  regs.P.E = false;
-  regs.P.M = false;
-  regs.DBR = 0x7E;
-  f.cpu.SetRegs(regs);
+  f.ModifyRegs([](auto& r) {
+    r.P.E = false;
+    r.P.M = false;
+    r.DBR = 0x7E;
+  });
   f.wram.WriteRegister(0x0020, 0x00);
   f.wram.WriteRegister(0x0021, 0x20);
   f.wram.WriteRegister(0x2000, 0xCD);
@@ -1063,15 +899,13 @@ TEST_CASE("LDA direct indirect reads 16 bits when M is clear", "[cpu]") {
 
 TEST_CASE("STA direct indirect writes through pointer", "[cpu]") {
   ResetFixture f;
-  f.SetRomByte(0x0000U, 0x92);
-  f.SetRomByte(0x0001U, 0x30);
-  f.SyncCartridge();
+  f.LoadInstruction({0x92, 0x30});
 
   f.cpu.Reset();
-  auto regs = f.cpu.GetRegs();
-  regs.A = 0x0044;
-  regs.DBR = 0x7E;
-  f.cpu.SetRegs(regs);
+  f.ModifyRegs([](auto& r) {
+    r.A = 0x0044;
+    r.DBR = 0x7E;
+  });
   f.wram.WriteRegister(0x0030, 0x00);
   f.wram.WriteRegister(0x0031, 0x40);
 
@@ -1083,9 +917,7 @@ TEST_CASE("STA direct indirect writes through pointer", "[cpu]") {
 
 TEST_CASE("LDA direct indirect long reads through 24-bit pointer", "[cpu]") {
   ResetFixture f;
-  f.SetRomByte(0x0000U, 0xA7);
-  f.SetRomByte(0x0001U, 0x40);
-  f.SyncCartridge();
+  f.LoadInstruction({0xA7, 0x40});
 
   f.cpu.Reset();
   f.wram.WriteRegister(0x0040, 0x10);
@@ -1101,14 +933,10 @@ TEST_CASE("LDA direct indirect long reads through 24-bit pointer", "[cpu]") {
 
 TEST_CASE("STA direct indirect long writes through 24-bit pointer", "[cpu]") {
   ResetFixture f;
-  f.SetRomByte(0x0000U, 0x87);
-  f.SetRomByte(0x0001U, 0x50);
-  f.SyncCartridge();
+  f.LoadInstruction({0x87, 0x50});
 
   f.cpu.Reset();
-  auto regs = f.cpu.GetRegs();
-  regs.A = 0x0077;
-  f.cpu.SetRegs(regs);
+  f.ModifyRegs([](auto& r) { r.A = 0x0077; });
   f.wram.WriteRegister(0x0050, 0x00);
   f.wram.WriteRegister(0x0051, 0x50);
   f.wram.WriteRegister(0x0052, 0x7E);
@@ -1121,15 +949,13 @@ TEST_CASE("STA direct indirect long writes through 24-bit pointer", "[cpu]") {
 
 TEST_CASE("LDA direct indirect with DP-nonzero adds DL penalty cycle", "[cpu]") {
   ResetFixture f;
-  f.SetRomByte(0x0000U, 0xB2);
-  f.SetRomByte(0x0001U, 0x10);
-  f.SyncCartridge();
+  f.LoadInstruction({0xB2, 0x10});
 
   f.cpu.Reset();
-  auto regs = f.cpu.GetRegs();
-  regs.DP = 0x0080;  // DL nonzero → +1 cycle
-  regs.DBR = 0x7E;
-  f.cpu.SetRegs(regs);
+  f.ModifyRegs([](auto& r) {
+    r.DP = 0x0080;  // DL nonzero → +1 cycle
+    r.DBR = 0x7E;
+  });
   f.wram.WriteRegister(0x0090, 0x00);
   f.wram.WriteRegister(0x0091, 0x60);
   f.wram.WriteRegister(0x6000, 0x55);
@@ -1142,10 +968,7 @@ TEST_CASE("LDA direct indirect with DP-nonzero adds DL penalty cycle", "[cpu]") 
 
 TEST_CASE("STA absolute 16-bit high-byte write carries into the next bank at $FFFF", "[cpu]") {
   ResetFixture f;
-  f.SetRomByte(0x0000U, 0x8D);
-  f.SetRomByte(0x0001U, 0xFF);
-  f.SetRomByte(0x0002U, 0xFF);
-  f.SyncCartridge();
+  f.LoadInstruction({0x8D, 0xFF, 0xFF});
 
   f.cpu.Reset();
   SetDataBank(f.cpu, 0x7E);
@@ -1162,10 +985,7 @@ TEST_CASE("STA absolute 16-bit high-byte write carries into the next bank at $FF
 
 TEST_CASE("PHA 8-bit pushes accumulator low byte and decrements SP", "[cpu]") {
   ResetFixture f;
-  f.SetRomByte(0x0000U, 0xA9);
-  f.SetRomByte(0x0001U, 0x42);
-  f.SetRomByte(0x0002U, 0x48);
-  f.SyncCartridge();
+  f.LoadInstruction({0xA9, 0x42, 0x48});
 
   f.cpu.Reset();
   TickResult r = f.cpu.Tick(38);
@@ -1179,14 +999,13 @@ TEST_CASE("PHA 8-bit pushes accumulator low byte and decrements SP", "[cpu]") {
 
 TEST_CASE("PHA 8-bit in emulation mode wraps SP across page 1", "[cpu]") {
   ResetFixture f;
-  f.SetRomByte(0x0000U, 0x48);
-  f.SyncCartridge();
+  f.LoadInstruction({0x48});
 
   f.cpu.Reset();
-  auto regs = f.cpu.GetRegs();
-  regs.A = 0x007A;
-  regs.SP = 0x0100;
-  f.cpu.SetRegs(regs);
+  f.ModifyRegs([](auto& r) {
+    r.A = 0x007A;
+    r.SP = 0x0100;
+  });
 
   TickResult r = f.cpu.Tick(30);
 
@@ -1198,8 +1017,7 @@ TEST_CASE("PHA 8-bit in emulation mode wraps SP across page 1", "[cpu]") {
 
 TEST_CASE("PHA 16-bit pushes both accumulator bytes when M is clear", "[cpu]") {
   ResetFixture f;
-  f.SetRomByte(0x0000U, 0x48);
-  f.SyncCartridge();
+  f.LoadInstruction({0x48});
 
   f.cpu.Reset();
   SetAccumulator16(f.cpu, 0xBEEF);
@@ -1215,8 +1033,7 @@ TEST_CASE("PHA 16-bit pushes both accumulator bytes when M is clear", "[cpu]") {
 
 TEST_CASE("PHB pushes data bank register and decrements SP", "[cpu]") {
   ResetFixture f;
-  f.SetRomByte(0x0000U, 0x8B);
-  f.SyncCartridge();
+  f.LoadInstruction({0x8B});
 
   f.cpu.Reset();
   SetDataBank(f.cpu, 0x7E);
@@ -1233,17 +1050,16 @@ TEST_CASE("PHB pushes data bank register and decrements SP", "[cpu]") {
 
 TEST_CASE("PLB pulls data bank register from stack and updates DBR and flags", "[cpu]") {
   ResetFixture f;
-  f.SetRomByte(0x0000U, 0xAB);
-  f.SyncCartridge();
+  f.LoadInstruction({0xAB});
 
   f.cpu.Reset();
   f.wram.WriteRegister(0x01FF, 0x42);
-  auto regs = f.cpu.GetRegs();
-  regs.SP = 0x01FE;
-  regs.DBR = 0x00;
-  regs.P.N = true;
-  regs.P.Z = true;
-  f.cpu.SetRegs(regs);
+  f.ModifyRegs([](auto& r) {
+    r.SP = 0x01FE;
+    r.DBR = 0x00;
+    r.P.N = true;
+    r.P.Z = true;
+  });
 
   TickResult r = f.cpu.Tick(28);
 
@@ -1258,15 +1074,14 @@ TEST_CASE("PLB pulls data bank register from stack and updates DBR and flags", "
 
 TEST_CASE("PLB sets Z when pulled value is zero", "[cpu]") {
   ResetFixture f;
-  f.SetRomByte(0x0000U, 0xAB);
-  f.SyncCartridge();
+  f.LoadInstruction({0xAB});
 
   f.cpu.Reset();
   f.wram.WriteRegister(0x01FF, 0x00);
-  auto regs = f.cpu.GetRegs();
-  regs.SP = 0x01FE;
-  regs.DBR = 0x7E;
-  f.cpu.SetRegs(regs);
+  f.ModifyRegs([](auto& r) {
+    r.SP = 0x01FE;
+    r.DBR = 0x7E;
+  });
 
   TickResult r = f.cpu.Tick(36);
 
@@ -1278,14 +1093,11 @@ TEST_CASE("PLB sets Z when pulled value is zero", "[cpu]") {
 
 TEST_CASE("PLB sets N when pulled value has bit 7 set", "[cpu]") {
   ResetFixture f;
-  f.SetRomByte(0x0000U, 0xAB);
-  f.SyncCartridge();
+  f.LoadInstruction({0xAB});
 
   f.cpu.Reset();
   f.wram.WriteRegister(0x01FF, 0x80);
-  auto regs = f.cpu.GetRegs();
-  regs.SP = 0x01FE;
-  f.cpu.SetRegs(regs);
+  f.ModifyRegs([](auto& r) { r.SP = 0x01FE; });
 
   TickResult r = f.cpu.Tick(36);
 
@@ -1297,14 +1109,11 @@ TEST_CASE("PLB sets N when pulled value has bit 7 set", "[cpu]") {
 
 TEST_CASE("PLB in emulation mode wraps SP across page 1", "[cpu]") {
   ResetFixture f;
-  f.SetRomByte(0x0000U, 0xAB);
-  f.SyncCartridge();
+  f.LoadInstruction({0xAB});
 
   f.cpu.Reset();
   f.wram.WriteRegister(0x0100, 0x33);
-  auto regs = f.cpu.GetRegs();
-  regs.SP = 0x01FF;
-  f.cpu.SetRegs(regs);
+  f.ModifyRegs([](auto& r) { r.SP = 0x01FF; });
 
   TickResult r = f.cpu.Tick(36);
 
@@ -1315,9 +1124,7 @@ TEST_CASE("PLB in emulation mode wraps SP across page 1", "[cpu]") {
 
 TEST_CASE("PHB followed by PLB restores DBR", "[cpu]") {
   ResetFixture f;
-  f.SetRomByte(0x0000U, 0x8B);
-  f.SetRomByte(0x0001U, 0xAB);
-  f.SyncCartridge();
+  f.LoadInstruction({0x8B, 0xAB});
 
   f.cpu.Reset();
   SetDataBank(f.cpu, 0x7E);
@@ -1592,13 +1399,10 @@ TEST_CASE("CpuFlags::FromByte in emulation mode ignores M and X bits", "[cpu]") 
 
 TEST_CASE("INX 8-bit increments X low byte and updates N/Z", "[cpu][inc]") {
   ResetFixture f;
-  f.SetRomByte(0x0000U, 0xE8);
-  f.SyncCartridge();
+  f.LoadInstruction({0xE8});
 
   f.cpu.Reset();
-  auto regs = f.cpu.GetRegs();
-  regs.X = 0x007F;
-  f.cpu.SetRegs(regs);
+  f.ModifyRegs([](auto& r) { r.X = 0x007F; });
 
   TickResult r = f.cpu.Tick(14);
 
@@ -1611,13 +1415,12 @@ TEST_CASE("INX 8-bit increments X low byte and updates N/Z", "[cpu][inc]") {
 
 TEST_CASE("INX 8-bit wraps to zero and sets Z", "[cpu][inc]") {
   ResetFixture f;
-  f.SetRomByte(0x0000U, 0xE8);
-  f.SyncCartridge();
+  f.LoadInstruction({0xE8});
 
   f.cpu.Reset();
-  auto regs = f.cpu.GetRegs();
-  regs.X = 0x12FF;  // high byte preserved in 8-bit mode
-  f.cpu.SetRegs(regs);
+  f.ModifyRegs([](auto& r) {
+    r.X = 0x12FF;  // high byte preserved in 8-bit mode
+  });
 
   (void)f.cpu.Tick(100);
 
@@ -1628,8 +1431,7 @@ TEST_CASE("INX 8-bit wraps to zero and sets Z", "[cpu][inc]") {
 
 TEST_CASE("INX 16-bit increments full register across page", "[cpu][inc]") {
   ResetFixture f;
-  f.SetRomByte(0x0000U, 0xE8);
-  f.SyncCartridge();
+  f.LoadInstruction({0xE8});
 
   f.cpu.Reset();
   SetIndex16X(f.cpu, 0x7FFF);
@@ -1643,13 +1445,10 @@ TEST_CASE("INX 16-bit increments full register across page", "[cpu][inc]") {
 
 TEST_CASE("INY 8-bit increments Y and sets Z on wrap", "[cpu][inc]") {
   ResetFixture f;
-  f.SetRomByte(0x0000U, 0xC8);
-  f.SyncCartridge();
+  f.LoadInstruction({0xC8});
 
   f.cpu.Reset();
-  auto regs = f.cpu.GetRegs();
-  regs.Y = 0x00FF;
-  f.cpu.SetRegs(regs);
+  f.ModifyRegs([](auto& r) { r.Y = 0x00FF; });
 
   (void)f.cpu.Tick(100);
 
@@ -1659,8 +1458,7 @@ TEST_CASE("INY 8-bit increments Y and sets Z on wrap", "[cpu][inc]") {
 
 TEST_CASE("INY 16-bit wraps at $FFFF to 0", "[cpu][inc]") {
   ResetFixture f;
-  f.SetRomByte(0x0000U, 0xC8);
-  f.SyncCartridge();
+  f.LoadInstruction({0xC8});
 
   f.cpu.Reset();
   SetIndex16Y(f.cpu, 0xFFFF);
@@ -1674,13 +1472,10 @@ TEST_CASE("INY 16-bit wraps at $FFFF to 0", "[cpu][inc]") {
 
 TEST_CASE("DEX 8-bit wraps to $FF and sets N", "[cpu][dec]") {
   ResetFixture f;
-  f.SetRomByte(0x0000U, 0xCA);
-  f.SyncCartridge();
+  f.LoadInstruction({0xCA});
 
   f.cpu.Reset();
-  auto regs = f.cpu.GetRegs();
-  regs.X = 0x0000;
-  f.cpu.SetRegs(regs);
+  f.ModifyRegs([](auto& r) { r.X = 0x0000; });
 
   (void)f.cpu.Tick(100);
 
@@ -1691,8 +1486,7 @@ TEST_CASE("DEX 8-bit wraps to $FF and sets N", "[cpu][dec]") {
 
 TEST_CASE("DEX 16-bit decrements full register", "[cpu][dec]") {
   ResetFixture f;
-  f.SetRomByte(0x0000U, 0xCA);
-  f.SyncCartridge();
+  f.LoadInstruction({0xCA});
 
   f.cpu.Reset();
   SetIndex16X(f.cpu, 0x0001);
@@ -1706,13 +1500,10 @@ TEST_CASE("DEX 16-bit decrements full register", "[cpu][dec]") {
 
 TEST_CASE("DEY 8-bit decrements Y", "[cpu][dec]") {
   ResetFixture f;
-  f.SetRomByte(0x0000U, 0x88);
-  f.SyncCartridge();
+  f.LoadInstruction({0x88});
 
   f.cpu.Reset();
-  auto regs = f.cpu.GetRegs();
-  regs.Y = 0x0001;
-  f.cpu.SetRegs(regs);
+  f.ModifyRegs([](auto& r) { r.Y = 0x0001; });
 
   (void)f.cpu.Tick(100);
 
@@ -1722,13 +1513,12 @@ TEST_CASE("DEY 8-bit decrements Y", "[cpu][dec]") {
 
 TEST_CASE("INC A 8-bit increments accumulator low byte, preserves high", "[cpu][inc]") {
   ResetFixture f;
-  f.SetRomByte(0x0000U, 0x1A);
-  f.SyncCartridge();
+  f.LoadInstruction({0x1A});
 
   f.cpu.Reset();
-  auto regs = f.cpu.GetRegs();
-  regs.A = 0xAB7F;  // high byte preserved in 8-bit mode
-  f.cpu.SetRegs(regs);
+  f.ModifyRegs([](auto& r) {
+    r.A = 0xAB7F;  // high byte preserved in 8-bit mode
+  });
 
   (void)f.cpu.Tick(100);
 
@@ -1739,8 +1529,7 @@ TEST_CASE("INC A 8-bit increments accumulator low byte, preserves high", "[cpu][
 
 TEST_CASE("INC A 16-bit increments full accumulator", "[cpu][inc]") {
   ResetFixture f;
-  f.SetRomByte(0x0000U, 0x1A);
-  f.SyncCartridge();
+  f.LoadInstruction({0x1A});
 
   f.cpu.Reset();
   SetAccumulator16(f.cpu, 0xFFFF);
@@ -1754,13 +1543,10 @@ TEST_CASE("INC A 16-bit increments full accumulator", "[cpu][inc]") {
 
 TEST_CASE("DEC A 8-bit decrements accumulator low byte", "[cpu][dec]") {
   ResetFixture f;
-  f.SetRomByte(0x0000U, 0x3A);
-  f.SyncCartridge();
+  f.LoadInstruction({0x3A});
 
   f.cpu.Reset();
-  auto regs = f.cpu.GetRegs();
-  regs.A = 0x1200;
-  f.cpu.SetRegs(regs);
+  f.ModifyRegs([](auto& r) { r.A = 0x1200; });
 
   (void)f.cpu.Tick(100);
 
@@ -1771,8 +1557,7 @@ TEST_CASE("DEC A 8-bit decrements accumulator low byte", "[cpu][dec]") {
 
 TEST_CASE("DEC A 16-bit decrements full accumulator", "[cpu][dec]") {
   ResetFixture f;
-  f.SetRomByte(0x0000U, 0x3A);
-  f.SyncCartridge();
+  f.LoadInstruction({0x3A});
 
   f.cpu.Reset();
   SetAccumulator16(f.cpu, 0x0001);
@@ -2331,16 +2116,14 @@ TEST_CASE("CPX immediate compares X", "[cpu][opcode]") {
 
 TEST_CASE("ADC direct page 8-bit adds value at DP+offset", "[cpu][opcode]") {
   ResetFixture f;
-  f.SetRomByte(0x0000U, 0x65);
-  f.SetRomByte(0x0001U, 0x20);
-  f.SyncCartridge();
+  f.LoadInstruction({0x65, 0x20});
 
   f.cpu.Reset();
   f.wram.WriteRegister(0x0020, 0x05);
-  auto regs = f.cpu.GetRegs();
-  regs.A = 0x0040;
-  regs.P.C = false;
-  f.cpu.SetRegs(regs);
+  f.ModifyRegs([](auto& r) {
+    r.A = 0x0040;
+    r.P.C = false;
+  });
 
   TickResult r = f.cpu.Tick(24);  // 4-m+w with m=1,w=0 = 3
 
@@ -2351,19 +2134,17 @@ TEST_CASE("ADC direct page 8-bit adds value at DP+offset", "[cpu][opcode]") {
 
 TEST_CASE("ADC direct page 16-bit adds value at DP+offset", "[cpu][opcode]") {
   ResetFixture f;
-  f.SetRomByte(0x0000U, 0x65);
-  f.SetRomByte(0x0001U, 0x40);
-  f.SyncCartridge();
+  f.LoadInstruction({0x65, 0x40});
 
   f.cpu.Reset();
   f.wram.WriteRegister(0x0040, 0x34);
   f.wram.WriteRegister(0x0041, 0x12);
-  auto regs = f.cpu.GetRegs();
-  regs.P.E = false;
-  regs.P.M = false;
-  regs.A = 0x1000;
-  regs.P.C = false;
-  f.cpu.SetRegs(regs);
+  f.ModifyRegs([](auto& r) {
+    r.P.E = false;
+    r.P.M = false;
+    r.A = 0x1000;
+    r.P.C = false;
+  });
 
   TickResult r = f.cpu.Tick(32);  // 4-m+w with m=0,w=0 = 4
 
@@ -2373,16 +2154,14 @@ TEST_CASE("ADC direct page 16-bit adds value at DP+offset", "[cpu][opcode]") {
 
 TEST_CASE("ADC direct page pays DL-nonzero penalty", "[cpu][opcode]") {
   ResetFixture f;
-  f.SetRomByte(0x0000U, 0x65);
-  f.SetRomByte(0x0001U, 0x10);
-  f.SyncCartridge();
+  f.LoadInstruction({0x65, 0x10});
 
   f.cpu.Reset();
-  auto regs = f.cpu.GetRegs();
-  regs.DP = 0x0123;
-  regs.A = 0x0001;
-  regs.P.C = false;
-  f.cpu.SetRegs(regs);
+  f.ModifyRegs([](auto& r) {
+    r.DP = 0x0123;
+    r.A = 0x0001;
+    r.P.C = false;
+  });
   f.wram.WriteRegister(0x0133, 0x02);
 
   TickResult r = f.cpu.Tick(38);  // 4-m+w with m=1,w=1 = 4
@@ -2393,16 +2172,14 @@ TEST_CASE("ADC direct page pays DL-nonzero penalty", "[cpu][opcode]") {
 
 TEST_CASE("SBC direct page subtracts with borrow", "[cpu][opcode]") {
   ResetFixture f;
-  f.SetRomByte(0x0000U, 0xE5);
-  f.SetRomByte(0x0001U, 0x10);
-  f.SyncCartridge();
+  f.LoadInstruction({0xE5, 0x10});
 
   f.cpu.Reset();
   f.wram.WriteRegister(0x0010, 0x01);
-  auto regs = f.cpu.GetRegs();
-  regs.A = 0x0005;
-  regs.P.C = true;
-  f.cpu.SetRegs(regs);
+  f.ModifyRegs([](auto& r) {
+    r.A = 0x0005;
+    r.P.C = true;
+  });
 
   (void)f.cpu.Tick(100);
 
@@ -2413,21 +2190,13 @@ TEST_CASE("SBC direct page subtracts with borrow", "[cpu][opcode]") {
 TEST_CASE("AND/ORA/EOR direct page combine A with memory", "[cpu][opcode]") {
   ResetFixture f;
   // AND $10 ; ORA $11 ; EOR $12
-  f.SetRomByte(0x0000U, 0x25);
-  f.SetRomByte(0x0001U, 0x10);
-  f.SetRomByte(0x0002U, 0x05);
-  f.SetRomByte(0x0003U, 0x11);
-  f.SetRomByte(0x0004U, 0x45);
-  f.SetRomByte(0x0005U, 0x12);
-  f.SyncCartridge();
+  f.LoadInstruction({0x25, 0x10, 0x05, 0x11, 0x45, 0x12});
 
   f.cpu.Reset();
   f.wram.WriteRegister(0x0010, 0x0F);
   f.wram.WriteRegister(0x0011, 0xF0);
   f.wram.WriteRegister(0x0012, 0xFF);
-  auto regs = f.cpu.GetRegs();
-  regs.A = 0x00A5;
-  f.cpu.SetRegs(regs);
+  f.ModifyRegs([](auto& r) { r.A = 0x00A5; });
 
   // 3+3+3 = 9 cycles (all m=1, w=0).
   TickResult r = f.cpu.Tick(72);
@@ -2439,15 +2208,11 @@ TEST_CASE("AND/ORA/EOR direct page combine A with memory", "[cpu][opcode]") {
 
 TEST_CASE("CMP direct page sets Z when equal", "[cpu][opcode]") {
   ResetFixture f;
-  f.SetRomByte(0x0000U, 0xC5);
-  f.SetRomByte(0x0001U, 0x20);
-  f.SyncCartridge();
+  f.LoadInstruction({0xC5, 0x20});
 
   f.cpu.Reset();
   f.wram.WriteRegister(0x0020, 0x42);
-  auto regs = f.cpu.GetRegs();
-  regs.A = 0x0042;
-  f.cpu.SetRegs(regs);
+  f.ModifyRegs([](auto& r) { r.A = 0x0042; });
 
   (void)f.cpu.Tick(100);
 
