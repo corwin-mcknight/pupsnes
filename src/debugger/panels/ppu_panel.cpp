@@ -205,20 +205,26 @@ void UploadBackOverlayToTexture(const Ppu& ppu) {
   const uint8_t* mask = ppu.GetDrawnMask();
   auto& scratch = GetScratchBuffer();
 
-  for (uint32_t y = 0; y < view.height; ++y) {
-    const uint16_t* back_row = back + static_cast<std::size_t>(y) * view.stride;
-    uint32_t* dst_row = scratch.data() + static_cast<std::size_t>(y) * view.width;
-    for (uint32_t x = 0; x < view.width; ++x) {
-      const std::size_t idx = static_cast<std::size_t>(y) * view.stride + x;
+  // The back buffer is the raw 341×313 grid; the view offsets into it via
+  // BuildFrontView() which starts at (kVisibleHStart, kVisibleVStartNtsc).
+  // Iterate using full-grid coordinates so back[] and mask[] indexing matches
+  // the same origin as BuildFrontView / FramebufferIndexFor.
+  for (uint32_t y_logical = 0; y_logical < view.height; ++y_logical) {
+    const uint32_t y_grid = y_logical + sppu::regs::kVisibleVStartNtsc;
+    const uint16_t* back_row = back + static_cast<std::size_t>(y_grid) * view.stride;
+    uint32_t* dst_row = scratch.data() + static_cast<std::size_t>(y_logical) * view.width;
+    for (uint32_t x_logical = 0; x_logical < view.width; ++x_logical) {
+      const uint32_t x_grid = x_logical + sppu::regs::kVisibleHStart;
+      const std::size_t idx = static_cast<std::size_t>(y_grid) * view.stride + x_grid;
       const bool drawn = ((mask[idx >> 3U] >> (idx & 7U)) & 1U) != 0U;
       if (!drawn) {
-        dst_row[x] = 0;  // fully transparent
+        dst_row[x_logical] = 0;  // fully transparent
         continue;
       }
-      const uint32_t r = Expand5To8(static_cast<uint32_t>(back_row[x]) & 0x1FU) >> 1U;
-      const uint32_t g = Expand5To8((static_cast<uint32_t>(back_row[x]) >> 5U) & 0x1FU) >> 1U;
-      const uint32_t b = Expand5To8((static_cast<uint32_t>(back_row[x]) >> 10U) & 0x1FU) >> 1U;
-      dst_row[x] = r | (g << 8U) | (b << 16U) | (0xFFU << 24U);
+      const uint32_t r = Expand5To8(static_cast<uint32_t>(back_row[x_grid]) & 0x1FU) >> 1U;
+      const uint32_t g = Expand5To8((static_cast<uint32_t>(back_row[x_grid]) >> 5U) & 0x1FU) >> 1U;
+      const uint32_t b = Expand5To8((static_cast<uint32_t>(back_row[x_grid]) >> 10U) & 0x1FU) >> 1U;
+      dst_row[x_logical] = r | (g << 8U) | (b << 16U) | (0xFFU << 24U);
     }
   }
 
