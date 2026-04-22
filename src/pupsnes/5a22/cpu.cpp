@@ -376,7 +376,8 @@ TickResult CPU::BusWriteSlow(SnesAddrT addr, uint8_t data, TimeMasterDeltaT cycl
 // lets the compiler honor the attribute without ODR concerns.
 [[gnu::always_inline]] inline TickResult CPU::BusRead(SnesAddrT addr, TimeMasterDeltaT cycle_time) {
   uint8_t data;
-  if (system_bus_raw_ != nullptr && system_bus_raw_->TryFastRead(addr, data, last_access_cycles_)) {
+  if (system_bus_raw_ != nullptr &&
+      system_bus_raw_->TryFastRead(addr, local_time_ + cycle_time, data, last_access_cycles_)) {
     fetch_data_ = data;
     return TickResult{0, TickStopReason::kContinue};
   }
@@ -384,7 +385,8 @@ TickResult CPU::BusWriteSlow(SnesAddrT addr, uint8_t data, TimeMasterDeltaT cycl
 }
 
 [[gnu::always_inline]] inline TickResult CPU::BusWrite(SnesAddrT addr, uint8_t data, TimeMasterDeltaT cycle_time) {
-  if (system_bus_raw_ != nullptr && system_bus_raw_->TryFastWrite(addr, data, last_access_cycles_)) {
+  if (system_bus_raw_ != nullptr &&
+      system_bus_raw_->TryFastWrite(addr, local_time_ + cycle_time, data, last_access_cycles_)) {
     return TickResult{0, TickStopReason::kContinue};
   }
   return BusWriteSlow(addr, data, cycle_time);

@@ -111,13 +111,12 @@ BusFollowResult SystemBus::Follow(const BusPlan& plan, TimeMasterT current_time,
   return {BusPlanOutcome::kRejected, last_data_bus_value_, 0};
 }
 
-void SystemBus::NotifyEvent(BusEventKind kind, SnesAddrT address, uint8_t data) {
+void SystemBus::NotifyEvent(BusEventKind kind, SnesAddrT address, uint8_t data, TimeMasterT current_time) {
   // Called from the hot fast-path after the caller verified event_sink_ is
-  // non-null. Uses scheduler-committed master time, which lags the CPU's
-  // in-flight cycle_time by up to a Tick's worth of work — acceptable for a
-  // bus viewer (ordering is preserved; per-cycle precision is not).
-  const TimeMasterT time = (snes_ != nullptr) ? snes_->GetMasterTime() : 0;
-  event_sink_->OnBusEvent({time, address, data, kind});
+  // non-null. The caller passes its in-flight time (e.g. CPU local_time_ +
+  // cycle_time) so fast-path events carry the same per-cycle precision as
+  // slow-path events from Follow().
+  event_sink_->OnBusEvent({current_time, address, data, kind});
 }
 
 DebugReadResult SystemBus::MakeDebugReadResult(const BusPlan& plan) const {

@@ -136,7 +136,8 @@ class SystemBus {
   // out_access_cycles receives the page's access_speed (6/8/12 master cycles)
   // so the caller can advance its time cursor. Only written when the fast path
   // succeeds; unspecified on false.
-  [[nodiscard]] bool TryFastRead(SnesAddrT address, uint8_t& out_data, TimeMasterDeltaT& out_access_cycles) {
+  [[nodiscard]] bool TryFastRead(SnesAddrT address, TimeMasterT current_time, uint8_t& out_data,
+                                 TimeMasterDeltaT& out_access_cycles) {
     const SnesAddrT addr = address & 0xFFFFFFU;
     const PageTableEntry& entry =
         page_table_[static_cast<uint8_t>(addr >> 16)][static_cast<uint8_t>((addr >> 8) & 0xFF)];
@@ -148,11 +149,12 @@ class SystemBus {
     out_data = data;
     out_access_cycles = entry.access_speed;
     if (event_sink_ != nullptr) {
-      NotifyEvent(BusEventKind::kFastRead, addr, data);
+      NotifyEvent(BusEventKind::kFastRead, addr, data, current_time);
     }
     return true;
   }
-  [[nodiscard]] bool TryFastWrite(SnesAddrT address, uint8_t data, TimeMasterDeltaT& out_access_cycles) {
+  [[nodiscard]] bool TryFastWrite(SnesAddrT address, TimeMasterT current_time, uint8_t data,
+                                  TimeMasterDeltaT& out_access_cycles) {
     const SnesAddrT addr = address & 0xFFFFFFU;
     const PageTableEntry& entry =
         page_table_[static_cast<uint8_t>(addr >> 16)][static_cast<uint8_t>((addr >> 8) & 0xFF)];
@@ -163,7 +165,7 @@ class SystemBus {
     last_data_bus_value_ = data;
     out_access_cycles = entry.access_speed;
     if (event_sink_ != nullptr) {
-      NotifyEvent(BusEventKind::kFastWrite, addr, data);
+      NotifyEvent(BusEventKind::kFastWrite, addr, data, current_time);
     }
     return true;
   }
@@ -179,7 +181,7 @@ class SystemBus {
   BusFollowResult FollowScheduled(const BusPlan& plan, TimeMasterT current_time, DeviceIdT source_device);
   // Out-of-line helper so the fast-path TryFast* callers stay small. Caller
   // must pre-check event_sink_ for null.
-  void NotifyEvent(BusEventKind kind, SnesAddrT address, uint8_t data);
+  void NotifyEvent(BusEventKind kind, SnesAddrT address, uint8_t data, TimeMasterT current_time);
   [[nodiscard]] DebugReadResult MakeDebugReadResult(const BusPlan& plan) const;
   [[nodiscard]] DebugWriteResult MakeDebugWriteResult(const BusPlan& plan, uint8_t value) const;
 
