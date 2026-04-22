@@ -155,15 +155,21 @@ bool RunControl::HandlePostStepState() {
   return true;
 }
 
-void RunControl::TickFrame(std::chrono::steady_clock::duration wall_clock_budget) {
+void RunControl::TickFrame(std::chrono::steady_clock::duration wall_clock_budget,
+                           std::optional<TimeMasterT> master_cycles_budget) {
   if (state_ == RunState::kPaused) {
     return;
   }
 
   logged_fault_pc_.reset();
   const auto deadline = std::chrono::steady_clock::now() + wall_clock_budget;
+  const TimeMasterT start_master_time = snes_.GetMasterTime();
 
   while (state_ != RunState::kPaused && std::chrono::steady_clock::now() < deadline) {
+    if (master_cycles_budget.has_value() &&
+        (snes_.GetMasterTime() - start_master_time) >= *master_cycles_budget) {
+      break;
+    }
     if (!snes_.GetScheduler().HasPendingEvents()) {
       Pause();
       break;

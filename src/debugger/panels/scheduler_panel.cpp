@@ -1,6 +1,7 @@
 #include <cinttypes>
 
 #include "debugger/app.h"
+#include "debugger/time_format.h"
 #include "imgui.h"
 #include "panels.h"
 #include "pupsnes/hw/scheduler.h"
@@ -48,12 +49,20 @@ ImU32 TypeColor(EventType type) {
 }  // namespace
 
 void RenderSchedulerPanel(DebuggerApp& app) {
-  ImGui::Begin("Scheduler");
+  if (!app.GetUiState().show_scheduler_panel) {
+    return;
+  }
+  if (!ImGui::Begin("Scheduler", &app.GetUiState().show_scheduler_panel)) {
+    ImGui::End();
+    return;
+  }
 
   const TimeMasterT now = app.GetSnes().GetMasterTime();
   const auto snapshot = app.GetSnes().GetScheduler().SnapshotQueue();
 
-  ImGui::Text("Master Time: %" PRIu64, now);
+  ImGui::TextUnformatted("Master Time:");
+  ImGui::SameLine();
+  TextMasterTime(now, now, app.GetUiState().time_display_mode);
   ImGui::SameLine();
   ImGui::TextDisabled("|");
   ImGui::SameLine();
@@ -89,7 +98,7 @@ void RenderSchedulerPanel(DebuggerApp& app) {
       ImGui::TableNextRow();
 
       ImGui::TableSetColumnIndex(0);
-      ImGui::Text("%" PRIu64, event.time);
+      TextMasterTime(event.time, now, app.GetUiState().time_display_mode);
 
       ImGui::TableSetColumnIndex(1);
       const int64_t delta = static_cast<int64_t>(event.time) - static_cast<int64_t>(now);

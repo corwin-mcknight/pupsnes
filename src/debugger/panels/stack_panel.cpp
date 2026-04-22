@@ -8,7 +8,13 @@
 namespace pupsnes::debugger {
 
 void RenderStackPanel(DebuggerApp& app) {
-  ImGui::Begin("Stack");
+  if (!app.GetUiState().show_stack_panel) {
+    return;
+  }
+  if (!ImGui::Begin("Stack", &app.GetUiState().show_stack_panel)) {
+    ImGui::End();
+    return;
+  }
   if (!app.HasLoadedRom()) {
     ImGui::TextUnformatted("Load a ROM to inspect the stack.");
     ImGui::End();

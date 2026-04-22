@@ -4,6 +4,7 @@
 #include <cstdio>
 
 #include "debugger/app.h"
+#include "debugger/time_format.h"
 #include "imgui.h"
 #include "panels.h"
 
@@ -76,7 +77,13 @@ const char* ModeString(const CpuFlags& p) {
 }  // namespace
 
 void RenderRegistersPanel(DebuggerApp& app) {
-  ImGui::Begin("Registers");
+  if (!app.GetUiState().show_registers_panel) {
+    return;
+  }
+  if (!ImGui::Begin("Registers", &app.GetUiState().show_registers_panel)) {
+    ImGui::End();
+    return;
+  }
   if (!app.HasLoadedRom()) {
     ImGui::TextUnformatted("Load a ROM to inspect CPU state.");
     ImGui::End();
@@ -221,7 +228,10 @@ void RenderRegistersPanel(DebuggerApp& app) {
   ImGui::Text("Mode   %s", ModeString(regs.P));
   ImGui::Text("Instr  %" PRIu64, static_cast<uint64_t>(retired));
   ImGui::Text("uOp    %u", static_cast<unsigned>(cpu.GetMicroOpIndex()));
-  ImGui::Text("MCyc   %" PRIu64, static_cast<uint64_t>(app.GetSnes().GetMasterTime()));
+  ImGui::TextUnformatted("MCyc  ");
+  ImGui::SameLine();
+  const TimeMasterT master_now = app.GetSnes().GetMasterTime();
+  TextMasterTime(master_now, master_now, app.GetUiState().time_display_mode);
   ImGui::Text("DRAM   %" PRIu64 " win / %" PRIu64 " cyc  next@%" PRIu64, cpu.GetRefreshStallWindows(),
               cpu.GetRefreshStallCycles(), static_cast<uint64_t>(cpu.GetNextRefreshTime()));
 

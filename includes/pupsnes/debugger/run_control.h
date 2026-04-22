@@ -33,7 +33,8 @@ class RunControl {
   void RequestStepOne();
   void RequestStepN(uint64_t count);
   void RequestRunUntilBreak();
-  void TickFrame(std::chrono::steady_clock::duration wall_clock_budget);
+  void TickFrame(std::chrono::steady_clock::duration wall_clock_budget,
+                 std::optional<TimeMasterT> master_cycles_budget = std::nullopt);
 
   [[nodiscard]] RunState GetState() const { return state_; }
   [[nodiscard]] PauseReason GetPauseReason() const { return pause_reason_; }

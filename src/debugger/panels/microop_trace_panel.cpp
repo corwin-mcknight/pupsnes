@@ -95,7 +95,10 @@ void RenderTrace(const InstructionTrace& t, std::optional<uint8_t> highlight_ind
 }  // namespace
 
 void RenderMicroOpTracePanel(DebuggerApp& app) {
-  if (!ImGui::Begin("Micro-op Trace")) {
+  if (!app.GetUiState().show_microop_trace_panel) {
+    return;
+  }
+  if (!ImGui::Begin("Micro-op Trace", &app.GetUiState().show_microop_trace_panel)) {
     ImGui::End();
     return;
   }

@@ -4,8 +4,14 @@
 
 namespace pupsnes::debugger {
 
-void RenderPpuPanel(DebuggerApp& /*app*/) {
-  ImGui::Begin("PPU");
+void RenderPpuPanel(DebuggerApp& app) {
+  if (!app.GetUiState().show_ppu_panel) {
+    return;
+  }
+  if (!ImGui::Begin("PPU", &app.GetUiState().show_ppu_panel)) {
+    ImGui::End();
+    return;
+  }
 
   constexpr float kAspect = 256.0F / 224.0F;
   const ImVec2 avail = ImGui::GetContentRegionAvail();

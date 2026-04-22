@@ -39,6 +39,7 @@ set(PUPSNES_DEBUGGER_SOURCES
   src/debugger/panels/scheduler_panel.cpp
   src/debugger/panels/stack_panel.cpp
   src/debugger/panels/trace_panel.cpp
+  src/debugger/time_format.cpp
   src/debugger/third_party/imgui_glfw_backend.cpp
   src/debugger/third_party/imgui_opengl3_backend.cpp
   src/debugger/third_party/imgui_stdlib_binding.cpp

@@ -1,7 +1,5 @@
-#include <cinttypes>
-#include <cstdint>
-
 #include "debugger/app.h"
+#include "debugger/time_format.h"
 #include "imgui.h"
 #include "panel_utils.h"
 #include "panels.h"
@@ -33,7 +31,13 @@ KindInfo KindDisplay(BusEventKind kind) {
 }  // namespace
 
 void RenderBusEventPanel(DebuggerApp& app) {
-  ImGui::Begin("Bus");
+  if (!app.GetUiState().show_bus_panel) {
+    return;
+  }
+  if (!ImGui::Begin("Bus", &app.GetUiState().show_bus_panel)) {
+    ImGui::End();
+    return;
+  }
   BusEventLog& log = app.GetBusEventLog();
   if (ImGui::SmallButton("Clear")) {
     log.Clear();
@@ -42,6 +46,11 @@ void RenderBusEventPanel(DebuggerApp& app) {
   ImGui::TextDisabled("%zu / %zu", log.Size(), log.Capacity());
 
   const auto snapshot = log.Snapshot();
+  UiState& ui = app.GetUiState();
+  const TimeMasterT now = app.GetSnes().GetMasterTime();
+  const bool grew = snapshot.size() != ui.bus_last_seen_size;
+  ui.bus_last_seen_size = snapshot.size();
+
   if (ImGui::BeginTable(
           "bus_events", 4,
           ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingFixedFit)) {
@@ -59,7 +68,7 @@ void RenderBusEventPanel(DebuggerApp& app) {
         ImGui::TableNextRow();
 
         ImGui::TableSetColumnIndex(0);
-        ImGui::Text("%" PRIu64, static_cast<uint64_t>(e.master_time));
+        TextMasterTime(e.master_time, now, ui.time_display_mode);
 
         ImGui::TableSetColumnIndex(1);
         const KindInfo info = KindDisplay(e.kind);
@@ -73,7 +82,9 @@ void RenderBusEventPanel(DebuggerApp& app) {
       }
     }
 
-    ImGui::SetScrollHereY(1.0F);
+    if (grew) {
+      ImGui::SetScrollHereY(1.0F);
+    }
     ImGui::EndTable();
   }
 

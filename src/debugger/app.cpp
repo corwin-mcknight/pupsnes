@@ -49,12 +49,14 @@ int DebuggerApp::Run(const std::optional<std::string>& initial_rom_path) {
     (void)LoadRomFromPath(*initial_rom_path);
   }
 
+  last_tick_time_ = std::chrono::steady_clock::now();
   while (window_ != nullptr && !glfwWindowShouldClose(window_)) {
     glfwPollEvents();
     TickEmulation();
     Render();
   }
 
+  SaveAppConfig();
   return fatal_error_.has_value() ? 1 : 0;
 }
 
@@ -188,11 +190,11 @@ bool DebuggerApp::InitWindow() {
   io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
   ImGui::StyleColorsDark();
   ImGuiStyle& style = ImGui::GetStyle();
-  style.WindowPadding = ImVec2(0.0F, 0.0F);
-  style.CellPadding = ImVec2(2.0F, 0.0F);
+  style.WindowPadding = ImVec2(4.0F, 2.0F);
+  style.CellPadding = ImVec2(3.0F, 1.0F);
   style.ItemSpacing = ImVec2(4.0F, 2.0F);
   style.FramePadding = ImVec2(2.0F, 2.0F);
-  style.FrameRounding = 10.0F;
+  style.FrameRounding = 0.0F;
   style.TabRounding = 0.0F;
   style.WindowBorderSize = 0.0F;
   style.DockingSeparatorSize = 1.0F;
@@ -297,12 +299,30 @@ void DebuggerApp::TickEmulation() {
     return;
   }
 
+  const auto now = std::chrono::steady_clock::now();
+
   if (run_control_.GetState() == RunState::kPaused) {
+    last_tick_time_ = now;
     return;
   }
 
+  std::optional<TimeMasterT> cycles_budget;
+  if (ui_state_.realtime_limiter) {
+    // Cap emulated master cycles to match wall-clock time elapsed since the last
+    // tick, so the emulator tracks a real SNES at 100% speed regardless of host
+    // refresh rate. Clamp the dt so pause/stall doesn't produce a giant catch-up.
+    double dt_secs = std::chrono::duration<double>(now - last_tick_time_).count();
+    if (dt_secs < 0.0) {
+      dt_secs = 0.0;
+    } else if (dt_secs > 0.1) {
+      dt_secs = 0.1;
+    }
+    cycles_budget = static_cast<TimeMasterT>(dt_secs * kMasterClockHz);
+  }
+  last_tick_time_ = now;
+
   try {
-    run_control_.TickFrame(std::chrono::milliseconds(16));
+    run_control_.TickFrame(std::chrono::milliseconds(16), cycles_budget);
   } catch (const std::exception& ex) {
     fatal_error_ = ex.what();
   }
@@ -331,6 +351,40 @@ void DebuggerApp::RenderMenuBar() {
       }
       ImGui::EndMenu();
     }
+    if (ImGui::BeginMenu("View")) {
+      if (ImGui::BeginMenu("Time Display")) {
+        for (int i = 0; i < 4; ++i) {
+          const auto mode = static_cast<TimeDisplayMode>(i);
+          const bool selected = ui_state_.time_display_mode == mode;
+          if (ImGui::MenuItem(TimeDisplayModeLongLabel(mode), nullptr, selected)) {
+            ui_state_.time_display_mode = mode;
+            SaveAppConfig();
+          }
+        }
+        ImGui::EndMenu();
+      }
+      ImGui::EndMenu();
+    }
+    if (ImGui::BeginMenu("Emulation")) {
+      if (ImGui::MenuItem("Limit to Real-Time (60 FPS)", nullptr, &ui_state_.realtime_limiter)) {
+        last_tick_time_ = std::chrono::steady_clock::now();
+        SaveAppConfig();
+      }
+      ImGui::EndMenu();
+    }
+    if (ImGui::BeginMenu("Windows")) {
+      ImGui::MenuItem("Registers", nullptr, &ui_state_.show_registers_panel);
+      ImGui::MenuItem("Disassembly", nullptr, &ui_state_.show_disasm_panel);
+      ImGui::MenuItem("Memory", nullptr, &ui_state_.show_memory_panel);
+      ImGui::MenuItem("Stack", nullptr, &ui_state_.show_stack_panel);
+      ImGui::MenuItem("PPU", nullptr, &ui_state_.show_ppu_panel);
+      ImGui::MenuItem("Trace", nullptr, &ui_state_.show_trace_panel);
+      ImGui::MenuItem("Micro-op Trace", nullptr, &ui_state_.show_microop_trace_panel);
+      ImGui::MenuItem("Scheduler", nullptr, &ui_state_.show_scheduler_panel);
+      ImGui::MenuItem("Errors", nullptr, &ui_state_.show_errors_panel);
+      ImGui::MenuItem("Bus", nullptr, &ui_state_.show_bus_panel);
+      ImGui::EndMenu();
+    }
     if (ImGui::BeginMenu("Debug")) {
       ImGui::MenuItem("Style Editor", nullptr, &ui_state_.show_style_editor);
       ImGui::MenuItem("Metrics/Debugger", nullptr, &ui_state_.show_metrics_window);
@@ -349,7 +403,6 @@ void DebuggerApp::RenderMenuBar() {
         perf_last_time_ = now;
         perf_last_master_ = master_now;
       } else if (dt >= 0.25) {
-        constexpr double kMasterClockHz = 21477272.0;
         const auto master_delta = static_cast<double>(master_now - perf_last_master_);
         perf_fps_ = ImGui::GetIO().Framerate;
         perf_realtime_pct_ = static_cast<float>((master_delta / kMasterClockHz) / dt * 100.0);
@@ -573,6 +626,33 @@ void DebuggerApp::LoadAppConfig() {
       ui_state_.last_rom_path = value;
     } else if (key == "last_rom_dir") {
       ui_state_.load_rom_dir = value;
+    } else if (key == "time_display_mode") {
+      const int parsed = std::atoi(value.c_str());
+      if (parsed >= 0 && parsed <= static_cast<int>(TimeDisplayMode::kPpu)) {
+        ui_state_.time_display_mode = static_cast<TimeDisplayMode>(parsed);
+      }
+    } else if (key == "show_registers_panel") {
+      ui_state_.show_registers_panel = value != "0";
+    } else if (key == "show_disasm_panel") {
+      ui_state_.show_disasm_panel = value != "0";
+    } else if (key == "show_memory_panel") {
+      ui_state_.show_memory_panel = value != "0";
+    } else if (key == "show_stack_panel") {
+      ui_state_.show_stack_panel = value != "0";
+    } else if (key == "show_ppu_panel") {
+      ui_state_.show_ppu_panel = value != "0";
+    } else if (key == "show_trace_panel") {
+      ui_state_.show_trace_panel = value != "0";
+    } else if (key == "show_microop_trace_panel") {
+      ui_state_.show_microop_trace_panel = value != "0";
+    } else if (key == "show_scheduler_panel") {
+      ui_state_.show_scheduler_panel = value != "0";
+    } else if (key == "show_errors_panel") {
+      ui_state_.show_errors_panel = value != "0";
+    } else if (key == "show_bus_panel") {
+      ui_state_.show_bus_panel = value != "0";
+    } else if (key == "realtime_limiter") {
+      ui_state_.realtime_limiter = value != "0";
     }
   }
 }
@@ -585,6 +665,18 @@ void DebuggerApp::SaveAppConfig() {
   }
   stream << "last_rom_path=" << ui_state_.last_rom_path << "\n";
   stream << "last_rom_dir=" << ui_state_.load_rom_dir << "\n";
+  stream << "time_display_mode=" << static_cast<int>(ui_state_.time_display_mode) << "\n";
+  stream << "show_registers_panel=" << (ui_state_.show_registers_panel ? 1 : 0) << "\n";
+  stream << "show_disasm_panel=" << (ui_state_.show_disasm_panel ? 1 : 0) << "\n";
+  stream << "show_memory_panel=" << (ui_state_.show_memory_panel ? 1 : 0) << "\n";
+  stream << "show_stack_panel=" << (ui_state_.show_stack_panel ? 1 : 0) << "\n";
+  stream << "show_ppu_panel=" << (ui_state_.show_ppu_panel ? 1 : 0) << "\n";
+  stream << "show_trace_panel=" << (ui_state_.show_trace_panel ? 1 : 0) << "\n";
+  stream << "show_microop_trace_panel=" << (ui_state_.show_microop_trace_panel ? 1 : 0) << "\n";
+  stream << "show_scheduler_panel=" << (ui_state_.show_scheduler_panel ? 1 : 0) << "\n";
+  stream << "show_errors_panel=" << (ui_state_.show_errors_panel ? 1 : 0) << "\n";
+  stream << "show_bus_panel=" << (ui_state_.show_bus_panel ? 1 : 0) << "\n";
+  stream << "realtime_limiter=" << (ui_state_.realtime_limiter ? 1 : 0) << "\n";
 }
 
 void DebuggerApp::RenderFatalModal() {

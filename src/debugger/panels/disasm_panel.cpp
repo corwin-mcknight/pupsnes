@@ -8,7 +8,13 @@ namespace pupsnes::debugger {
 
 void RenderDisasmPanel(DebuggerApp& app) {
   UiState& ui = app.GetUiState();
-  ImGui::Begin("Disassembly");
+  if (!ui.show_disasm_panel) {
+    return;
+  }
+  if (!ImGui::Begin("Disassembly", &ui.show_disasm_panel)) {
+    ImGui::End();
+    return;
+  }
   if (!app.HasLoadedRom()) {
     ImGui::TextUnformatted("Load a ROM to inspect disassembly.");
     ImGui::End();
@@ -24,7 +30,13 @@ void RenderDisasmPanel(DebuggerApp& app) {
 
   ImGui::Separator();
   const SnesAddrT current_pc = app.GetCurrentPc();
-  for (int line_index = 0; line_index < 48; ++line_index) {
+  const ImVec4 current_color(0.96F, 0.82F, 0.28F, 1.0F);
+  const float bottom_y =
+      ImGui::GetCursorPosY() + ImGui::GetContentRegionAvail().y - ImGui::GetFrameHeightWithSpacing();
+  for (int line_index = 0; line_index < 4096; ++line_index) {
+    if (ImGui::GetCursorPosY() >= bottom_y) {
+      break;
+    }
     const DisassembledInstruction line =
         DisassembleInstruction(app.GetSnes(), address, app.GetSnes().GetCpu().GetRegs().P);
     const bool is_current = line.pc == current_pc;
@@ -37,9 +49,18 @@ void RenderDisasmPanel(DebuggerApp& app) {
 
     const std::string addr = FormatAddress24(line.pc);
     if (is_current) {
-      ImGui::TextColored(ImVec4(0.96F, 0.82F, 0.28F, 1.0F), "%s  %s", addr.c_str(), line.text.c_str());
+      ImGui::TextColored(current_color, "%s  %s", addr.c_str(), line.text.c_str());
     } else {
       ImGui::Text("%s  %s", addr.c_str(), line.text.c_str());
+    }
+
+    if (is_current) {
+      const char* arrow = "<--";
+      const float arrow_w = ImGui::CalcTextSize(arrow).x;
+      const float right = ImGui::GetWindowContentRegionMax().x;
+      ImGui::SameLine();
+      ImGui::SetCursorPosX(right - arrow_w);
+      ImGui::TextColored(current_color, "%s", arrow);
     }
     ImGui::PopID();
 

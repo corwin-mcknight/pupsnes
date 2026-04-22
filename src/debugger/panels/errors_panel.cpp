@@ -1,6 +1,5 @@
-#include <cinttypes>
-
 #include "debugger/app.h"
+#include "debugger/time_format.h"
 #include "imgui.h"
 #include "panel_utils.h"
 #include "panels.h"
@@ -34,8 +33,15 @@ const char* SourceLabel(ErrorSource source) {
 
 void RenderErrorsPanel(DebuggerApp& app) {
   UiState& ui = app.GetUiState();
-  ImGui::Begin("Errors");
+  if (!ui.show_errors_panel) {
+    return;
+  }
+  if (!ImGui::Begin("Errors", &ui.show_errors_panel)) {
+    ImGui::End();
+    return;
+  }
 
+  const TimeMasterT now = app.GetSnes().GetMasterTime();
   ImGui::SetNextItemWidth(140.0F);
   ImGui::InputInt("Source Filter", &ui.error_source_filter);
   ImGui::SetNextItemWidth(140.0F);
@@ -59,7 +65,7 @@ void RenderErrorsPanel(DebuggerApp& app) {
 
       ImGui::TableNextRow();
       ImGui::TableSetColumnIndex(0);
-      ImGui::Text("%" PRIu64, event.master_time);
+      TextMasterTime(event.master_time, now, ui.time_display_mode);
       ImGui::TableSetColumnIndex(1);
       ImGui::TextUnformatted(SeverityLabel(event.severity));
       ImGui::TableSetColumnIndex(2);

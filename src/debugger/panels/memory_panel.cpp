@@ -15,7 +15,13 @@ constexpr const char* kMemoryRegions[] = {"Bus", "WRAM", "ROM"};
 
 void RenderMemoryPanel(DebuggerApp& app) {
   UiState& ui = app.GetUiState();
-  ImGui::Begin("Memory");
+  if (!ui.show_memory_panel) {
+    return;
+  }
+  if (!ImGui::Begin("Memory", &ui.show_memory_panel)) {
+    ImGui::End();
+    return;
+  }
   if (!app.HasLoadedRom()) {
     ImGui::TextUnformatted("Load a ROM to inspect memory.");
     ImGui::End();

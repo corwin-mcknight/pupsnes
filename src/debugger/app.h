@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -16,6 +17,7 @@ struct GLFWwindow;
 #include "pupsnes/debugger/run_control.h"
 #include "pupsnes/debugger/trace.h"
 #include "pupsnes/hw/snes.h"
+#include "time_format.h"
 
 namespace pupsnes::debugger {
 
@@ -60,12 +62,25 @@ struct UiState {
   int error_source_filter = -1;
   int error_severity_filter = -1;
   size_t trace_last_seen_size = 0;
+  size_t bus_last_seen_size = 0;
+  TimeDisplayMode time_display_mode = TimeDisplayMode::kAbsolute;
   bool show_style_editor = false;
   bool show_demo_window = false;
   bool show_metrics_window = false;
   bool show_debug_log_window = false;
   bool show_id_stack_tool = false;
   bool show_about_window = false;
+  bool show_registers_panel = true;
+  bool show_disasm_panel = true;
+  bool show_memory_panel = true;
+  bool show_stack_panel = true;
+  bool show_ppu_panel = true;
+  bool show_trace_panel = true;
+  bool show_microop_trace_panel = true;
+  bool show_scheduler_panel = true;
+  bool show_errors_panel = true;
+  bool show_bus_panel = true;
+  bool realtime_limiter = false;
 };
 
 class DebuggerApp {
@@ -124,6 +139,7 @@ class DebuggerApp {
   TimeMasterT perf_last_master_ = 0;
   float perf_fps_ = 0.0F;
   float perf_realtime_pct_ = 0.0F;
+  std::chrono::steady_clock::time_point last_tick_time_{};
   bool loaded_rom_ = false;
   std::string loaded_rom_path_;
   std::optional<std::string> fatal_error_;

@@ -1,7 +1,7 @@
-#include <cinttypes>
 #include <string>
 
 #include "debugger/app.h"
+#include "debugger/time_format.h"
 #include "imgui.h"
 #include "panel_utils.h"
 #include "panels.h"
@@ -10,9 +10,15 @@
 namespace pupsnes::debugger {
 
 void RenderTracePanel(DebuggerApp& app) {
-  ImGui::Begin("Trace");
-  const auto snapshot = app.GetTraceLog().Snapshot();
   UiState& ui = app.GetUiState();
+  if (!ui.show_trace_panel) {
+    return;
+  }
+  if (!ImGui::Begin("Trace", &ui.show_trace_panel)) {
+    ImGui::End();
+    return;
+  }
+  const auto snapshot = app.GetTraceLog().Snapshot();
   const bool grew = snapshot.size() != ui.trace_last_seen_size;
   ui.trace_last_seen_size = snapshot.size();
 
@@ -24,6 +30,7 @@ void RenderTracePanel(DebuggerApp& app) {
     ImGui::TableHeadersRow();
 
     const SNES& snes = app.GetSnes();
+    const TimeMasterT now = snes.GetMasterTime();
     ImGuiListClipper clipper;
     clipper.Begin(static_cast<int>(snapshot.size()));
     while (clipper.Step()) {
@@ -32,7 +39,7 @@ void RenderTracePanel(DebuggerApp& app) {
         const DisassembledInstruction view = DisassembleInstructionRaw(snes, entry.pc, entry.regs.P);
         ImGui::TableNextRow();
         ImGui::TableSetColumnIndex(0);
-        ImGui::Text("%" PRIu64, entry.master_time);
+        TextMasterTime(entry.master_time, now, ui.time_display_mode);
         ImGui::TableSetColumnIndex(1);
         TextAddress24(entry.pc);
         ImGui::TableSetColumnIndex(2);
