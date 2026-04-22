@@ -43,10 +43,13 @@ class TraceSink {
 // immediately re-triggering: when set, the CPU skips the breakpoint check for
 // that exact PC on the next fetch and clears the field.
 struct DebuggerContract {
+  enum class StepGranularity : uint8_t { kInstruction = 0, kMicroOp = 1 };
+
   const BreakpointLookup* breakpoints = nullptr;
   TraceSink* trace_sink = nullptr;
   uint64_t step_target = 0;
   std::optional<SnesAddrT> suppressed_breakpoint_pc = std::nullopt;
+  StepGranularity step_granularity = StepGranularity::kInstruction;
 };
 
 }  // namespace pupsnes

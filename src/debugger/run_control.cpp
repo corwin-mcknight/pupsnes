@@ -27,8 +27,8 @@ void RunControl::InstallDebuggerContract() {
   contract.trace_sink = &trace_log_;
   contract.step_target = 0;
   contract.suppressed_breakpoint_pc = std::nullopt;
+  contract.step_granularity = DebuggerContract::StepGranularity::kInstruction;
   snes_.GetCpu().SetDebuggerContract(contract);
-  (void)snes_.GetCpu().TakeLastDebuggerStop();
 }
 
 void RunControl::ResetMachineState() {
@@ -36,7 +36,6 @@ void RunControl::ResetMachineState() {
   pause_reason_ = PauseReason::kUser;
   logged_fault_pc_.reset();
   InstallDebuggerContract();
-  PrimeCpuRun();
 }
 
 void RunControl::Pause() {
@@ -73,43 +72,41 @@ void RunControl::SuppressBreakpointAtCurrentPc() {
   }
 }
 
-void RunControl::RequestStepOne() {
+void RunControl::RequestStepOne(StepGranularity granularity) {
   SuppressBreakpointAtCurrentPc();
-  snes_.GetCpu().MutableDebuggerContract().step_target = 1;
+  auto& c = snes_.GetCpu().MutableDebuggerContract();
+  c.step_target = 1;
+  c.step_granularity = granularity == StepGranularity::kMicroOp
+                           ? DebuggerContract::StepGranularity::kMicroOp
+                           : DebuggerContract::StepGranularity::kInstruction;
   state_ = RunState::kStepOne;
-  PrimeCpuRun();
 }
 
-void RunControl::RequestStepN(uint64_t count) {
+void RunControl::RequestStepN(uint64_t count, StepGranularity granularity) {
   if (count == 0) {
     state_ = RunState::kPaused;
     snes_.GetCpu().MutableDebuggerContract().step_target = 0;
     return;
   }
   SuppressBreakpointAtCurrentPc();
-  snes_.GetCpu().MutableDebuggerContract().step_target = count;
+  auto& c = snes_.GetCpu().MutableDebuggerContract();
+  c.step_target = count;
+  c.step_granularity = granularity == StepGranularity::kMicroOp
+                           ? DebuggerContract::StepGranularity::kMicroOp
+                           : DebuggerContract::StepGranularity::kInstruction;
   state_ = RunState::kStepN;
-  PrimeCpuRun();
 }
 
 void RunControl::RequestRunUntilBreak() {
   SuppressBreakpointAtCurrentPc();
-  snes_.GetCpu().MutableDebuggerContract().step_target = 0;
+  auto& c = snes_.GetCpu().MutableDebuggerContract();
+  c.step_target = 0;
+  c.step_granularity = DebuggerContract::StepGranularity::kInstruction;
   state_ = RunState::kRunUntilBreak;
   DetachMicroOpRecorderForFreeRun();
-  PrimeCpuRun();
 }
 
 SnesAddrT RunControl::GetCurrentPc() const { return ComposePcAddress(snes_.GetCpu().GetRegs()); }
-
-void RunControl::PrimeCpuRun() {
-  const TimeMasterT next_time = std::max(snes_.GetMasterTime(), snes_.GetCpu().GetTime());
-  CPU& cpu = snes_.GetCpu();
-  if (snes_.GetScheduler().HasPendingRunAtOrBefore(cpu.GetDeviceId(), next_time)) {
-    return;
-  }
-  snes_.GetScheduler().ScheduleDeviceRun(&cpu, next_time);
-}
 
 void RunControl::PauseForBreakpoint() {
   state_ = RunState::kPaused;
@@ -135,7 +132,7 @@ void RunControl::LogFaultIfPresent() {
   error_log_.PushCpuFault(snes_.GetMasterTime(), *fault);
 }
 
-bool RunControl::HandlePostStepState() {
+bool RunControl::HandlePostTickState(const TickResult& result) {
   CPU& cpu = snes_.GetCpu();
 
   if (cpu.GetFault().has_value()) {
@@ -144,12 +141,18 @@ bool RunControl::HandlePostStepState() {
     return false;
   }
 
-  if (const auto stop = cpu.TakeLastDebuggerStop(); stop.has_value()) {
-    switch (*stop) {
-      case TickStopReason::kDebuggerBreakpoint: PauseForBreakpoint(); return false;
-      case TickStopReason::kDebuggerStepComplete: Pause(); return false;
-      default: break;
-    }
+  switch (result.reason) {
+    case TickStopReason::kBreakpoint:
+      PauseForBreakpoint();
+      return false;
+    case TickStopReason::kRetiredStepTarget:
+      Pause();
+      return false;
+    case TickStopReason::kFault:
+      PauseForError();
+      return false;
+    case TickStopReason::kReachedTarget:
+      return true;
   }
 
   return true;
@@ -170,20 +173,23 @@ void RunControl::TickFrame(std::chrono::steady_clock::duration wall_clock_budget
         (snes_.GetMasterTime() - start_master_time) >= *master_cycles_budget) {
       break;
     }
-    if (!snes_.GetScheduler().HasPendingEvents()) {
-      Pause();
-      break;
-    }
 
+    const TimeMasterT target = snes_.GetScheduler().NextEventMasterTime();
+
+    TickResult result{0, TickStopReason::kReachedTarget};
     try {
-      snes_.GetScheduler().Step();
+      result = snes_.GetCpu().TickToTarget(target);
     } catch (const std::exception& ex) {
       error_log_.PushSchedulerError(snes_.GetMasterTime(), ex.what(), snes_.GetCpu().GetRegs());
       PauseForError();
       break;
     }
 
-    if (!HandlePostStepState()) {
+    const TimeMasterT now = snes_.GetMasterTime();
+    snes_.MachineSync(now);
+    snes_.GetScheduler().FireEventsThrough(now);
+
+    if (!HandlePostTickState(result)) {
       break;
     }
   }

@@ -7,6 +7,7 @@
 #include "pupsnes/debugger/breakpoints.h"
 #include "pupsnes/debugger/error_log.h"
 #include "pupsnes/debugger/trace.h"
+#include "pupsnes/hw/device.h"
 #include "pupsnes/hw/snes.h"
 
 namespace pupsnes::debugger {
@@ -24,14 +25,19 @@ enum class PauseReason : uint8_t {
   kError = 2,
 };
 
+enum class StepGranularity : uint8_t {
+  kInstruction = 0,
+  kMicroOp = 1,
+};
+
 class RunControl {
  public:
   RunControl(SNES& snes, BreakpointSet& breakpoints, TraceLog& trace_log, ErrorLog& error_log);
 
   void ResetMachineState();
   void Pause();
-  void RequestStepOne();
-  void RequestStepN(uint64_t count);
+  void RequestStepOne(StepGranularity granularity = StepGranularity::kInstruction);
+  void RequestStepN(uint64_t count, StepGranularity granularity = StepGranularity::kInstruction);
   void RequestRunUntilBreak();
   void TickFrame(std::chrono::steady_clock::duration wall_clock_budget,
                  std::optional<TimeMasterT> master_cycles_budget = std::nullopt);
@@ -41,14 +47,13 @@ class RunControl {
 
  private:
   [[nodiscard]] SnesAddrT GetCurrentPc() const;
-  void PrimeCpuRun();
   void InstallDebuggerContract();
   void SuppressBreakpointAtCurrentPc();
   void PauseForBreakpoint();
   void PauseForError();
   void LogFaultIfPresent();
   // Returns true to keep running; false to exit the TickFrame loop.
-  bool HandlePostStepState();
+  bool HandlePostTickState(const TickResult& result);
   void DetachMicroOpRecorderForFreeRun();
   void RestoreMicroOpRecorderForPause();
 
