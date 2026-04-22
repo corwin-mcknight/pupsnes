@@ -141,7 +141,7 @@ uint32_t Bgr555ToRgba8(uint16_t c) {
   return r | (g << 8U) | (b << 16U) | (0xFFU << 24U);
 }
 
-void UploadFrameToTexture(const FrameBufferView& view) {
+void UploadFrameToTexture(const FrameBufferView& view, bool darkened = false) {
   if (view.pixels == nullptr || view.width == 0 || view.height == 0) {
     return;
   }
@@ -155,7 +155,15 @@ void UploadFrameToTexture(const FrameBufferView& view) {
     const uint16_t* src = view.pixels + static_cast<std::size_t>(y) * view.stride;
     uint32_t* dst = scratch.data() + static_cast<std::size_t>(y) * view.width;
     for (uint32_t x = 0; x < view.width; ++x) {
-      dst[x] = Bgr555ToRgba8(src[x]);
+      uint32_t px = Bgr555ToRgba8(src[x]);
+      if (darkened) {
+        // Halve each RGB channel to dim the previous frame.
+        const uint32_t r = ((px >> 0U) & 0xFFU) >> 1U;
+        const uint32_t g = ((px >> 8U) & 0xFFU) >> 1U;
+        const uint32_t b = ((px >> 16U) & 0xFFU) >> 1U;
+        px = r | (g << 8U) | (b << 16U) | (0xFFU << 24U);
+      }
+      dst[x] = px;
     }
   }
 
@@ -221,9 +229,9 @@ void UploadBackOverlayToTexture(const Ppu& ppu) {
         dst_row[x_logical] = 0;  // fully transparent
         continue;
       }
-      const uint32_t r = Expand5To8(static_cast<uint32_t>(back_row[x_grid]) & 0x1FU) >> 1U;
-      const uint32_t g = Expand5To8((static_cast<uint32_t>(back_row[x_grid]) >> 5U) & 0x1FU) >> 1U;
-      const uint32_t b = Expand5To8((static_cast<uint32_t>(back_row[x_grid]) >> 10U) & 0x1FU) >> 1U;
+      const uint32_t r = Expand5To8(static_cast<uint32_t>(back_row[x_grid]) & 0x1FU);
+      const uint32_t g = Expand5To8((static_cast<uint32_t>(back_row[x_grid]) >> 5U) & 0x1FU);
+      const uint32_t b = Expand5To8((static_cast<uint32_t>(back_row[x_grid]) >> 10U) & 0x1FU);
       dst_row[x_logical] = r | (g << 8U) | (b << 16U) | (0xFFU << 24U);
     }
   }
@@ -267,7 +275,10 @@ void DrawFramebufferPreview(const Ppu& ppu, bool paused) {
     return;
   }
 
-  UploadFrameToTexture(view);
+  // When paused: upload front DARKENED (dim ghost of previous frame) as the
+  // base layer, then composite the in-progress back-buffer at full color on top.
+  // When running: upload front at full color with no overlay.
+  UploadFrameToTexture(view, /*darkened=*/paused);
   const PreviewTexture& front = GetPreviewTexture();
   if (front.id == 0) {
     ImGui::TextDisabled("(texture unavailable)");
@@ -295,7 +306,7 @@ void DrawFramebufferPreview(const Ppu& ppu, bool paused) {
 
   ImGui::Text("%ux%u (%s)%s", view.width, view.height,
               ppu.IsOverscan() || ppu.GetForceOverscanDraw() ? "overscan" : "standard",
-              paused ? "  [paused: back-buffer overlay]" : "");
+              paused ? "  [paused: previous frame dimmed; in-progress highlighted]" : "");
 }
 
 }  // namespace
