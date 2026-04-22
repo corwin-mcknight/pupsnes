@@ -112,6 +112,11 @@ PreviewTexture& GetPreviewTexture() {
   return tex;
 }
 
+PreviewTexture& GetOverlayTexture() {
+  static PreviewTexture tex;
+  return tex;
+}
+
 // CPU-side conversion buffer: BGR555 -> RGBA8. Sized for the max logical
 // view (256 × 239 with overscan); the unused tail doesn't cost anything.
 constexpr std::size_t kMaxLogicalPixels = 256U * 239U;
@@ -186,7 +191,70 @@ void UploadFrameToTexture(const FrameBufferView& view) {
   glPixelStorei(GL_UNPACK_ALIGNMENT, previous_unpack_alignment);
 }
 
-void DrawFramebufferPreview(const Ppu& ppu) {
+void UploadBackOverlayToTexture(const Ppu& ppu) {
+  const FrameBufferView view = ppu.BuildFrontView();  // reuse logical dims
+  if (view.width == 0 || view.height == 0) {
+    return;
+  }
+  const std::size_t pixel_count = static_cast<std::size_t>(view.width) * view.height;
+  if (pixel_count > kMaxLogicalPixels) {
+    return;
+  }
+
+  const uint16_t* back = ppu.GetBackBuffer();
+  const uint8_t* mask = ppu.GetDrawnMask();
+  auto& scratch = GetScratchBuffer();
+
+  for (uint32_t y = 0; y < view.height; ++y) {
+    const uint16_t* back_row = back + static_cast<std::size_t>(y) * view.stride;
+    uint32_t* dst_row = scratch.data() + static_cast<std::size_t>(y) * view.width;
+    for (uint32_t x = 0; x < view.width; ++x) {
+      const std::size_t idx = static_cast<std::size_t>(y) * view.stride + x;
+      const bool drawn = ((mask[idx >> 3U] >> (idx & 7U)) & 1U) != 0U;
+      if (!drawn) {
+        dst_row[x] = 0;  // fully transparent
+        continue;
+      }
+      const uint32_t r = Expand5To8(static_cast<uint32_t>(back_row[x]) & 0x1FU) >> 1U;
+      const uint32_t g = Expand5To8((static_cast<uint32_t>(back_row[x]) >> 5U) & 0x1FU) >> 1U;
+      const uint32_t b = Expand5To8((static_cast<uint32_t>(back_row[x]) >> 10U) & 0x1FU) >> 1U;
+      dst_row[x] = r | (g << 8U) | (b << 16U) | (0xFFU << 24U);
+    }
+  }
+
+  PreviewTexture& tex = GetOverlayTexture();
+  const GLint previous_unpack_alignment = [] {
+    GLint value = 4;
+    glGetIntegerv(GL_UNPACK_ALIGNMENT, &value);
+    return value;
+  }();
+  glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+
+  if (tex.id == 0) {
+    glGenTextures(1, &tex.id);
+    glBindTexture(GL_TEXTURE_2D, tex.id);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  } else {
+    glBindTexture(GL_TEXTURE_2D, tex.id);
+  }
+
+  if (tex.width != view.width || tex.height != view.height) {
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, static_cast<GLsizei>(view.width),
+                 static_cast<GLsizei>(view.height), 0, GL_RGBA, GL_UNSIGNED_BYTE, scratch.data());
+    tex.width = view.width;
+    tex.height = view.height;
+  } else {
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, static_cast<GLsizei>(view.width),
+                    static_cast<GLsizei>(view.height), GL_RGBA, GL_UNSIGNED_BYTE, scratch.data());
+  }
+
+  glPixelStorei(GL_UNPACK_ALIGNMENT, previous_unpack_alignment);
+}
+
+void DrawFramebufferPreview(const Ppu& ppu, bool paused) {
   const FrameBufferView view = ppu.BuildFrontView();
   if (view.pixels == nullptr || view.width == 0 || view.height == 0) {
     ImGui::TextDisabled("(no frame yet)");
@@ -194,8 +262,8 @@ void DrawFramebufferPreview(const Ppu& ppu) {
   }
 
   UploadFrameToTexture(view);
-  const PreviewTexture& tex = GetPreviewTexture();
-  if (tex.id == 0) {
+  const PreviewTexture& front = GetPreviewTexture();
+  if (front.id == 0) {
     ImGui::TextDisabled("(texture unavailable)");
     return;
   }
@@ -203,14 +271,25 @@ void DrawFramebufferPreview(const Ppu& ppu) {
   // Preserve aspect; don't down-scale below 1× so pixels stay distinct.
   const float aspect = static_cast<float>(view.width) / static_cast<float>(view.height);
   const float avail_w = ImGui::GetContentRegionAvail().x;
-  float w = (avail_w > static_cast<float>(view.width)) ? avail_w : static_cast<float>(view.width);
-  float h = w / aspect;
+  const float w = (avail_w > static_cast<float>(view.width)) ? avail_w : static_cast<float>(view.width);
+  const float h = w / aspect;
 
-  const ImTextureID texture_id = static_cast<ImTextureID>(static_cast<intptr_t>(tex.id));
-  ImGui::Image(texture_id, ImVec2(w, h));
+  const ImVec2 cursor = ImGui::GetCursorScreenPos();
+  ImGui::Image(static_cast<ImTextureID>(static_cast<intptr_t>(front.id)), ImVec2(w, h));
 
-  ImGui::Text("%ux%u (%s)", view.width, view.height,
-              ppu.IsOverscan() || ppu.GetForceOverscanDraw() ? "overscan" : "standard");
+  if (paused) {
+    UploadBackOverlayToTexture(ppu);
+    const PreviewTexture& overlay = GetOverlayTexture();
+    if (overlay.id != 0) {
+      ImGui::GetWindowDrawList()->AddImage(
+          static_cast<ImTextureID>(static_cast<intptr_t>(overlay.id)),
+          cursor, ImVec2(cursor.x + w, cursor.y + h));
+    }
+  }
+
+  ImGui::Text("%ux%u (%s)%s", view.width, view.height,
+              ppu.IsOverscan() || ppu.GetForceOverscanDraw() ? "overscan" : "standard",
+              paused ? "  [paused: back-buffer overlay]" : "");
 }
 
 }  // namespace
@@ -237,7 +316,8 @@ void RenderPpuPanel(DebuggerApp& app) {
   }
 
   if (ImGui::CollapsingHeader("Framebuffer", ImGuiTreeNodeFlags_DefaultOpen)) {
-    DrawFramebufferPreview(ppu);
+    const bool paused = app.GetRunControl().GetState() == RunState::kPaused;
+    DrawFramebufferPreview(ppu, paused);
   }
 
   ImGui::End();
