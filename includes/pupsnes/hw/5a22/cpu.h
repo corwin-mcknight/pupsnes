@@ -350,6 +350,11 @@ class CPU : public Device {
   [[nodiscard]] StepResult ExecuteMicroOp(TimeMasterDeltaT cycle_time);
   [[nodiscard]] TickResult PerformBusAction(MicroBusAction action, [[maybe_unused]] uint8_t params,
                                             TimeMasterDeltaT cycle_time);
+  // Peek the cycle cost of the next step (opcode fetch or micro-op) without
+  // running it. Used by Tick to enforce strict budget with no overshoot —
+  // if the next step wouldn't fit, yield budget remainder instead of
+  // punching through.
+  [[nodiscard]] TimeMasterDeltaT EstimateNextStepCost() const;
 
   // Internal-op dispatch. The switch and every op body live in cpu.cpp; we
   // keep only the declaration here so that adding a new MicroInternalOp

@@ -933,9 +933,61 @@ CPU::StepResult CPU::ExecuteMicroOp(TimeMasterDeltaT cycle_time) {
   return StepResult{step_cycles, TickResult{0, TickStopReason::kContinue}};
 }
 
+TimeMasterDeltaT CPU::EstimateNextStepCost() const {
+  // Peek-only: planning a bus transaction is pure. Go through `snes_` so we
+  // work even before CPU::Reset has cached system_bus_raw_ (some tests
+  // construct a CPU without resetting it before calling Tick).
+  if (snes_ == nullptr || snes_->system_bus == nullptr) {
+    return kInternalCpuCycleMaster;
+  }
+  const SystemBus& bus = *snes_->system_bus;
+
+  if (ShouldFetchInstruction()) {
+    return bus.Plan(PcAddr(regs_), BusAccessType::kRead).access_cycles;
+  }
+
+  assert(current_instr_ != nullptr);
+  const uint8_t op_idx = static_cast<uint8_t>(micro_op_index_ - 1U);
+  assert(op_idx < current_instr_->remaining_op_count);
+  const MicroOp& mop = current_instr_->ops[op_idx];
+
+  switch (mop.bus_action) {
+    case MicroBusAction::kNone: return kInternalCpuCycleMaster;
+    case MicroBusAction::kFetchPc:
+      return bus.Plan(PcAddr(regs_), BusAccessType::kRead).access_cycles;
+    case MicroBusAction::kReadAddr: return bus.Plan(addr_, BusAccessType::kRead).access_cycles;
+    case MicroBusAction::kWriteRegByte: return bus.Plan(addr_, BusAccessType::kWrite).access_cycles;
+    case MicroBusAction::kPushStack: return bus.Plan(StackAddr(regs_), BusAccessType::kWrite).access_cycles;
+    case MicroBusAction::kPullStack: return bus.Plan(StackAddr(regs_), BusAccessType::kRead).access_cycles;
+    case MicroBusAction::kPreIncPullStack: {
+      // Simulate the pre-increment on a copy so the estimate picks the
+      // page the real read will land on.
+      CPU::Regs sim = regs_;
+      if (sim.P.E) {
+        const uint8_t sp_lo = static_cast<uint8_t>(static_cast<uint8_t>(sim.SP) + 1U);
+        sim.SP = static_cast<uint16_t>(0x0100U | sp_lo);
+      } else {
+        sim.SP = static_cast<uint16_t>(sim.SP + 1U);
+      }
+      return bus.Plan(StackAddr(sim), BusAccessType::kRead).access_cycles;
+    }
+  }
+  return kInternalCpuCycleMaster;
+}
+
 TickResult CPU::Tick(TimeMasterDeltaT budget) {
   if (fault_.has_value()) {
     return {0, TickStopReason::kFaulted};
+  }
+
+  // Tight-budget escape: when the scheduler hands us a zero or sub-step
+  // slice (because another same-time event clipped us), yield via kNoWork
+  // with a future wake so the scheduler's same-time zero-progress guard
+  // doesn't trip. Waking kMaxCyclesStep out gives the other device room
+  // to run its own event meaningfully instead of us immediately re-
+  // contending for the same timestamp.
+  if (budget == 0) {
+    return {0, TickStopReason::kNoWork, 0, local_time_ + Scheduler::kMaxCyclesStep};
   }
 
   TimeMasterDeltaT cycle_time = 0;
@@ -957,6 +1009,22 @@ TickResult CPU::Tick(TimeMasterDeltaT budget) {
       next_refresh_time_ += kMasterCyclesPerScanline;
       ++retired_refresh_windows_;
       continue;
+    }
+
+    // Strict no-overshoot: if the next step wouldn't fit, yield without
+    // starting it. If nothing fit at all (tight budget on entry), ask the
+    // scheduler to wake us far enough out that another device (the PPU)
+    // has room to make real progress on its own scheduled event instead
+    // of us immediately clipping its budget again. kMaxCyclesStep is the
+    // scheduler's natural slice size and gives the PPU a full-scanline+
+    // worth of budget.
+    const TimeMasterDeltaT next_cost = EstimateNextStepCost();
+    if (cycle_time + next_cost > budget) {
+      if (cycle_time == 0) {
+        return {0, TickStopReason::kNoWork, 0,
+                local_time_ + Scheduler::kMaxCyclesStep};
+      }
+      break;
     }
 
     StepResult step = ShouldFetchInstruction() ? FetchOpcode(cycle_time) : ExecuteMicroOp(cycle_time);

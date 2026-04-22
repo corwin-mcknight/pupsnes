@@ -89,20 +89,27 @@ void Ppu::Reset() {
   front_buffer_->fill(0);
   back_buffer_->fill(0);
 
-  // NOTE: Reset intentionally does not auto-schedule a first kDeviceRun.
-  // Pre-scheduling at an arbitrary future time collides with other devices'
-  // micro-op retirement (kMaxMicroOpOvershoot) pushing master_time past the
-  // PPU event's fire time. The emulator main loop (or integration tests)
-  // drives the PPU explicitly via Scheduler::CatchUpDevice / ScheduleDeviceRun;
-  // bus reads of PPU registers also catch the PPU up through the same path.
+  // Schedule the first HBlank sync at the end of scanline 0. Each Tick's
+  // return with next_wake_time = committed_time chains the next scanline
+  // automatically. The VSYNC / frame-submit happens inside Tick when V
+  // wraps back to 0.
+  if (snes_ != nullptr && snes_->scheduler != nullptr) {
+    snes_->scheduler->ScheduleDeviceRun(this, sppu::regs::kNormalLineCycles);
+  }
 }
 
 TickResult Ppu::Tick(TimeMasterDeltaT budget) {
   // Sub-dot advancement: a dot is 4-6 mcyc but the scheduler may hand us a
-  // smaller budget mid-dot. Track how many cycles of the current dot we've
-  // already consumed in prior Tick calls so we can split one dot across
-  // multiple Ticks without ever exceeding the budget. Consumed cycles are
-  // strictly <= budget — no overshoot.
+  // smaller budget mid-dot. Track cycles already consumed toward the
+  // current dot in prior Tick calls so we can split one dot across Ticks
+  // without ever exceeding budget. Consumed cycles are strictly <= budget.
+  //
+  // We yield to the scheduler only at VSYNC (end of frame). HBlank sync
+  // within a frame happens internally — HV counters advance dot-by-dot,
+  // pixels land in the back buffer, and pending writes drain at each dot's
+  // nominal start time. Staying inside Tick across scanlines lets the
+  // scheduler hand the PPU full kMaxCyclesStep budgets (~3 scanlines) so
+  // the CPU isn't starved by tight same-time event interleaving.
   TimeMasterDeltaT consumed = 0;
   while (consumed < budget) {
     const TimeMasterDeltaT dot_cost = DotCost(h_, v_, field_);
@@ -129,22 +136,18 @@ TickResult Ppu::Tick(TimeMasterDeltaT budget) {
     consumed += remaining_dot;
     partial_dot_cycles_ = 0;
 
-    if (h_ == 0) {
-      // Scanline just ended. If V also wrapped, fire the frame callback
-      // before the scheduler re-dispatches us.
-      if (v_ == 0) {
-        OnEndOfFrame();
-        field_ = !field_;
-      }
-      // next_wake == committed_time — the scheduler's AlignDeviceTime
-      // becomes a no-op and we don't gap-advance past pixels we haven't
-      // emitted. HandleRunResult will schedule the next kDeviceRun at this
-      // same time, and that run covers the next scanline.
+    if (h_ == 0 && v_ == 0) {
+      // VSYNC: frame just ended. Swap buffers, fire the frontend callback,
+      // toggle `field_` for the next frame's short-line selection, and
+      // yield — next_wake = committed_time so AlignDeviceTime is a no-op
+      // and the next dispatch picks up at the start of the new frame.
+      OnEndOfFrame();
+      field_ = !field_;
       const TimeMasterT next_wake = local_time_ + consumed;
       return {consumed, TickStopReason::kReachedLocalBoundary, 0, next_wake};
     }
   }
-  // Budget exactly consumed on a dot boundary or mid-dot (partial banked).
+  // Budget exhausted mid-frame — we'll be redispatched at committed_time.
   return {consumed, TickStopReason::kBudgetExhausted};
 }
 

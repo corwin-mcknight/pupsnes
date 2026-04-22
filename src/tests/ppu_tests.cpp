@@ -1,7 +1,10 @@
 #include <catch2/catch_test_macros.hpp>
 #include <cstdint>
 #include <cstring>
+#include <vector>
 
+#include "pupsnes/hw/5a22/cpu.h"
+#include "pupsnes/hw/cartridge.h"
 #include "pupsnes/hw/scheduler.h"
 #include "pupsnes/hw/snes.h"
 #include "pupsnes/hw/sppu/ppu.h"
@@ -456,6 +459,57 @@ TEST_CASE("Forced blank keeps the backbuffer black inside the visible window", "
   // Even the visible center is 0 under forced blank.
   const uint16_t center = ppu.GetFrontBuffer()[100U * sppu::regs::kFrameBufferWidth + 100U];
   REQUIRE(center == 0x0000);
+}
+
+TEST_CASE("PPU flushes every scanline when the scheduler runs the CPU", "[unit][ppu][integration]") {
+  // Regression: Phase D intentionally stopped Ppu::Reset from auto-scheduling
+  // a kDeviceRun event (to avoid collision with CPU micro-op overshoot).
+  // Without another driver the PPU never advanced and frame callbacks never
+  // fired — running the CPU for 700M cycles produced zero output. The fix:
+  // Scheduler::Step now flushes every "continuous" device to master_time
+  // after each dispatch, so the PPU flushes scanline-by-scanline regardless
+  // of whether a CPU read triggered catch-up.
+  SNES snes;
+  int frame_count = 0;
+  snes.SetFrameReadyCallback([&](const FrameBufferView&) { ++frame_count; });
+
+  // Minimal ROM: BRA self at reset vector $8000. The CPU will loop forever
+  // without touching any PPU register, so the only way the PPU advances is
+  // via post-step sync.
+  std::vector<uint8_t> rom(Cartridge::kLoROMWindowSize, 0xEAU);  // NOPs
+  rom[0x0000U] = 0x80U;  // BRA
+  rom[0x0001U] = 0xFEU;  // target = self
+  rom[0x7FFCU] = 0x00U;
+  rom[0x7FFDU] = 0x80U;
+  snes.LoadLoRom(rom);
+  snes.Reset();
+
+  // Seed a visible red backdrop. These writes enqueue into the PPU's log
+  // without catching the PPU up.
+  BusWrite(snes, sppu::regs::kCgAdd, 0, /*now=*/0);
+  BusWrite(snes, sppu::regs::kCgData, 0x1F, /*now=*/1);
+  BusWrite(snes, sppu::regs::kCgData, 0x00, /*now=*/2);
+  BusWrite(snes, sppu::regs::kInidisp, 0x0F, /*now=*/3);
+
+  // Kick the CPU off.
+  snes.scheduler->ScheduleDeviceRun(&snes.GetCpu(), snes.GetCpu().GetTime());
+
+  // Run the scheduler long enough to cross at least one frame boundary
+  // (357368 mcyc). With kMaxCyclesStep=4096 and CPU yielding kNoWork when
+  // its budget is too tight to fit a micro-op, each PPU/CPU pair advances
+  // ~4096 mcyc; ~90 dispatch pairs per frame.
+  for (int i = 0; i < 500; ++i) {
+    if (!snes.scheduler->HasPendingEvents()) {
+      break;
+    }
+    snes.scheduler->Step();
+  }
+
+  REQUIRE(frame_count >= 1);
+  // The backdrop writes must have replayed during sync, so a visible pixel
+  // carries the configured colour.
+  const uint16_t pixel = snes.GetPpu().GetFrontBuffer()[100U * sppu::regs::kFrameBufferWidth + 100U];
+  REQUIRE(pixel == 0x001F);
 }
 
 TEST_CASE("Shadow captures every write in $2100-$213F for debugger round-trip", "[unit][ppu]") {

@@ -119,9 +119,10 @@ Deferred (covered by the Milestone 3 scope but not shipped in the scaffold):
 - NMI, H-IRQ, V-IRQ signals (these belong to Milestone 5's signal-region work; PPU frame boundaries don't depend on them)
 - H/V-counter latch (SLHV, OPHCT, OPVCT) and mode-7 multiplier registers stay open-bus
 
-Known scaffold deviation:
+PPU scheduling:
 
-- `Ppu::Reset` does not auto-schedule its first `ScheduleDeviceRun` because CPU micro-op retirement can overshoot its budget by up to `kMaxMicroOpOvershoot` (12 mcyc) and push `master_time` past a pre-scheduled PPU event. The emulator main loop / tests drive the PPU via `Scheduler::CatchUpDevice`; bus reads of PPU registers also catch it up. Re-enable Reset-time scheduling once CPU overshoot is eliminated (separately tracked).
+- `Ppu::Reset` auto-schedules the first `ScheduleDeviceRun` at the end of scanline 0 (1364 mcyc). `Tick` runs through as many scanlines as budget allows and yields at VSYNC (end of V=261) with `next_wake = committed_time`, so the scheduler chains subsequent frame dispatches without time-skipping. HBlank sync is internal to the dot loop — HV counters advance dot-by-dot and `DrainPendingWritesUpTo` fires at each dot's nominal start cycle.
+- Strict-no-overshoot on both devices: `CPU::Tick` peeks the next micro-op's cost via `SystemBus::Plan` and refuses to start a step that would exceed budget (returns kNoWork with a `kMaxCyclesStep`-ahead wake on a tight slice, so the PPU's event gets a meaningful budget to run). `Ppu::Tick` uses sub-dot partial-cycle accounting to split atomic dots across multiple Ticks without overshooting.
 
 Why this milestone matters:
 Once frames exist, the project can start validating end-to-end console behavior rather than only CPU-local behavior.
