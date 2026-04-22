@@ -1005,10 +1005,18 @@ TickResult CPU::TickToTarget(TimeMasterT target_master_time) {
     // Exception: when a user-directed step is pending (step_target > 0), the
     // scheduler boundary must not deadlock the step — let the instruction run
     // even if it slightly overshoots the event boundary.
+    //
+    // Edge case: when the next instruction cost exceeds the remaining budget
+    // but we still haven't reached the target, advancing master_time to target
+    // lets FireEventsThrough(now) fire the scheduled event. Without this, the
+    // outer TickFrame loop spins with zero CPU progress and events never fire
+    // (the tight-loop freeze when a ROM reaches an infinite BRA).
     const TimeMasterDeltaT next_cost = EstimateNextStepCostOrZero();
     if (debugger_contract_.step_target == 0 &&
         snes_->GetMasterTime() + next_cost > target_master_time) {
-      return {snes_->GetMasterTime() - start, TickStopReason::kReachedTarget};
+      snes_->SetMasterTime(target_master_time);
+      local_time_ = target_master_time;
+      return {target_master_time - start, TickStopReason::kReachedTarget};
     }
 
     StepResult step = ShouldFetchInstruction() ? FetchOpcode(0) : ExecuteMicroOp(0);

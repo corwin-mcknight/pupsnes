@@ -7,7 +7,9 @@
 #include "pupsnes/debugger/run_control.h"
 #include "pupsnes/debugger/trace.h"
 #include "pupsnes/hw/cartridge.h"
+#include "pupsnes/hw/scheduler.h"
 #include "pupsnes/hw/snes.h"
+#include "pupsnes/hw/sppu/ppu_regs.h"
 
 using namespace pupsnes;            // NOLINT(google-build-using-namespace)
 using namespace pupsnes::debugger;  // NOLINT(google-build-using-namespace)
@@ -163,4 +165,36 @@ TEST_CASE("RunControl RunUntilBreak halts on CPU fault and logs it", "[unit][deb
   REQUIRE(errors.size() == 1);
   REQUIRE(errors.front().source == ErrorSource::kCpu);
   REQUIRE(errors.front().address == 0x008001);
+}
+
+TEST_CASE("RunControl tight BRA loop advances past kFrameEnd boundary", "[unit][debugger]") {
+  // Regression: strict-no-overshoot in TickToTarget could leave master_time
+  // parked a few cycles before a scheduled event (next_cost > remaining), so
+  // the outer TickFrame loop spun indefinitely with zero CPU progress and the
+  // kFrameEnd event never fired. This test verifies that a ROM in a tight BRA
+  // self-loop advances master_time past at least one full frame boundary.
+  DebuggerFixture fixture;
+  // BRA self ($80 $FE) — infinite 2-byte relative branch, ~8 master cycles per
+  // iteration. Exercises the exact scenario: the CPU stops just before a
+  // kFrameEnd event because the next BRA would overshoot, but master_time must
+  // still advance to the event boundary so the event can fire.
+  fixture.SetBytes({0x80, 0xFE});
+
+  RunControl run_control = fixture.BuildRunControl();
+  run_control.RequestRunUntilBreak();
+
+  const TimeMasterT one_frame = 262U * sppu::regs::kNormalLineCycles;
+
+  // Give a generous wall-clock budget. TickFrame must advance past one frame
+  // boundary — without the fix it would spin forever emitting no PPU frames.
+  run_control.TickFrame(std::chrono::milliseconds(100),
+                        /*master_cycles_budget=*/one_frame * 3);
+
+  // CPU must have advanced beyond the first kFrameEnd boundary.
+  REQUIRE(fixture.snes.GetMasterTime() > one_frame);
+
+  // Scheduler must have re-queued the next kFrameEnd (not stuck on the first).
+  const auto events = fixture.snes.GetScheduler().SnapshotSignalQueue();
+  REQUIRE(!events.empty());
+  REQUIRE(events.front().master_time > one_frame);
 }
