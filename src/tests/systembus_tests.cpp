@@ -37,6 +37,7 @@ class MockMMIODevice : public Device {
   explicit MockMMIODevice(SNES* snes) : Device(snes) {}
 
   void CatchUpTo(TimeMasterT target) override {
+    if (target <= GetTime()) return;  // idempotent: device already at or past target
     ++catch_up_calls;
     local_time_ = target;
   }
