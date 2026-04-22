@@ -1,5 +1,6 @@
 #include "pupsnes/hw/5a22/cpu.h"
 
+#include <algorithm>
 #include <cassert>
 #include <cstdint>
 #include <optional>
@@ -7,7 +8,6 @@
 
 #include "pupsnes/5a22/cpu_internal.h"
 #include "pupsnes/5a22/cpu_opcode_defs_internal.h"
-#include "pupsnes/hw/scheduler.h"
 #include "pupsnes/hw/snes.h"
 #include "pupsnes/hw/systembus.h"
 
@@ -239,7 +239,7 @@ struct BcdResult {
 // CPU
 // ---------------------------------------------------------------------------
 
-CPU::CPU(SNES* snes) : Device(snes) {}
+CPU::CPU(SNES* snes) : MasterClockDriver(snes) {}
 
 void CPU::Reset() {
   regs_ = Regs();
@@ -256,7 +256,6 @@ void CPU::Reset() {
   addr_scratch_ = 0;
   timing_context_ = TimingContext{};
   fault_.reset();
-  last_debugger_stop_.reset();
   retired_instruction_count_ = 0;
   current_instr_ = nullptr;
   needs_drain_ = false;
@@ -353,21 +352,18 @@ TickResult CPU::BusReadSlow(SnesAddrT addr, TimeMasterDeltaT cycle_time) {
   auto plan = snes_->system_bus->Plan(addr, BusAccessType::kRead, 0);
   last_access_cycles_ = plan.access_cycles;
   auto result = snes_->system_bus->Follow(plan, local_time_ + cycle_time, device_id_);
-  if (result.WasScheduled()) {
-    return TickResult{cycle_time, TickStopReason::kBlockedOnToken, result.token};
-  }
+  // Async bus scheduling is gone in the new model; WasScheduled() should not
+  // fire, but if it does we treat it as a completed access (no blocking).
   fetch_data_ = result.data;
-  return TickResult{0, TickStopReason::kContinue};
+  return TickResult{0, TickStopReason::kReachedTarget};
 }
 
 TickResult CPU::BusWriteSlow(SnesAddrT addr, uint8_t data, TimeMasterDeltaT cycle_time) {
   auto plan = snes_->system_bus->Plan(addr, BusAccessType::kWrite, data);
   last_access_cycles_ = plan.access_cycles;
   auto result = snes_->system_bus->Follow(plan, local_time_ + cycle_time, device_id_);
-  if (result.WasScheduled()) {
-    return TickResult{cycle_time, TickStopReason::kBlockedOnToken, result.token};
-  }
-  return TickResult{0, TickStopReason::kContinue};
+  (void)result;
+  return TickResult{0, TickStopReason::kReachedTarget};
 }
 
 // BusRead / BusWrite / EvaluateTimingRule are small hot-path member methods
@@ -379,7 +375,7 @@ TickResult CPU::BusWriteSlow(SnesAddrT addr, uint8_t data, TimeMasterDeltaT cycl
   if (system_bus_raw_ != nullptr &&
       system_bus_raw_->TryFastRead(addr, local_time_ + cycle_time, data, last_access_cycles_)) {
     fetch_data_ = data;
-    return TickResult{0, TickStopReason::kContinue};
+    return TickResult{0, TickStopReason::kReachedTarget};
   }
   return BusReadSlow(addr, cycle_time);
 }
@@ -387,7 +383,7 @@ TickResult CPU::BusWriteSlow(SnesAddrT addr, uint8_t data, TimeMasterDeltaT cycl
 [[gnu::always_inline]] inline TickResult CPU::BusWrite(SnesAddrT addr, uint8_t data, TimeMasterDeltaT cycle_time) {
   if (system_bus_raw_ != nullptr &&
       system_bus_raw_->TryFastWrite(addr, local_time_ + cycle_time, data, last_access_cycles_)) {
-    return TickResult{0, TickStopReason::kContinue};
+    return TickResult{0, TickStopReason::kReachedTarget};
   }
   return BusWriteSlow(addr, data, cycle_time);
 }
@@ -773,16 +769,15 @@ CPU::StepResult CPU::FetchOpcode(TimeMasterDeltaT cycle_time) {
     if (debugger_contract_.suppressed_breakpoint_pc == opcode_address) {
       debugger_contract_.suppressed_breakpoint_pc.reset();
     } else {
-      last_debugger_stop_ = TickStopReason::kDebuggerBreakpoint;
-      return StepResult{0, TickResult{cycle_time, TickStopReason::kDebuggerBreakpoint}};
+      return StepResult{0, TickStopReason::kBreakpoint, true};
     }
   }
 
   pending_trace_ = TraceEntry{local_time_ + cycle_time, opcode_address, regs_};
 
-  TickResult blocked = BusRead(opcode_address, cycle_time);
-  if (blocked.Stopped()) {
-    return StepResult{0, blocked};
+  TickResult bus_result = BusRead(opcode_address, cycle_time);
+  if (bus_result.reason != TickStopReason::kReachedTarget) {
+    return StepResult{0, bus_result.reason, true};
   }
   const TimeMasterDeltaT fetch_cycles = last_access_cycles_;
   regs_.PC = static_cast<uint16_t>(regs_.PC + 1U);
@@ -797,7 +792,7 @@ CPU::StepResult CPU::FetchOpcode(TimeMasterDeltaT cycle_time) {
   }
   if (entry.disposition == InstructionDisposition::kFaultUnimplemented) {
     RecordFault(Fault::Type::kUnimplementedOpcode, fetch_data_, opcode_address);
-    return StepResult{fetch_cycles, TickResult{cycle_time + fetch_cycles, TickStopReason::kFaulted}};
+    return StepResult{fetch_cycles, TickStopReason::kFault, true};
   }
 
   current_instr_ = &entry;
@@ -818,18 +813,18 @@ CPU::StepResult CPU::FetchOpcode(TimeMasterDeltaT cycle_time) {
     micro_op_recorder_->OnMicroOp(rec);
   }
   DrainSkippedMicroOps();
-  return StepResult{fetch_cycles, TickResult{0, TickStopReason::kContinue}};
+  return StepResult{fetch_cycles, TickStopReason::kReachedTarget, false};
 }
 
 TickResult CPU::PerformBusAction(MicroBusAction action, [[maybe_unused]] uint8_t params, TimeMasterDeltaT cycle_time) {
   namespace mp = opcode_defs_internal::micro_op_params;
   switch (action) {
-    case MicroBusAction::kNone: return TickResult{0, TickStopReason::kContinue};
+    case MicroBusAction::kNone: return TickResult{0, TickStopReason::kReachedTarget};
     case MicroBusAction::kFetchPc: {
       TickResult blocked = BusRead(PcAddr(regs_), cycle_time);
-      if (blocked.Stopped()) return blocked;
+      if (blocked.reason != TickStopReason::kReachedTarget) return blocked;
       regs_.PC = static_cast<uint16_t>(regs_.PC + 1U);
-      return TickResult{0, TickStopReason::kContinue};
+      return TickResult{0, TickStopReason::kReachedTarget};
     }
     case MicroBusAction::kReadAddr: return BusRead(addr_, cycle_time);
     case MicroBusAction::kWriteRegByte: {
@@ -883,7 +878,7 @@ TickResult CPU::PerformBusAction(MicroBusAction action, [[maybe_unused]] uint8_t
       }
       return BusRead(StackAddr(regs_), cycle_time);
   }
-  return TickResult{0, TickStopReason::kContinue};
+  return TickResult{0, TickStopReason::kReachedTarget};
 }
 
 CPU::StepResult CPU::ExecuteMicroOp(TimeMasterDeltaT cycle_time) {
@@ -898,9 +893,9 @@ CPU::StepResult CPU::ExecuteMicroOp(TimeMasterDeltaT cycle_time) {
   const MicroOp* const ops = instr->ops.data();
   const MicroOp& mop = ops[op_idx];
   const SnesAddrT pre_pc = PcAddr(regs_);
-  TickResult blocked = PerformBusAction(mop.bus_action, mop.params, cycle_time);
-  if (blocked.Stopped()) {
-    return StepResult{0, blocked};
+  TickResult bus_result = PerformBusAction(mop.bus_action, mop.params, cycle_time);
+  if (bus_result.reason != TickStopReason::kReachedTarget) {
+    return StepResult{0, bus_result.reason, true};
   }
   // Bus micro-ops charge the targeted page's access_speed (set as a side
   // effect of BusRead / BusWrite); internal-only micro-ops run at the CPU's
@@ -930,10 +925,11 @@ CPU::StepResult CPU::ExecuteMicroOp(TimeMasterDeltaT cycle_time) {
   } else {
     DrainSkippedMicroOps();
   }
-  return StepResult{step_cycles, TickResult{0, TickStopReason::kContinue}};
+  return StepResult{step_cycles, TickStopReason::kReachedTarget, false};
 }
 
-TimeMasterDeltaT CPU::EstimateNextStepCost() const {
+// Returns 0 when the CPU can't estimate (e.g., mid-fetch); loop still forward-progresses.
+TimeMasterDeltaT CPU::EstimateNextStepCostOrZero() const {
   // Peek-only: planning a bus transaction is pure. Go through `snes_` so we
   // work even before CPU::Reset has cached system_bus_raw_ (some tests
   // construct a CPU without resetting it before calling Tick).
@@ -975,81 +971,67 @@ TimeMasterDeltaT CPU::EstimateNextStepCost() const {
   return kInternalCpuCycleMaster;
 }
 
-TickResult CPU::Tick(TimeMasterDeltaT budget) {
+TickResult CPU::TickToTarget(TimeMasterT target_master_time) {
   if (fault_.has_value()) {
-    return {0, TickStopReason::kFaulted};
+    return {0, TickStopReason::kFault};
+  }
+  if (snes_ == nullptr) {
+    return {0, TickStopReason::kReachedTarget};
   }
 
-  // Tight-budget escape: when the scheduler hands us a zero or sub-step
-  // slice (because another same-time event clipped us), yield via kNoWork
-  // with a future wake so the scheduler's same-time zero-progress guard
-  // doesn't trip. Waking kMaxCyclesStep out gives the other device room
-  // to run its own event meaningfully instead of us immediately re-
-  // contending for the same timestamp.
-  if (budget == 0) {
-    return {0, TickStopReason::kNoWork, 0, local_time_ + Scheduler::kMaxCyclesStep};
-  }
+  const TimeMasterT start = snes_->GetMasterTime();
 
-  TimeMasterDeltaT cycle_time = 0;
-
-  while (cycle_time < budget) {
-    // DRAM refresh stalls the CPU mid-scanline. When the refresh window is
-    // active, consume cycles without issuing any bus ops. When we cross the
-    // scheduled refresh start, arm the window and arrange the next one.
+  while (snes_->GetMasterTime() < target_master_time) {
+    // DRAM refresh: stall the CPU for its window, consume mcyc without
+    // issuing bus ops. Clamp to remaining target.
     if (refresh_cycles_remaining_ > 0) {
-      const TimeMasterDeltaT available = budget - cycle_time;
-      const TimeMasterDeltaT take = (refresh_cycles_remaining_ < available) ? refresh_cycles_remaining_ : available;
-      cycle_time += take;
+      const TimeMasterDeltaT available = target_master_time - snes_->GetMasterTime();
+      const TimeMasterDeltaT take = std::min<TimeMasterDeltaT>(refresh_cycles_remaining_, available);
+      snes_->SetMasterTime(snes_->GetMasterTime() + take);
+      local_time_ = snes_->GetMasterTime();
       refresh_cycles_remaining_ -= take;
       retired_refresh_cycles_ += take;
       continue;
     }
-    if (local_time_ + cycle_time >= next_refresh_time_) {
+    if (local_time_ >= next_refresh_time_) {
       refresh_cycles_remaining_ = kDramRefreshDurationCycles;
       next_refresh_time_ += kMasterCyclesPerScanline;
       ++retired_refresh_windows_;
       continue;
     }
 
-    // Strict no-overshoot: if the next step wouldn't fit, yield without
-    // starting it. If nothing fit at all (tight budget on entry), ask the
-    // scheduler to wake us far enough out that another device (the PPU)
-    // has room to make real progress on its own scheduled event instead
-    // of us immediately clipping its budget again. kMaxCyclesStep is the
-    // scheduler's natural slice size and gives the PPU a full-scanline+
-    // worth of budget.
-    const TimeMasterDeltaT next_cost = EstimateNextStepCost();
-    if (cycle_time + next_cost > budget) {
-      if (cycle_time == 0) {
-        return {0, TickStopReason::kNoWork, 0,
-                local_time_ + Scheduler::kMaxCyclesStep};
-      }
-      break;
+    // Strict no-overshoot: if the next step wouldn't fit, yield on this
+    // micro-op boundary. Events fire next, then RunControl calls us again.
+    const TimeMasterDeltaT next_cost = EstimateNextStepCostOrZero();
+    if (snes_->GetMasterTime() + next_cost > target_master_time) {
+      return {snes_->GetMasterTime() - start, TickStopReason::kReachedTarget};
     }
 
-    StepResult step = ShouldFetchInstruction() ? FetchOpcode(cycle_time) : ExecuteMicroOp(cycle_time);
-    if (step.stop.Stopped()) {
-      return step.stop;
+    StepResult step = ShouldFetchInstruction() ? FetchOpcode(0) : ExecuteMicroOp(0);
+    if (step.stopped) {
+      // Map internal stop reasons into the four-value enum.
+      return {snes_->GetMasterTime() - start,
+              step.reason == TickStopReason::kFault ? TickStopReason::kFault
+                                                    : TickStopReason::kBreakpoint};
     }
     if (step.master_cycles > 0) {
-      cycle_time += step.master_cycles;
-      if (ShouldFetchInstruction() && debugger_contract_.step_target > 0) {
+      snes_->SetMasterTime(snes_->GetMasterTime() + step.master_cycles);
+      local_time_ = snes_->GetMasterTime();
+
+      const bool at_instruction_boundary = ShouldFetchInstruction();
+      const bool microop_mode =
+          debugger_contract_.step_granularity == DebuggerContract::StepGranularity::kMicroOp;
+      const bool yield_for_step = (at_instruction_boundary || microop_mode);
+
+      if (yield_for_step && debugger_contract_.step_target > 0) {
         --debugger_contract_.step_target;
         if (debugger_contract_.step_target == 0) {
-          last_debugger_stop_ = TickStopReason::kDebuggerStepComplete;
-          return {cycle_time, TickStopReason::kDebuggerStepComplete};
+          return {snes_->GetMasterTime() - start, TickStopReason::kRetiredStepTarget};
         }
       }
     }
   }
-
-  return {cycle_time, TickStopReason::kBudgetExhausted};
-}
-
-void CPU::OnEvent(const SchedulerEvent& /*event*/) {
-  // CommitComplete/WakeSample do not currently require CPU-side mutation.
-  // The scheduler wakes blocked CPU runs by replacing the authoritative Run
-  // wake.
+  return {snes_->GetMasterTime() - start, TickStopReason::kReachedTarget};
 }
 
 }  // namespace pupsnes

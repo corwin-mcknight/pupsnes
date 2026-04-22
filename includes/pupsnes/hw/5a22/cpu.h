@@ -5,7 +5,7 @@
 
 #include "pupsnes/hw/5a22/cpu_regs.h"
 #include "pupsnes/hw/debugger_contract.h"
-#include "pupsnes/hw/device.h"
+#include "pupsnes/hw/master_clock_driver.h"
 #include "pupsnes/hw/systembus.h"
 #include "pupsnes/types.h"
 
@@ -209,7 +209,7 @@ class MicroOpRecorder {
 // tick() walks a micro-op table: cycle 0 always fetches the opcode via the
 // SystemBus, then the per-opcode remaining ops execute one per cycle. All bus
 // accesses use SystemBus plan/follow.
-class CPU : public Device {
+class CPU : public MasterClockDriver {
  public:
   // Alias so existing call sites can keep using CPU::Regs while the type lives
   // in a standalone header for reuse without pulling in the full CPU class.
@@ -231,8 +231,7 @@ class CPU : public Device {
 
   void Reset();
 
-  [[nodiscard]] TickResult Tick(TimeMasterDeltaT budget) override;
-  void OnEvent(const SchedulerEvent& event) override;
+  [[nodiscard]] TickResult TickToTarget(TimeMasterT target_master_time) override;
 
   [[nodiscard]] Regs GetRegs() const { return regs_; }
   void SetRegs(const Regs& r) { regs_ = r; }
@@ -249,17 +248,6 @@ class CPU : public Device {
   [[nodiscard]] uint64_t GetRefreshStallWindows() const { return retired_refresh_windows_; }
   [[nodiscard]] uint64_t GetRefreshStallCycles() const { return retired_refresh_cycles_; }
   [[nodiscard]] TimeMasterT GetNextRefreshTime() const { return next_refresh_time_; }
-
-  // Last debugger-driven stop reason (breakpoint or step-complete) emitted by
-  // Tick. RunControl consumes this via TakeLastDebuggerStop() after a
-  // Scheduler::Step to map the reason to a pause transition. Fault stops use
-  // GetFault() instead; ordinary stops (kBudgetExhausted / kBlockedOnToken /
-  // kReachedLocalBoundary / kNoWork) don't land here.
-  [[nodiscard]] std::optional<TickStopReason> TakeLastDebuggerStop() {
-    std::optional<TickStopReason> out = last_debugger_stop_;
-    last_debugger_stop_.reset();
-    return out;
-  }
 
   void SetMicroOpRecorder(MicroOpRecorder* recorder) { micro_op_recorder_ = recorder; }
   [[nodiscard]] MicroOpRecorder* GetMicroOpRecorder() const { return micro_op_recorder_; }
@@ -285,13 +273,14 @@ class CPU : public Device {
 
   struct StepResult {
     // Master-cycle cost of the micro-op that just retired. 0 means no
-    // micro-op was consumed (blocked / breakpoint / fault-before-retire); a
-    // caller deciding whether to advance debugger state checks master_cycles
-    // > 0. When the step has a stop reason other than kContinue, `stop`
-    // propagates that reason; master_cycles may still be non-zero for stops
-    // that retired a micro-op (e.g. kFaulted from a successful opcode fetch).
+    // micro-op was consumed (breakpoint / fault-before-retire); the caller
+    // checks master_cycles > 0 to decide whether to advance debugger state.
+    // `stopped` is true when the step hit a breakpoint or fault; the caller
+    // maps `reason` to kBreakpoint or kFault. kReachedTarget (stopped=false)
+    // means normal progress — the loop continues.
     TimeMasterDeltaT master_cycles = 0;
-    TickResult stop{0, TickStopReason::kContinue};
+    TickStopReason reason = TickStopReason::kReachedTarget;
+    bool stopped = false;
   };
 
   Regs regs_;
@@ -316,8 +305,6 @@ class CPU : public Device {
   // Trace entry captured at instruction-begin (PC + pre-execute regs) and
   // pushed to the trace sink when the instruction retires.
   TraceEntry pending_trace_{};
-  std::optional<TickStopReason> last_debugger_stop_ = std::nullopt;
-
   const InstructionEntry* current_instr_ = nullptr;
   // Cached at FetchOpcode time from current_instr_->rule_count > 1. Lets the
   // per-micro-op drain guard be a single-load/branch check instead of
@@ -350,11 +337,8 @@ class CPU : public Device {
   [[nodiscard]] StepResult ExecuteMicroOp(TimeMasterDeltaT cycle_time);
   [[nodiscard]] TickResult PerformBusAction(MicroBusAction action, [[maybe_unused]] uint8_t params,
                                             TimeMasterDeltaT cycle_time);
-  // Peek the cycle cost of the next step (opcode fetch or micro-op) without
-  // running it. Used by Tick to enforce strict budget with no overshoot —
-  // if the next step wouldn't fit, yield budget remainder instead of
-  // punching through.
-  [[nodiscard]] TimeMasterDeltaT EstimateNextStepCost() const;
+  // Returns 0 when the CPU can't estimate (e.g., mid-fetch); loop still forward-progresses.
+  [[nodiscard]] TimeMasterDeltaT EstimateNextStepCostOrZero() const;
 
   // Internal-op dispatch. The switch and every op body live in cpu.cpp; we
   // keep only the declaration here so that adding a new MicroInternalOp
