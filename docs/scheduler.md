@@ -246,12 +246,23 @@ All external I/O is represented by tokens. A token represents a bus transaction 
 
 Token resolution semantics depend on the clock domain of the target:
 
-**Same-clock tokens** (e.g., CPU → PPU register write):
-1. Device issues a bus transaction via the SystemBus
+**Same-clock tokens** (e.g., CPU → PPU register access) follow the **lazy-replay** rule — writes queue, reads catch up:
+
+*Read path:*
+1. Device issues a bus read via the SystemBus
 2. SystemBus decodes the address and identifies the target device
-3. Target device is caught up to the current master cycle (scheduler runs target's `tick()` until its local time matches)
-4. Transaction is applied to the target's state
-5. Token resolves synchronously — the issuing device continues immediately
+3. Scheduler catches the target up (`tick()` advances local time to the issuing cycle)
+4. SystemBus calls `ReadRegister(offset, current_time) → MmioReadResult { value, driven_mask }`
+5. SystemBus merges the result with the bus latch: `data = (value & driven_mask) | (last_data_bus_value_ & ~driven_mask)`; the merged byte also becomes the new latch so open-bus bits propagate
+6. Token resolves synchronously — the issuing device continues immediately
+
+*Write path:*
+1. Device issues a bus write via the SystemBus
+2. SystemBus decodes the address and identifies the target device
+3. No catch-up. SystemBus calls `WriteRegister(offset, data, current_time)` on the target, which appends `{cycle=current_time, offset, data}` to its pending-write log
+4. Token resolves synchronously — the target's next `tick()` will replay the log as it advances through the intervening cycles
+
+The device-level `tick()` contract is unchanged — it still drains up to a budget without ever exceeding it. What changed is that `kSameClockMmio` writes no longer pay a per-write catch-up cost; they batch into the target's log instead. See `docs/systembus.md` for the full contract and `MmioReadResult` definition.
 
 **Cross-clock tokens** (e.g., CPU → APU port write at `$2140`–`$2143`):
 1. Device issues a bus transaction via the SystemBus
@@ -487,6 +498,7 @@ The following parts of this specification are implemented:
 - `Scheduler::step()`: pops next event, advances global time, dispatches to `Device::tick()` or `Device::onEvent()` based on subphase
 - `Scheduler::computeBudget()`: `min(MAX_CYCLES_STEP, next_event_time - now)`
 - `Device` base class with `tick(budget)` returning `TickResult` and `onEvent(event)`
+- `Device::ReadRegister(offset, TimeMasterT current_time) → MmioReadResult { value, driven_mask }` and `Device::WriteRegister(offset, data, TimeMasterT current_time)` — the lazy-replay MMIO surface; `HandleDebugRead`/`HandleDebugWrite` remain out-of-band debugger-only
 - `TickStopReason`: `BudgetExhausted`, `BlockedOnIO`, `BlockedOnToken`
 - `TickResult` includes `blocked_token` field for token-based blocking
 - Three scheduler phases: CommitComplete, WakeSample, Run
@@ -495,6 +507,7 @@ The following parts of this specification are implemented:
 - Scheduler integration: `createToken()`, `getToken()`, `removeToken()`
 - Token resolution during CommitComplete with auto-wake for blocked devices
 - Clock-driven (polling) wake model: devices can poll token state via `getToken()`
+- Lazy-replay MMIO via `SystemBus::FollowInline` — reads trigger `CatchUpDevice`, writes append to the target device's pending-write log without catch-up overhead
 
 Not yet implemented:
 

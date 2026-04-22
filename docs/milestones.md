@@ -85,6 +85,8 @@ Do not chase full CPU completeness before Milestone 1 is done. Bootability comes
 
 ## Milestone 3: Video Path Skeleton
 
+Status: scaffold landed (2026-04-22); advanced rendering deferred.
+
 Objective:
 Produce a deterministic frame pipeline, even if rendering is initially incomplete.
 
@@ -97,10 +99,29 @@ Scope:
 
 Exit criteria:
 
-- emulator produces deterministic frame-ready events
-- frame timing is scheduler-driven rather than frontend-driven
-- PPU register accesses flow through same-clock MMIO and catch-up correctly
-- framebuffer output exists, even if only for a limited rendering subset
+- emulator produces deterministic frame-ready events — **done**
+- frame timing is scheduler-driven rather than frontend-driven — **done** (dot-major `Tick`; each scanline returns `kReachedLocalBoundary`)
+- PPU register accesses flow through same-clock MMIO and catch-up correctly — **done** (lazy-replay: writes queue, reads catch up; see `docs/systembus.md`)
+- framebuffer output exists, even if only for a limited rendering subset — **done** (backdrop-only: `cgram[0] × INIDISP.brightness`, or black under forced blank)
+
+What landed in the scaffold:
+
+- SPPU device with dot-major Tick using fullsnes timing (338 × 4 + 2 × 6 = 1364 mcyc per normal NTSC line, 1360 mcyc on the short V=240 line of the odd field)
+- Per-device pending-write log (16384 entries, soft-limit flush on overflow) replaying writes in cycle order as the PPU advances dot-by-dot
+- Real port protocols: INIDISP, CGRAM (write-twice + read-twice with bit-7 open-bus on the high byte), VRAM (VMAIN step / translate / inc-on-port + RDVRAM trailing-prefetch quirk), OAM (write-twice below $200, byte-wise above), SETINI overscan, STAT77/78 with field toggle
+- Double-buffered 341 × 313 BGR555 framebuffer with `SNES::SetFrameReadyCallback(FrameBufferView)` fired at end of V=261
+- Debugger PPU panel: decoded register table, pending-write log count, force-overscan toggle, GL-texture framebuffer preview
+
+Deferred (covered by the Milestone 3 scope but not shipped in the scaffold):
+
+- BG / OBJ / window / color-math / mode-7 rendering (only backdrop emits today)
+- Interlace / hi-res (mode 5/6) actual output — dot-width table hooks exist, renderer still emits 256 logical columns
+- NMI, H-IRQ, V-IRQ signals (these belong to Milestone 5's signal-region work; PPU frame boundaries don't depend on them)
+- H/V-counter latch (SLHV, OPHCT, OPVCT) and mode-7 multiplier registers stay open-bus
+
+Known scaffold deviation:
+
+- `Ppu::Reset` does not auto-schedule its first `ScheduleDeviceRun` because CPU micro-op retirement can overshoot its budget by up to `kMaxMicroOpOvershoot` (12 mcyc) and push `master_time` past a pre-scheduled PPU event. The emulator main loop / tests drive the PPU via `Scheduler::CatchUpDevice`; bus reads of PPU registers also catch it up. Re-enable Reset-time scheduling once CPU overshoot is eliminated (separately tracked).
 
 Why this milestone matters:
 Once frames exist, the project can start validating end-to-end console behavior rather than only CPU-local behavior.

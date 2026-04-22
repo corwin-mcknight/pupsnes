@@ -26,13 +26,18 @@ All devices have a stable numeric ID (`device_id_t`) for deterministic ordering 
 
 ## Synchronization Model
 
-PupSNES uses **catch-up on access** for same-clock-domain synchronization. When a bus master (CPU or DMA) issues a transaction targeting a same-clock device (e.g., a CPU write to a PPU register), the target device is advanced to the current master cycle before the transaction is applied. This ensures the target's internal state is consistent at the exact cycle of access.
+PupSNES uses **lazy-replay catch-up** for same-clock-domain synchronization. The rule is: **writes queue, reads catch up.**
+
+- **Reads catch up**: when a bus master issues a read targeting a same-clock device, the scheduler advances the target to the current master cycle before the read samples state. The target's `tick()` runs until its local time matches the bus cycle.
+- **Writes queue**: writes append to a per-device pending-write log `{cycle, offset, data}` tagged with the cycle they arrived on. No catch-up fires on the write path. The target's `tick()` replays the log in order as it advances (dot-by-dot for the PPU). Any remaining queued writes at or before the read's cycle are also drained inside the read handler, so the lazy-replay contract holds even when the per-dot drain fell slightly short.
+
+This refines the earlier "catch-up on access" language to match the cost profile of real workloads: DMA and HDMA bursts write hundreds of MMIO bytes per frame, and forcing a catch-up on every write would dominate the inner loop. Correctness is preserved because replay order equals write order (enqueues are monotonic in cycle) and reads never sample stale state.
 
 **Bus masters** (CPU, DMA) initiate transactions and drive the clock forward. **Bus targets** (PPU registers, WRAM) respond to transactions and can be caught up. Catch-up applies only to targets — devices whose internal state evolution does not require issuing bus transactions. On the SNES, the PPU qualifies because it uses its own VRAM bus during rendering and never initiates system bus transactions.
 
 Cross-clock-domain transactions (e.g., CPU ↔ APU via ports `$2140`–`$2143`) use asynchronous tokens. The token is queued and resolved when the target is caught up to the equivalent time in its own clock domain.
 
-Tokens are the universal abstraction for external I/O. Same-clock tokens resolve synchronously (via catch-up). Cross-clock tokens resolve asynchronously. The token type is the same; the resolution semantics differ by clock domain.
+Tokens are the universal abstraction for external I/O. Same-clock tokens resolve synchronously (via lazy-replay catch-up). Cross-clock tokens resolve asynchronously. The token type is the same; the resolution semantics differ by clock domain.
 
 ## Clock Domains
 

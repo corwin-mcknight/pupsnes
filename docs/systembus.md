@@ -51,19 +51,44 @@ Three possible plan outcomes, determined by the target’s clock domain and type
 ## MMIO vs memory-backed resolution
 
 - **Memory-like regions** (ROM, WRAM, SRAM): always **InlineComplete**. These are passive memory with no side effects.
-- **Same-clock MMIO** (PPU registers at `$2100`–`$213F`, CPU registers at `$4200`–`$44FF`): **InlineComplete** with catch-up. The target device is advanced to the current master cycle before the access, ensuring side effects are applied at the correct time.
+- **Same-clock MMIO** (PPU registers at `$2100`–`$213F`, CPU registers at `$4200`–`$44FF`): **InlineComplete** with lazy-replay. Reads trigger catch-up so the target samples current state; writes queue into the target's pending-write log without catch-up overhead.
 - **Cross-clock MMIO** (APU ports at `$2140`–`$2143`): **ScheduledComplete**. The clock domain boundary requires asynchronous token resolution with time conversion.
 
-## Catch-up on access
+## Lazy-replay catch-up
 
-When the SystemBus resolves a same-clock MMIO transaction via InlineComplete, it triggers catch-up:
+The contract is **writes queue, reads catch up**. `SystemBus::FollowInline` gates its catch-up call on access type:
 
-1. The issuing device (CPU or DMA) is in its Run phase, executing a bus access micro-op
-2. The SystemBus decodes the address via the page table and identifies the target device
-3. The SystemBus checks the target’s clock domain — same-clock targets use catch-up
-4. The scheduler advances the target device by running its `tick()` until `local_time >= current master time`
-5. The transaction is applied to the target’s state (register write commits, register read returns current value)
-6. Control returns to the issuing device, which continues its micro-op sequence
+### Read path
+
+1. The issuing device (CPU or DMA) is in its Run phase, executing a bus access micro-op.
+2. The SystemBus decodes the address via the page table and identifies the target device.
+3. For same-clock MMIO reads, the scheduler advances the target by running its `tick()` until `local_time >= current_time`.
+4. `ReadRegister(offset, current_time) → MmioReadResult { value, driven_mask }` runs. The target also drains any pending-write-log entries with cycle `≤ current_time` inside the read handler, defending against the PPU's per-dot drain stopping slightly short.
+5. The bus merges open-bus: `data = (value & driven_mask) | (last_data_bus_value_ & ~driven_mask)`, and the merged byte becomes the new latched value.
+6. Control returns to the issuing device.
+
+### Write path
+
+1. Same as steps 1–2 above.
+2. No catch-up. The bus calls `WriteRegister(offset, data, current_time)` on the target; the target appends `{cycle=current_time, offset, data}` to its pending-write log.
+3. The target's next `tick()` replays the log in order as it advances time, interleaving replay with per-device work (dot emission for the PPU).
+4. Control returns immediately.
+
+Enqueues are monotonic in cycle because the CPU's master time advances monotonically. Overflow of a fixed-size log (e.g., the PPU's 16384 entries) triggers a synchronous soft-limit flush: the device drains up to the new entry's cycle before appending, so no write is lost.
+
+### Device API signatures
+
+Every `Device` exposes:
+
+```cpp
+struct MmioReadResult { uint8_t value; uint8_t driven_mask; };
+virtual MmioReadResult ReadRegister(uint32_t offset, TimeMasterT current_time);
+virtual void WriteRegister(uint32_t offset, uint8_t data, TimeMasterT current_time);
+```
+
+`driven_mask` is `0xFF` for fully-driven bits, `0x00` for pure open-bus registers (reads return the bus latch), or partial (e.g., CGRAM high-byte reads drive only bits 6:0). Storage-only devices (WRAM, Cartridge ROM) always drive `0xFF`.
+
+`HandleDebugRead` / `HandleDebugWrite` are out-of-band debugger-facing accessors; they do not participate in the lazy-replay contract and do not receive `current_time`.
 
 Cascading catch-ups are not a concern on the SNES: the PPU (the primary same-clock MMIO target) never initiates system bus transactions during its internal advancement — it has its own dedicated VRAM bus.
 
