@@ -275,6 +275,19 @@ inline constexpr uint8_t PackRmw(RmwOp op) {
 inline constexpr RmwOp UnpackRmwOp(uint8_t params) {
   return static_cast<RmwOp>(params & 0x07U);
 }
+
+// Halt CPU (kHaltCpu): bit 0 = is_stp (1 = STP, 0 = WAI). The two map to
+// HaltState::kStp / HaltState::kWai; STP is only cleared by Reset while WAI
+// wakes on any interrupt pin assertion.
+inline constexpr uint8_t PackHaltCpu(bool is_stp) {
+  return static_cast<uint8_t>(is_stp ? 1U : 0U);
+}
+
+// Interrupt vector selection (kSetInterruptVector): bits [2:0] carry the
+// InterruptKind enum. BRK=0, COP=1, NMI=2, IRQ=3, ABORT=4.
+inline constexpr uint8_t PackSetInterruptVector(InterruptKind kind) {
+  return static_cast<uint8_t>(static_cast<uint32_t>(kind) & 0x07U);
+}
 }  // namespace micro_op_params
 
 struct CycleSlotSpec {
@@ -952,5 +965,11 @@ consteval OpcodeArtifacts BuildOpcodeArtifacts(const std::array<OpcodeSpec, N>& 
 }
 
 extern const OpcodeArtifacts kOpcodeArtifacts;
+
+// Synthetic HW interrupt entries (NMI / IRQ / ABORT). Not in the opcode
+// table; dispatched by CPU::TickToTarget when the instruction-boundary
+// interrupt sampler decides to deliver. Returns nullptr for SW kinds
+// (BRK / COP) which have their own entries in the opcode table.
+const InstructionEntry* HwInterruptEntryFor(InterruptKind kind);
 
 }  // namespace pupsnes::opcode_defs_internal

@@ -8,7 +8,9 @@
 
 #include "pupsnes/5a22/cpu_internal.h"
 #include "pupsnes/5a22/cpu_opcode_defs_internal.h"
+#include "pupsnes/hw/5a22/cpu_mmio.h"
 #include "pupsnes/hw/snes.h"
+#include "pupsnes/hw/sppu/ppu.h"
 #include "pupsnes/hw/systembus.h"
 
 namespace pupsnes {
@@ -256,7 +258,13 @@ void CPU::Reset() {
   addr_scratch_ = 0;
   timing_context_ = TimingContext{};
   fault_.reset();
-  halted_ = false;
+  halt_state_ = HaltState::kNone;
+  wai_wake_cycles_remaining_ = 0;
+  nmi_curr_ = false;
+  nmi_gated_prev_ = false;
+  nmi_pending_ = false;
+  abort_pending_ = false;
+  irq_line_asserted_ = false;
   retired_instruction_count_ = 0;
   current_instr_ = nullptr;
   needs_drain_ = false;
@@ -275,6 +283,67 @@ void CPU::Reset() {
 
   regs_.PBR = 0;
   regs_.PC = static_cast<uint16_t>(static_cast<uint16_t>(vector_hi) << 8U) | vector_lo;
+}
+
+void CPU::SampleInterrupts(TimeMasterT t) {
+  // Sample the PPU /NMI pin. The PPU catches up internally; the returned
+  // value is the wire level at master time `t`. Apply the NMITIMEN.7 AND-gate
+  // so edge detection operates on the gated output (the signal the CPU's
+  // internal NMI flip-flop actually sees).
+  const bool line = (snes_ != nullptr && snes_->ppu != nullptr) ? snes_->ppu->SampleNmiLine(t) : false;
+  const bool gate_open = (snes_ != nullptr && snes_->cpu_mmio != nullptr) ? snes_->cpu_mmio->GetNmiEnable() : false;
+  const bool gated = line && gate_open;
+  nmi_curr_ = gated;
+  if (gated && !nmi_gated_prev_) {
+    nmi_pending_ = true;
+  }
+  nmi_gated_prev_ = gated;
+}
+
+std::optional<InterruptKind> CPU::SelectPendingInterrupt() const {
+  // Priority per WDC §9: ABORT > NMI > IRQ. v1 only delivers NMI; ABORT and
+  // IRQ branches are present but unreachable so the ordering is locked in.
+  // if (abort_pending_) return InterruptKind::kAbort;
+  if (nmi_pending_) return InterruptKind::kNmi;
+  // if (irq_line_asserted_ && !regs_.P.I) return InterruptKind::kIrq;
+  return std::nullopt;
+}
+
+bool CPU::WaiShouldWake(TimeMasterT t) {
+  // WAI wake is driven by RAW pin assertions, independent of NMITIMEN.7 /
+  // I-flag gating (per WDC §18). Delivery is still gated normally at the
+  // post-wake instruction-boundary sample — WAI wakes on masked interrupts
+  // and simply resumes the instruction after WAI without entering a handler.
+  const bool nmi_raw = (snes_ != nullptr && snes_->ppu != nullptr) ? snes_->ppu->SampleNmiLine(t) : false;
+  return nmi_raw || abort_pending_ || irq_line_asserted_;
+}
+
+void CPU::OnNmiTimenChanged(uint8_t prev_byte, uint8_t new_byte, TimeMasterT t) {
+  constexpr uint8_t kNmiEnableMask = 0x80U;
+  const bool prev_enable = (prev_byte & kNmiEnableMask) != 0U;
+  const bool new_enable = (new_byte & kNmiEnableMask) != 0U;
+  if (prev_enable == new_enable) return;
+
+  const bool line = (snes_ != nullptr && snes_->ppu != nullptr) ? snes_->ppu->SampleNmiLine(t) : false;
+  if (!prev_enable && new_enable) {
+    // 0→1 transparency quirk: the AND-gate output transitions 0→1 if the
+    // raw line is currently asserted. That falling-edge-into-flip-flop sets
+    // nmi_pending_ immediately, without waiting for the next instruction
+    // boundary sample.
+    if (line) {
+      nmi_pending_ = true;
+    }
+    nmi_gated_prev_ = line;  // resync edge tracker to the new gate output.
+    nmi_curr_ = line;
+  } else {
+    // 1→0 cancellation: closing the gate clears the pending flip-flop
+    // regardless of whether an NMI was about to be delivered this cycle.
+    // See fullsnes $4200: "Disabling NMI will reset the internal NMI
+    // request flag, even if NMI was triggered just before."
+    nmi_pending_ = false;
+    nmi_gated_prev_ = false;
+    nmi_curr_ = false;
+  }
 }
 
 void CPU::FinishInstruction() {
@@ -546,12 +615,8 @@ void CPU::ExecuteInternalOp(MicroInternalOp op, [[maybe_unused]] uint8_t params)
         const BankSrc bank_src = mp::UnpackSetAddrBankSrc(params);
         switch (bank_src) {
           case BankSrc::kLeave: break;
-          case BankSrc::kDbr:
-            addr_ = (addr_ & 0x00FFFFU) | (static_cast<uint32_t>(regs_.DBR) << 16U);
-            break;
-          case BankSrc::kPbr:
-            addr_ = (addr_ & 0x00FFFFU) | (static_cast<uint32_t>(regs_.PBR) << 16U);
-            break;
+          case BankSrc::kDbr: addr_ = (addr_ & 0x00FFFFU) | (static_cast<uint32_t>(regs_.DBR) << 16U); break;
+          case BankSrc::kPbr: addr_ = (addr_ & 0x00FFFFU) | (static_cast<uint32_t>(regs_.PBR) << 16U); break;
           case BankSrc::kZero: addr_ = addr_ & 0x00FFFFU; break;
         }
       }
@@ -628,11 +693,17 @@ void CPU::ExecuteInternalOp(MicroInternalOp op, [[maybe_unused]] uint8_t params)
     }
 
     case MicroInternalOp::kSetInterruptVector: {
-      const bool is_cop = (params & 0x01U) != 0U;
-      if (is_cop) {
-        addr_ = regs_.P.E ? 0x00FFF4U : 0x00FFE4U;
-      } else {
-        addr_ = regs_.P.E ? 0x00FFFEU : 0x00FFE6U;
+      // Bits [2:0] select InterruptKind. Vectors per WDC §9 / Bruce Clark
+      // §6.3.1 §6.11. In emulation mode IRQ and BRK share $00FFFE — the
+      // handler distinguishes them by the B flag pushed in P.
+      const InterruptKind kind = static_cast<InterruptKind>(params & 0x07U);
+      const bool e = regs_.P.E;
+      switch (kind) {
+        case InterruptKind::kBrk: addr_ = e ? 0x00FFFEU : 0x00FFE6U; break;
+        case InterruptKind::kCop: addr_ = e ? 0x00FFF4U : 0x00FFE4U; break;
+        case InterruptKind::kNmi: addr_ = e ? 0x00FFFAU : 0x00FFEAU; break;
+        case InterruptKind::kIrq: addr_ = e ? 0x00FFFEU : 0x00FFEEU; break;
+        case InterruptKind::kAbort: addr_ = e ? 0x00FFF8U : 0x00FFE8U; break;
       }
       return;
     }
@@ -646,13 +717,14 @@ void CPU::ExecuteInternalOp(MicroInternalOp op, [[maybe_unused]] uint8_t params)
       return;
     }
 
-    case MicroInternalOp::kHaltCpu:
-      halted_ = true;
+    case MicroInternalOp::kHaltCpu: {
+      const bool is_stp = (params & 0x01U) != 0U;
+      halt_state_ = is_stp ? HaltState::kStp : HaltState::kWai;
+      wai_wake_cycles_remaining_ = 0;
       return;
+    }
 
-    case MicroInternalOp::kMoveSetDbr:
-      regs_.DBR = fetch_data_;
-      return;
+    case MicroInternalOp::kMoveSetDbr: regs_.DBR = fetch_data_; return;
 
     case MicroInternalOp::kMoveSetAddrFromSrc:
       addr_ = (static_cast<uint32_t>(fetch_data_) << 16U) | static_cast<uint32_t>(regs_.X & 0xFFFFU);
@@ -673,10 +745,8 @@ void CPU::ExecuteInternalOp(MicroInternalOp op, [[maybe_unused]] uint8_t params)
         regs_.X = static_cast<uint16_t>((regs_.X + delta) & 0xFFFFU);
         regs_.Y = static_cast<uint16_t>((regs_.Y + delta) & 0xFFFFU);
       } else {
-        regs_.X =
-            static_cast<uint16_t>((regs_.X & 0xFF00U) | ((static_cast<uint32_t>(regs_.X) + delta) & 0x00FFU));
-        regs_.Y =
-            static_cast<uint16_t>((regs_.Y & 0xFF00U) | ((static_cast<uint32_t>(regs_.Y) + delta) & 0x00FFU));
+        regs_.X = static_cast<uint16_t>((regs_.X & 0xFF00U) | ((static_cast<uint32_t>(regs_.X) + delta) & 0x00FFU));
+        regs_.Y = static_cast<uint16_t>((regs_.Y & 0xFF00U) | ((static_cast<uint32_t>(regs_.Y) + delta) & 0x00FFU));
       }
       return;
     }
@@ -1067,6 +1137,16 @@ TickResult CPU::PerformBusAction(MicroBusAction action, [[maybe_unused]] uint8_t
         case PushSrc::kPbr: byte = regs_.PBR; break;
         case PushSrc::kDbr: byte = regs_.DBR; break;
         case PushSrc::kP: byte = regs_.P.ToByte(); break;
+        case PushSrc::kPHwIrq: {
+          // HW interrupts (NMI/IRQ/ABORT) push P with the B flag cleared in
+          // emulation mode so handlers can distinguish them from BRK (which
+          // pushes B=1). In native mode there is no B flag — the bit position
+          // carries the X flag — and the byte is pushed as-is.
+          uint8_t p = regs_.P.ToByte();
+          if (regs_.P.E) p = static_cast<uint8_t>(p & ~0x10U);
+          byte = p;
+          break;
+        }
         case PushSrc::kDpLow: byte = static_cast<uint8_t>(regs_.DP); break;
         case PushSrc::kDpHigh: byte = static_cast<uint8_t>(regs_.DP >> 8U); break;
         case PushSrc::kAddrLow: byte = static_cast<uint8_t>(addr_ & 0xFFU); break;
@@ -1156,8 +1236,7 @@ TimeMasterDeltaT CPU::EstimateNextStepCostOrZero() const {
 
   switch (mop.bus_action) {
     case MicroBusAction::kNone: return kInternalCpuCycleMaster;
-    case MicroBusAction::kFetchPc:
-      return bus.Plan(PcAddr(regs_), BusAccessType::kRead).access_cycles;
+    case MicroBusAction::kFetchPc: return bus.Plan(PcAddr(regs_), BusAccessType::kRead).access_cycles;
     case MicroBusAction::kReadAddr: return bus.Plan(addr_, BusAccessType::kRead).access_cycles;
     case MicroBusAction::kWriteRegByte: return bus.Plan(addr_, BusAccessType::kWrite).access_cycles;
     case MicroBusAction::kPushStack: return bus.Plan(StackAddr(regs_), BusAccessType::kWrite).access_cycles;
@@ -1188,16 +1267,107 @@ TickResult CPU::TickToTarget(TimeMasterT target_master_time) {
 
   const TimeMasterT start = snes_->GetMasterTime();
 
-  // STP / WAI: once halted, consume the remainder of the tick target without
-  // fetching or executing. No interrupt path exists yet to wake WAI, so both
-  // effectively stop the CPU until Reset() clears halted_.
-  if (halted_) {
+  // Bring the DRAM refresh cursor up if a halt (STP/WAI) skipped master time
+  // forward since the last main-loop iteration. Real hardware continues to
+  // refresh during WAI — the bus stalls but the refresh clock ticks — so
+  // post-wake we shouldn't charge CPU time for every missed window. The main
+  // loop's refresh trigger stops one scanline past current time.
+  auto catch_up_refresh_cursor = [this]() {
+    if (next_refresh_time_ > local_time_) return;
+    const TimeMasterT behind = local_time_ - next_refresh_time_;
+    const TimeMasterT windows = (behind / kMasterCyclesPerScanline) + 1U;
+    next_refresh_time_ += windows * kMasterCyclesPerScanline;
+  };
+
+  // STP: consume cycles to target, never wake, never sample. Only Reset()
+  // clears kStp.
+  if (halt_state_ == HaltState::kStp) {
     snes_->SetMasterTime(target_master_time);
     local_time_ = target_master_time;
     return {target_master_time - start, TickStopReason::kReachedTarget};
   }
 
+  // WAI: sample the raw /NMI line at entry. Any pin assertion (NMI/IRQ/ABORT)
+  // wakes, regardless of I flag — delivery is gated separately at the next
+  // instruction-boundary sample. On wake, we charge a 2-cycle internal latency
+  // (per WDC §18 / Bruce Clark §19.1) before transitioning to kNone and
+  // falling through to normal dispatch. The latency consumes master time but
+  // issues no bus cycles.
+  if (halt_state_ == HaltState::kWai) {
+    // Trigger wake if a pin is asserted and we haven't started the countdown.
+    if (wai_wake_cycles_remaining_ == 0 && WaiShouldWake(snes_->GetMasterTime())) {
+      wai_wake_cycles_remaining_ = 2;
+    }
+
+    if (wai_wake_cycles_remaining_ > 0) {
+      while (wai_wake_cycles_remaining_ > 0 && snes_->GetMasterTime() < target_master_time) {
+        const TimeMasterDeltaT step = kInternalCpuCycleMaster;
+        if (snes_->GetMasterTime() + step > target_master_time) {
+          // Budget exhausted mid-wake cycle — consume what we can and bail;
+          // resume on next Tick.
+          const TimeMasterDeltaT avail = target_master_time - snes_->GetMasterTime();
+          snes_->SetMasterTime(target_master_time);
+          local_time_ = target_master_time;
+          (void)avail;
+          return {snes_->GetMasterTime() - start, TickStopReason::kReachedTarget};
+        }
+        snes_->SetMasterTime(snes_->GetMasterTime() + step);
+        local_time_ = snes_->GetMasterTime();
+        --wai_wake_cycles_remaining_;
+      }
+      if (wai_wake_cycles_remaining_ == 0) {
+        halt_state_ = HaltState::kNone;
+        catch_up_refresh_cursor();
+        // Fall through to the main dispatch loop below.
+      } else {
+        // Still waking, budget exhausted.
+        return {snes_->GetMasterTime() - start, TickStopReason::kReachedTarget};
+      }
+    } else {
+      // No wake yet — consume remaining budget as idle internal cycles.
+      snes_->SetMasterTime(target_master_time);
+      local_time_ = target_master_time;
+      return {target_master_time - start, TickStopReason::kReachedTarget};
+    }
+  }
+
   while (snes_->GetMasterTime() < target_master_time) {
+    // Instruction-boundary interrupt sampling. Runs once per instruction,
+    // before EstimateNextStepCostOrZero sees the next op, so the estimator
+    // picks up the synthetic-entry's first micro-op cost (internal cycle)
+    // rather than a bus-fetch cost. Hardware: real 65C816 samples NMI/IRQ/
+    // ABORT near the end of each instruction and replaces the next opcode
+    // fetch with a 7/8-cycle interrupt sequence (WDC §9, Bruce Clark §6.13).
+    if (ShouldFetchInstruction()) {
+      SampleInterrupts(snes_->GetMasterTime());
+      if (const auto kind = SelectPendingInterrupt(); kind.has_value()) {
+        if (const InstructionEntry* entry = opcode_defs_internal::HwInterruptEntryFor(*kind); entry != nullptr) {
+          // Consume the pending flip-flop (interrupt-acknowledge). NMI's
+          // flip-flop stays consumed until the next falling edge; the
+          // re-arm logic lives in SampleInterrupts.
+          if (*kind == InterruptKind::kNmi) {
+            nmi_pending_ = false;
+          } else if (*kind == InterruptKind::kAbort) {
+            abort_pending_ = false;
+          }
+          current_instr_ = entry;
+          needs_drain_ = entry->rule_count > 1;
+          micro_op_index_ = 1;
+          timing_context_ = TimingContext{};
+          // Trace entry for the interrupt handler invocation. PC points at
+          // the instruction that would have executed had the interrupt not
+          // been taken — same as where RTI will return to.
+          pending_trace_ = TraceEntry{local_time_, PcAddr(regs_), regs_};
+          if (micro_op_recorder_ != nullptr) {
+            // Use the kind-as-opcode so debuggers can render "NMI" / "IRQ" /
+            // "ABORT" via the standard instruction-begin hook. No actual byte
+            // was fetched; the bus value is informational.
+            micro_op_recorder_->OnInstructionBegin(static_cast<uint8_t>(*kind), PcAddr(regs_));
+          }
+        }
+      }
+    }
+
     // DRAM refresh: stall the CPU for its window, consume mcyc without
     // issuing bus ops. Clamp to remaining target.
     if (refresh_cycles_remaining_ > 0) {
@@ -1219,8 +1389,7 @@ TickResult CPU::TickToTarget(TimeMasterT target_master_time) {
     // Partial-op bookkeeping: determine how many cycles the next micro-op
     // still needs after deducting cycles already banked from a prior call.
     const TimeMasterDeltaT cost = EstimateNextStepCostOrZero();
-    const TimeMasterDeltaT remaining =
-        (cost > partial_op_cycles_) ? cost - partial_op_cycles_ : 0;
+    const TimeMasterDeltaT remaining = (cost > partial_op_cycles_) ? cost - partial_op_cycles_ : 0;
 
     if (remaining > 0 && snes_->GetMasterTime() + remaining > target_master_time) {
       // Target lands mid-op. Bank the partial progress, don't execute the op.
@@ -1239,7 +1408,10 @@ TickResult CPU::TickToTarget(TimeMasterT target_master_time) {
     local_time_ = snes_->GetMasterTime();
     partial_op_cycles_ = 0;
 
-    if (halted_ && ShouldFetchInstruction()) {
+    // A micro-op that just retired may have set halt_state_ (WAI/STP). Exit the
+    // dispatch loop immediately; the next TickToTarget call enters via the
+    // halt-state prologue above.
+    if (halt_state_ != HaltState::kNone && ShouldFetchInstruction()) {
       snes_->SetMasterTime(target_master_time);
       local_time_ = target_master_time;
       return {snes_->GetMasterTime() - start, TickStopReason::kReachedTarget};
@@ -1247,13 +1419,11 @@ TickResult CPU::TickToTarget(TimeMasterT target_master_time) {
     StepResult step = ShouldFetchInstruction() ? FetchOpcode(0) : ExecuteMicroOp(0);
     if (step.stopped) {
       return {snes_->GetMasterTime() - start,
-              step.reason == TickStopReason::kFault ? TickStopReason::kFault
-                                                    : TickStopReason::kBreakpoint};
+              step.reason == TickStopReason::kFault ? TickStopReason::kFault : TickStopReason::kBreakpoint};
     }
 
     const bool at_instruction_boundary = ShouldFetchInstruction();
-    const bool microop_mode =
-        debugger_contract_.step_granularity == DebuggerContract::StepGranularity::kMicroOp;
+    const bool microop_mode = debugger_contract_.step_granularity == DebuggerContract::StepGranularity::kMicroOp;
     const bool yield_for_step = (at_instruction_boundary || microop_mode);
 
     if (yield_for_step && debugger_contract_.step_target > 0) {

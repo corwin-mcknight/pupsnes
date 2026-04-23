@@ -21,6 +21,19 @@ class CpuMmio : public Device {
   // $80-$FF. 0 = slow (8 master cycles), 1 = fast (6 master cycles).
   static constexpr uint32_t kMemSelOffset = 0x420DU;
 
+  // NMITIMEN ($4200) — interrupt / joypad enable (write-only).
+  // bit 7: VBlank NMI enable (gates the PPU /NMI line into the CPU's NMI
+  //        flip-flop. Transition quirks are handled by
+  //        CPU::OnNmiTimenChanged — see CpuMmio::WriteRegister).
+  // bit 5: V-IRQ enable (deferred — IRQ signal not yet modeled).
+  // bit 4: H-IRQ enable (deferred).
+  // bit 0: auto-joypad read enable (deferred).
+  static constexpr uint32_t kNmiTimenOffset = 0x4200U;
+  static constexpr uint8_t kNmiTimenNmiEnableMask = 0x80U;
+  static constexpr uint8_t kNmiTimenVIrqEnableMask = 0x20U;
+  static constexpr uint8_t kNmiTimenHIrqEnableMask = 0x10U;
+  static constexpr uint8_t kNmiTimenAutoJoypadMask = 0x01U;
+
   // RDNMI ($4210): bit 7 = VBlank-NMI latch (set at VBlank entry, cleared on
   // read), bits 6:4 = open-bus, bits 3:0 = 5A22 CPU revision. Fullsnes notes
   // real hardware reports revision 2 on all retail consoles.
@@ -38,8 +51,7 @@ class CpuMmio : public Device {
   static constexpr uint8_t kHvbJoyVblankMask = 0x80U;
   static constexpr uint8_t kHvbJoyHblankMask = 0x40U;
   static constexpr uint8_t kHvbJoyAutoJoypadMask = 0x01U;
-  static constexpr uint8_t kHvbJoyDrivenMask =
-      kHvbJoyVblankMask | kHvbJoyHblankMask | kHvbJoyAutoJoypadMask;
+  static constexpr uint8_t kHvbJoyDrivenMask = kHvbJoyVblankMask | kHvbJoyHblankMask | kHvbJoyAutoJoypadMask;
 
   explicit CpuMmio(SNES* snes);
   ~CpuMmio() override = default;
@@ -60,8 +72,15 @@ class CpuMmio : public Device {
   [[nodiscard]] bool IsFastRomEnabled() const { return (memsel_ & 0x01U) != 0U; }
   [[nodiscard]] uint8_t GetMemSel() const { return memsel_; }
 
+  [[nodiscard]] uint8_t GetNmiTimen() const { return nmitimen_; }
+  [[nodiscard]] bool GetNmiEnable() const { return (nmitimen_ & kNmiTimenNmiEnableMask) != 0U; }
+  [[nodiscard]] bool GetVIrqEnable() const { return (nmitimen_ & kNmiTimenVIrqEnableMask) != 0U; }
+  [[nodiscard]] bool GetHIrqEnable() const { return (nmitimen_ & kNmiTimenHIrqEnableMask) != 0U; }
+  [[nodiscard]] bool GetAutoJoypadEnable() const { return (nmitimen_ & kNmiTimenAutoJoypadMask) != 0U; }
+
  private:
   uint8_t memsel_ = 0;
+  uint8_t nmitimen_ = 0;
 };
 
 }  // namespace pupsnes

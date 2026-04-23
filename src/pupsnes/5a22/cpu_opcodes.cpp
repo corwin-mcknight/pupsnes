@@ -601,14 +601,14 @@ constexpr CycleFragment SoftwareInterrupt(bool is_cop) {
           MicroInternalOp::kSetInterruptVector,
           Always(),
           "fetch signature, prime vector",
-          static_cast<uint8_t>(is_cop ? 0x01U : 0x00U),
+          micro_op_params::PackSetInterruptVector(is_cop ? InterruptKind::kCop : InterruptKind::kBrk),
       })
       .Then(PushRegSlot(PushSrc::kPbr, Not(Condition(TimingCondition::kEmulationMode)), "push PBR (native)"))
       .Then(PushRegSlot(PushSrc::kPch, Always(), "push PCH"))
       .Then(PushRegSlot(PushSrc::kPcl, Always(), "push PCL"))
       .Then(PushRegSlot(PushSrc::kP, Always(), "push P"))
-      .Then(CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kStashIndirectLow, Always(),
-                          "read vector low", 0})
+      .Then(
+          CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kStashIndirectLow, Always(), "read vector low", 0})
       .Then(CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kEnterInterruptHandler, Always(),
                           "read vector high, enter handler", 0})
       .Build();
@@ -663,14 +663,8 @@ constexpr auto MakeShiftSpecs() {
 constexpr auto MakeRmwMemSpecs() {
   return std::array{
       // ASL dp/abs/dp,X/abs,X
-      Opcode(0x06, "ASL", "direct page")
-          .Then(FetchDirectPage())
-          .Then(ReadModifyWriteFromAddr(RmwOp::kAsl))
-          .Build(),
-      Opcode(0x0E, "ASL", "absolute")
-          .Then(FetchAbsolute())
-          .Then(ReadModifyWriteFromAddr(RmwOp::kAsl))
-          .Build(),
+      Opcode(0x06, "ASL", "direct page").Then(FetchDirectPage()).Then(ReadModifyWriteFromAddr(RmwOp::kAsl)).Build(),
+      Opcode(0x0E, "ASL", "absolute").Then(FetchAbsolute()).Then(ReadModifyWriteFromAddr(RmwOp::kAsl)).Build(),
       Opcode(0x16, "ASL", "direct page indexed X")
           .Then(FetchDirectPageIndexed(Reg::kX))
           .Then(ReadModifyWriteFromAddr(RmwOp::kAsl))
@@ -680,14 +674,8 @@ constexpr auto MakeRmwMemSpecs() {
           .Then(ReadModifyWriteFromAddr(RmwOp::kAsl))
           .Build(),
       // LSR
-      Opcode(0x46, "LSR", "direct page")
-          .Then(FetchDirectPage())
-          .Then(ReadModifyWriteFromAddr(RmwOp::kLsr))
-          .Build(),
-      Opcode(0x4E, "LSR", "absolute")
-          .Then(FetchAbsolute())
-          .Then(ReadModifyWriteFromAddr(RmwOp::kLsr))
-          .Build(),
+      Opcode(0x46, "LSR", "direct page").Then(FetchDirectPage()).Then(ReadModifyWriteFromAddr(RmwOp::kLsr)).Build(),
+      Opcode(0x4E, "LSR", "absolute").Then(FetchAbsolute()).Then(ReadModifyWriteFromAddr(RmwOp::kLsr)).Build(),
       Opcode(0x56, "LSR", "direct page indexed X")
           .Then(FetchDirectPageIndexed(Reg::kX))
           .Then(ReadModifyWriteFromAddr(RmwOp::kLsr))
@@ -697,14 +685,8 @@ constexpr auto MakeRmwMemSpecs() {
           .Then(ReadModifyWriteFromAddr(RmwOp::kLsr))
           .Build(),
       // ROL
-      Opcode(0x26, "ROL", "direct page")
-          .Then(FetchDirectPage())
-          .Then(ReadModifyWriteFromAddr(RmwOp::kRol))
-          .Build(),
-      Opcode(0x2E, "ROL", "absolute")
-          .Then(FetchAbsolute())
-          .Then(ReadModifyWriteFromAddr(RmwOp::kRol))
-          .Build(),
+      Opcode(0x26, "ROL", "direct page").Then(FetchDirectPage()).Then(ReadModifyWriteFromAddr(RmwOp::kRol)).Build(),
+      Opcode(0x2E, "ROL", "absolute").Then(FetchAbsolute()).Then(ReadModifyWriteFromAddr(RmwOp::kRol)).Build(),
       Opcode(0x36, "ROL", "direct page indexed X")
           .Then(FetchDirectPageIndexed(Reg::kX))
           .Then(ReadModifyWriteFromAddr(RmwOp::kRol))
@@ -714,14 +696,8 @@ constexpr auto MakeRmwMemSpecs() {
           .Then(ReadModifyWriteFromAddr(RmwOp::kRol))
           .Build(),
       // ROR
-      Opcode(0x66, "ROR", "direct page")
-          .Then(FetchDirectPage())
-          .Then(ReadModifyWriteFromAddr(RmwOp::kRor))
-          .Build(),
-      Opcode(0x6E, "ROR", "absolute")
-          .Then(FetchAbsolute())
-          .Then(ReadModifyWriteFromAddr(RmwOp::kRor))
-          .Build(),
+      Opcode(0x66, "ROR", "direct page").Then(FetchDirectPage()).Then(ReadModifyWriteFromAddr(RmwOp::kRor)).Build(),
+      Opcode(0x6E, "ROR", "absolute").Then(FetchAbsolute()).Then(ReadModifyWriteFromAddr(RmwOp::kRor)).Build(),
       Opcode(0x76, "ROR", "direct page indexed X")
           .Then(FetchDirectPageIndexed(Reg::kX))
           .Then(ReadModifyWriteFromAddr(RmwOp::kRor))
@@ -731,14 +707,8 @@ constexpr auto MakeRmwMemSpecs() {
           .Then(ReadModifyWriteFromAddr(RmwOp::kRor))
           .Build(),
       // INC
-      Opcode(0xE6, "INC", "direct page")
-          .Then(FetchDirectPage())
-          .Then(ReadModifyWriteFromAddr(RmwOp::kInc))
-          .Build(),
-      Opcode(0xEE, "INC", "absolute")
-          .Then(FetchAbsolute())
-          .Then(ReadModifyWriteFromAddr(RmwOp::kInc))
-          .Build(),
+      Opcode(0xE6, "INC", "direct page").Then(FetchDirectPage()).Then(ReadModifyWriteFromAddr(RmwOp::kInc)).Build(),
+      Opcode(0xEE, "INC", "absolute").Then(FetchAbsolute()).Then(ReadModifyWriteFromAddr(RmwOp::kInc)).Build(),
       Opcode(0xF6, "INC", "direct page indexed X")
           .Then(FetchDirectPageIndexed(Reg::kX))
           .Then(ReadModifyWriteFromAddr(RmwOp::kInc))
@@ -748,14 +718,8 @@ constexpr auto MakeRmwMemSpecs() {
           .Then(ReadModifyWriteFromAddr(RmwOp::kInc))
           .Build(),
       // DEC
-      Opcode(0xC6, "DEC", "direct page")
-          .Then(FetchDirectPage())
-          .Then(ReadModifyWriteFromAddr(RmwOp::kDec))
-          .Build(),
-      Opcode(0xCE, "DEC", "absolute")
-          .Then(FetchAbsolute())
-          .Then(ReadModifyWriteFromAddr(RmwOp::kDec))
-          .Build(),
+      Opcode(0xC6, "DEC", "direct page").Then(FetchDirectPage()).Then(ReadModifyWriteFromAddr(RmwOp::kDec)).Build(),
+      Opcode(0xCE, "DEC", "absolute").Then(FetchAbsolute()).Then(ReadModifyWriteFromAddr(RmwOp::kDec)).Build(),
       Opcode(0xD6, "DEC", "direct page indexed X")
           .Then(FetchDirectPageIndexed(Reg::kX))
           .Then(ReadModifyWriteFromAddr(RmwOp::kDec))
@@ -766,22 +730,10 @@ constexpr auto MakeRmwMemSpecs() {
           .Build(),
       // TSB / TRB — test-and-set / test-and-reset bits (Bruce Clark §6.1.2.3).
       // Same RMW shape as INC/DEC; only Z is updated.
-      Opcode(0x04, "TSB", "direct page")
-          .Then(FetchDirectPage())
-          .Then(ReadModifyWriteFromAddr(RmwOp::kTsb))
-          .Build(),
-      Opcode(0x0C, "TSB", "absolute")
-          .Then(FetchAbsolute())
-          .Then(ReadModifyWriteFromAddr(RmwOp::kTsb))
-          .Build(),
-      Opcode(0x14, "TRB", "direct page")
-          .Then(FetchDirectPage())
-          .Then(ReadModifyWriteFromAddr(RmwOp::kTrb))
-          .Build(),
-      Opcode(0x1C, "TRB", "absolute")
-          .Then(FetchAbsolute())
-          .Then(ReadModifyWriteFromAddr(RmwOp::kTrb))
-          .Build(),
+      Opcode(0x04, "TSB", "direct page").Then(FetchDirectPage()).Then(ReadModifyWriteFromAddr(RmwOp::kTsb)).Build(),
+      Opcode(0x0C, "TSB", "absolute").Then(FetchAbsolute()).Then(ReadModifyWriteFromAddr(RmwOp::kTsb)).Build(),
+      Opcode(0x14, "TRB", "direct page").Then(FetchDirectPage()).Then(ReadModifyWriteFromAddr(RmwOp::kTrb)).Build(),
+      Opcode(0x1C, "TRB", "absolute").Then(FetchAbsolute()).Then(ReadModifyWriteFromAddr(RmwOp::kTrb)).Build(),
   };
 }
 
@@ -854,8 +806,8 @@ constexpr CycleFragment JsrAbsoluteIndexedIndirectX() {
           "add X to pointer",
           micro_op_params::PackAddIndex(Reg::kX, /*bank_wrap=*/true),
       })
-      .Then(CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kStashIndirectLow, Always(),
-                          "read target low", 0})
+      .Then(
+          CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kStashIndirectLow, Always(), "read target low", 0})
       .Then(CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kSetPcFromScratchAndFetch, Always(),
                           "read target high, set PC",
                           /*with_pbr=*/0})
@@ -882,11 +834,13 @@ constexpr auto MakeJumpSpecs() {
       // model the two share behavior — both halt until Reset() clears halted_.
       Opcode(0xDB, "STP", "implied")
           .Then(Internal(MicroInternalOp::kNone, Always(), "internal"))
-          .Then(Internal(MicroInternalOp::kHaltCpu, Always(), "halt"))
+          .Then(CycleSlotSpec{MicroBusAction::kNone, MicroInternalOp::kHaltCpu, Always(), "halt (STP)",
+                              micro_op_params::PackHaltCpu(/*is_stp=*/true)})
           .Build(),
       Opcode(0xCB, "WAI", "implied")
           .Then(Internal(MicroInternalOp::kNone, Always(), "internal"))
-          .Then(Internal(MicroInternalOp::kHaltCpu, Always(), "halt"))
+          .Then(CycleSlotSpec{MicroBusAction::kNone, MicroInternalOp::kHaltCpu, Always(), "halt (WAI)",
+                              micro_op_params::PackHaltCpu(/*is_stp=*/false)})
           .Build(),
       // MVN / MVP block moves (Bruce Clark §6.6). 7 cycles per byte moved;
       // when A != $FFFF the last cycle rewinds PC by 3 so the opcode fetches
@@ -1525,18 +1479,65 @@ constexpr auto kExplicitOpcodeSpecs = ConcatArrays(
                              ConcatArrays(MakeAluSpecs(), MakeShiftSpecs()))),
             ConcatArrays(MakeAluAbsSpecs(), MakeBitDpxSpec())),
         ConcatArrays(MakeAluDpxSpecs(), MakeAluSrSpecs())),
-    ConcatArrays(ConcatArrays(ConcatArrays(MakeLongXSpecs(), MakeAluAbsXSpecs()), MakeAluIndirectDpSpecs()),
-                 ConcatArrays(ConcatArrays(MakeAluAbsYSpecs(), MakeBitMiscSpecs()),
-                              ConcatArrays(ConcatArrays(MakeAluIndirectDpYSpecs(), MakeAluIndirectLongDpYSpecs()),
-                                           ConcatArrays(ConcatArrays(MakeAluIndexedIndirectXSpecs(),
-                                                                     MakeAluSrIndyYSpecs()),
-                                                        MakeRmwMemSpecs())))));
+    ConcatArrays(
+        ConcatArrays(ConcatArrays(MakeLongXSpecs(), MakeAluAbsXSpecs()), MakeAluIndirectDpSpecs()),
+        ConcatArrays(ConcatArrays(MakeAluAbsYSpecs(), MakeBitMiscSpecs()),
+                     ConcatArrays(ConcatArrays(MakeAluIndirectDpYSpecs(), MakeAluIndirectLongDpYSpecs()),
+                                  ConcatArrays(ConcatArrays(MakeAluIndexedIndirectXSpecs(), MakeAluSrIndyYSpecs()),
+                                               MakeRmwMemSpecs())))));
 
 static_assert(ValidateOpcodeSpecs(kExplicitOpcodeSpecs), "Opcode specification validation failed");
 
 }  // namespace
 
 const OpcodeArtifacts kOpcodeArtifacts = BuildOpcodeArtifacts(kExplicitOpcodeSpecs);
+
+// Synthetic HW interrupt entry instructions (NMI / IRQ / ABORT). These are NOT
+// in the opcode table — they are dispatched by the CPU's instruction-boundary
+// interrupt sampler, which replaces the opcode fetch with a jump into one of
+// these entries. Cycle shape (WDC §9 / Bruce Clark §6.13): 8 cycles native,
+// 7 cycles emulation. The first two cycles are internal / dummy (real
+// silicon does dummy reads of PC without advancing); cycle 3 pushes PBR
+// (native only); cycles 4-6 push PCH/PCL/P; cycles 7-8 read the appropriate
+// vector. `kSetInterruptVector` is folded into slot 1 (the second dummy
+// cycle) so addr_ is primed by the vector-read cycles without adding a slot.
+// P is pushed via `PushSrc::kPHwIrq` which clears B in E=1 — the handler's
+// only signal that this was a HW interrupt (not BRK).
+//
+// The entry is started at micro_op_index_=1 (skipping the normal cycle-0
+// opcode fetch). `remaining_op_count = 7` covers ops[0..6].
+constexpr OpcodeSpec MakeHwInterruptSpec(InterruptKind kind, std::string_view mnemonic) {
+  return Opcode(/*opcode=*/0U, mnemonic, "hw-interrupt")
+      .Then(CycleSlotSpec{
+          MicroBusAction::kNone,
+          MicroInternalOp::kSetInterruptVector,
+          Always(),
+          "internal (prime vector)",
+          micro_op_params::PackSetInterruptVector(kind),
+      })
+      .Then(PushRegSlot(PushSrc::kPbr, Not(Condition(TimingCondition::kEmulationMode)), "push PBR (native)"))
+      .Then(PushRegSlot(PushSrc::kPch, Always(), "push PCH"))
+      .Then(PushRegSlot(PushSrc::kPcl, Always(), "push PCL"))
+      .Then(PushRegSlot(PushSrc::kPHwIrq, Always(), "push P (B=0 in E=1)"))
+      .Then(
+          CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kStashIndirectLow, Always(), "read vector low", 0})
+      .Then(CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kEnterInterruptHandler, Always(),
+                          "read vector high, enter handler", 0})
+      .Build();
+}
+
+constexpr InstructionEntry kHwInterruptEntryNmi = LowerOpcode(MakeHwInterruptSpec(InterruptKind::kNmi, "NMI"));
+constexpr InstructionEntry kHwInterruptEntryIrq = LowerOpcode(MakeHwInterruptSpec(InterruptKind::kIrq, "IRQ"));
+constexpr InstructionEntry kHwInterruptEntryAbort = LowerOpcode(MakeHwInterruptSpec(InterruptKind::kAbort, "ABORT"));
+
+const InstructionEntry* HwInterruptEntryFor(InterruptKind kind) {
+  switch (kind) {
+    case InterruptKind::kNmi: return &kHwInterruptEntryNmi;
+    case InterruptKind::kIrq: return &kHwInterruptEntryIrq;
+    case InterruptKind::kAbort: return &kHwInterruptEntryAbort;
+    default: return nullptr;  // BRK/COP are dispatched via their opcode entries.
+  }
+}
 
 }  // namespace pupsnes::opcode_defs_internal
 

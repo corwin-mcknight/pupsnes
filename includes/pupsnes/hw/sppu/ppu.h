@@ -96,6 +96,18 @@ class Ppu : public Device {
   // Read-only peek at the latch (no catch-up, no clear) — for the debugger.
   [[nodiscard]] bool PeekVblankNmiFlag() const { return vblank_nmi_flag_; }
 
+  // Catch up to `current_time` and return the current level of the PPU /NMI
+  // output pin. True while V is on the VBlank entry line (225 normally, 240
+  // under overscan); false elsewhere. This is the continuous level signal
+  // that goes through NMITIMEN.7 to the CPU's NMI edge detector — distinct
+  // from the $4210 latch above. The CPU polls this at instruction-boundary
+  // sample points and runs its own edge detection + gating.
+  [[nodiscard]] bool SampleNmiLine(TimeMasterT current_time);
+  // Read-only peek at the line level given already-current PPU state (no
+  // catch-up). Used by the VBlank-NMI scheduler-fence handler, which runs
+  // after MachineSync has already advanced the PPU.
+  [[nodiscard]] bool PeekNmiLine() const;
+
   // Buffer accessors — both buffers are always readable so the debugger can
   // sample the in-progress frame without waiting for a swap. Buffers are sized
   // for the full 341 × 313 H/V grid and store BGR555 uint16_t pixels.
@@ -176,6 +188,16 @@ class Ppu : public Device {
   // Frame-end signal handler — re-schedules itself for the next frame boundary.
   void OnFrameEndSignal(TimeMasterT master_time);
 
+  // VBlank-NMI boundary signal handler. Serves as a scheduler sync fence at
+  // the master cycle V transitions onto the VBlank entry line (falling edge
+  // of the /NMI pin). Reschedules itself one frame out. Does not manipulate
+  // time — MachineSync has already advanced every device to `master_time`
+  // before firing. The rising edge of /NMI (V leaving the entry line) is NOT
+  // fenced: the CPU's NMI flip-flop was already latched by the falling edge,
+  // and $4210's line-end latch clear is observed lazily through
+  // read-triggered PPU catch-up.
+  void OnVblankNmiBoundarySignal(TimeMasterT master_time);
+
   // Dot-loop helpers.
   void AdvanceHv();
   void EmitPixel(uint32_t h, uint32_t v);
@@ -206,7 +228,7 @@ class Ppu : public Device {
   std::array<uint8_t, sppu::regs::kShadowSize> shadow_{};
 
   // Decoded INIDISP ($2100) — updated during log replay.
-  uint8_t inidisp_ = 0x80;   // power-on: forced blank set.
+  uint8_t inidisp_ = 0x80;  // power-on: forced blank set.
   bool forced_blank_ = true;
   uint8_t brightness_ = 0x0F;
 

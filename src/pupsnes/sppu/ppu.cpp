@@ -98,10 +98,19 @@ void Ppu::Reset() {
   // the signal fires when the frame boundary arrives so OnFrameEndSignal can
   // chain the next frame's signal.
   if (snes_ != nullptr && snes_->scheduler != nullptr) {
-    const TimeMasterT frame_mcyc =
-        262U * sppu::regs::kNormalLineCycles - (field_ ? 4U : 0U);
-    snes_->scheduler->ScheduleSignal(frame_mcyc, SignalKind::kFrameEnd,
-                                     [this](TimeMasterT t) { OnFrameEndSignal(t); });
+    const TimeMasterT frame_mcyc = 262U * sppu::regs::kNormalLineCycles - (field_ ? 4U : 0U);
+    snes_->scheduler->ScheduleSignal(frame_mcyc, SignalKind::kFrameEnd, [this](TimeMasterT t) { OnFrameEndSignal(t); });
+    // VBlank-NMI boundary: the CPU's NMI flip-flop is edge-triggered on the
+    // /NMI line's falling edge, which lands when V transitions onto the
+    // VBlank entry line (225 normally, 240 with SETINI overscan — SETINI
+    // starts clear at reset so V=225). Scheduling this as a scheduler signal
+    // gives a sync fence: the CPU cannot run past the assertion cycle in a
+    // single tick budget, which is the only way to guarantee it can't
+    // "time-travel over" an NMI that real hardware would have delivered.
+    const uint32_t vblank_start = overscan_ ? sppu::regs::kVisibleVEnd239 : sppu::regs::kVisibleVEnd224;
+    const TimeMasterT nmi_boundary_mcyc = static_cast<TimeMasterT>(vblank_start) * sppu::regs::kNormalLineCycles;
+    snes_->scheduler->ScheduleSignal(nmi_boundary_mcyc, SignalKind::kVblankNmiBoundary,
+                                     [this](TimeMasterT t) { OnVblankNmiBoundarySignal(t); });
   }
 }
 
@@ -123,8 +132,7 @@ void Ppu::CatchUpTo(TimeMasterT target) {
 
     // Enough time to finish this dot. Drain writes up to the dot's nominal
     // start cycle so EmitPixel observes the state valid at dot-start.
-    const TimeMasterT dot_start_time =
-        local_time_ - static_cast<TimeMasterDeltaT>(partial_dot_cycles_);
+    const TimeMasterT dot_start_time = local_time_ - static_cast<TimeMasterDeltaT>(partial_dot_cycles_);
     DrainPendingWritesUpTo(dot_start_time);
     EmitPixel(h_, v_);
 
@@ -155,14 +163,56 @@ bool Ppu::QueryAndClearVblankNmiFlag(TimeMasterT current_time) {
   return was_set;
 }
 
+bool Ppu::SampleNmiLine(TimeMasterT current_time) {
+  CatchUpTo(current_time);
+  return PeekNmiLine();
+}
+
+bool Ppu::PeekNmiLine() const {
+  // The PPU /NMI output pin asserts for the duration of the VBlank entry line
+  // (V == 225 normally, V == 240 with SETINI overscan). It releases as V
+  // advances past that line. See fullsnes §PPU NMI.
+  const uint32_t vblank_start = overscan_ ? sppu::regs::kVisibleVEnd239 : sppu::regs::kVisibleVEnd224;
+  return v_ == vblank_start;
+}
+
+void Ppu::OnVblankNmiBoundarySignal(TimeMasterT master_time) {
+  // One frame period between consecutive /NMI falling edges. Frame length is
+  // kLinesPerFrameNtsc × kNormalLineCycles master cycles, minus 4 when the
+  // short line at V=240 with field_==true lies within that frame. At boundary
+  // firing, field_ is the current frame's field (it toggles at V=0 of the
+  // next frame, AFTER V=240), so the short-line saving applies regardless of
+  // whether the threshold is V=225 (V=240 still ahead in the same frame) or
+  // V=240 (the boundary IS the short line's start).
+  //
+  // Only the falling edge needs a fence. The rising edge doesn't latch
+  // anything new — the CPU's NMI flip-flop was already set on the falling
+  // edge and persists until interrupt acknowledge or NMITIMEN.7 clear.
+  // $4210's line-end latch clear is observed lazily via read-triggered
+  // catch-up, so one signal per frame suffices.
+  //
+  // SETINI overscan mid-frame toggle is not compensated: if overscan flipped
+  // between scheduling and firing, the fence is one frame out of phase with
+  // the true threshold until the next AdvanceHv/reschedule realigns. The
+  // CPU's lazy-pull line check still sees the real assertion whenever the
+  // PPU is caught up past the new threshold, so correctness holds — only
+  // the sync-granularity is coarser in that edge case.
+  TimeMasterT period = static_cast<TimeMasterT>(sppu::regs::kLinesPerFrameNtsc) * sppu::regs::kNormalLineCycles;
+  if (field_) period -= 4U;
+  const TimeMasterT next_boundary = master_time + period;
+  if (snes_ != nullptr && snes_->scheduler != nullptr) {
+    snes_->scheduler->ScheduleSignal(next_boundary, SignalKind::kVblankNmiBoundary,
+                                     [this](TimeMasterT t) { OnVblankNmiBoundarySignal(t); });
+  }
+}
+
 PpuHvbStatus Ppu::QueryHvbStatus(TimeMasterT current_time) {
   CatchUpTo(current_time);
   // h_/v_ point at the next dot to emit after catch-up. VBlank start tracks
   // SETINI overscan live — fullsnes notes the bit can flip mid-frame; v1
   // scaffold follows the current overscan_ value rather than a per-frame
   // latch.
-  const uint32_t vblank_start =
-      overscan_ ? sppu::regs::kVisibleVEnd239 : sppu::regs::kVisibleVEnd224;
+  const uint32_t vblank_start = overscan_ ? sppu::regs::kVisibleVEnd239 : sppu::regs::kVisibleVEnd224;
   const bool vblank = v_ >= vblank_start;
   // HBlank canonical boundary: H>=274 (fullsnes). Narrower than the
   // "outside visible window" definition by 4 dots, matching how games that
@@ -175,8 +225,7 @@ void Ppu::OnFrameEndSignal(TimeMasterT master_time) {
   // MachineSync has already called our CatchUpTo(master_time), so the frame
   // boundary (h==0, v==0) has already triggered OnEndOfFrame + buffer swap.
   // Schedule the next frame's boundary signal.
-  const TimeMasterT next_frame_mcyc =
-      master_time + 262U * sppu::regs::kNormalLineCycles - (field_ ? 4U : 0U);
+  const TimeMasterT next_frame_mcyc = master_time + 262U * sppu::regs::kNormalLineCycles - (field_ ? 4U : 0U);
   snes_->scheduler->ScheduleSignal(next_frame_mcyc, SignalKind::kFrameEnd,
                                    [this](TimeMasterT t) { OnFrameEndSignal(t); });
 }
@@ -244,8 +293,8 @@ MmioReadResult Ppu::ReadRegister(uint32_t offset, TimeMasterT current_time) {
       if (field_) {
         value = static_cast<uint8_t>(value | sppu::regs::kStat78FieldMask);
       }
-      const uint8_t driven =
-          static_cast<uint8_t>(sppu::regs::kStat78VersionMask | sppu::regs::kStat78PalMask | sppu::regs::kStat78FieldMask);
+      const uint8_t driven = static_cast<uint8_t>(sppu::regs::kStat78VersionMask | sppu::regs::kStat78PalMask |
+                                                  sppu::regs::kStat78FieldMask);
       return {value, driven};
     }
     default:
@@ -332,8 +381,7 @@ void Ppu::AdvanceHv() {
     // wrap so a subsequent VBlank can re-arm. Real hardware fires a pulse
     // from the NMI line at this boundary; we only need the latch until CPU
     // interrupt delivery lands.
-    const uint32_t vblank_start =
-        overscan_ ? sppu::regs::kVisibleVEnd239 : sppu::regs::kVisibleVEnd224;
+    const uint32_t vblank_start = overscan_ ? sppu::regs::kVisibleVEnd239 : sppu::regs::kVisibleVEnd224;
     if (v_ == vblank_start) {
       vblank_nmi_flag_ = true;
     } else if (v_ == 0) {
@@ -344,7 +392,8 @@ void Ppu::AdvanceHv() {
 
 void Ppu::EmitPixel(uint32_t h, uint32_t v) {
   const bool in_visible_h = (h >= sppu::regs::kVisibleHStart && h < sppu::regs::kVisibleHEnd);
-  const uint32_t v_end = (force_overscan_draw_ || overscan_) ? sppu::regs::kVisibleVEnd239 : sppu::regs::kVisibleVEnd224;
+  const uint32_t v_end =
+      (force_overscan_draw_ || overscan_) ? sppu::regs::kVisibleVEnd239 : sppu::regs::kVisibleVEnd224;
   const bool in_visible_v = (v >= sppu::regs::kVisibleVStartNtsc && v < v_end);
 
   uint16_t color = 0;
@@ -409,9 +458,7 @@ void Ppu::ReplayWrite(uint16_t offset, uint8_t data) {
       break;
     }
 
-    case sppu::regs::kVmain:
-      vmain_ = data;
-      break;
+    case sppu::regs::kVmain: vmain_ = data; break;
     case sppu::regs::kVmAddL:
       vmadd_ = static_cast<uint16_t>((vmadd_ & 0xFF00U) | data);
       PrefetchVram();
@@ -450,17 +497,15 @@ void Ppu::ReplayWrite(uint16_t offset, uint8_t data) {
         // Commit the full 15-bit BGR word. Bit 15 is forced to 0 — CGRAM
         // words only have 15 meaningful bits (BGR555). fullsnes confirms the
         // stored MSB reads back as 0.
-        const uint16_t word = static_cast<uint16_t>(
-            (static_cast<uint16_t>(data & 0x7FU) << 8) | cgram_write_latch_data_);
+        const uint16_t word =
+            static_cast<uint16_t>((static_cast<uint16_t>(data & 0x7FU) << 8) | cgram_write_latch_data_);
         (*cgram_)[cgadd_] = word;
         cgadd_ = static_cast<uint8_t>(cgadd_ + 1U);
         cgram_write_latch_high_ = false;
       }
       break;
 
-    case sppu::regs::kSetini:
-      overscan_ = (data & sppu::regs::kSetiniOverscanMask) != 0U;
-      break;
+    case sppu::regs::kSetini: overscan_ = (data & sppu::regs::kSetiniOverscanMask) != 0U; break;
 
     default:
       // Every other $2100-$213F write is shadow-only in v1. The shadow was
@@ -475,30 +520,26 @@ uint16_t Ppu::TranslateVramAddress(uint16_t raw) const {
   //   01: 8×8  2bpp — rotate low 8 bits: aaaaaaaa YYYxxxxx -> aaaaaaaa xxxxxYYY
   //   10: 8×8  4bpp — rotate low 9 bits: aaaaaaa YYYxxxxxx -> aaaaaaa xxxxxxYYY
   //   11: 8×8  8bpp — rotate low 10 bits: aaaaaa YYYxxxxxxx -> aaaaaa xxxxxxxYYY
-  const uint8_t mode = static_cast<uint8_t>((vmain_ & sppu::regs::kVmainTranslateMask) >> sppu::regs::kVmainTranslateShift);
+  const uint8_t mode =
+      static_cast<uint8_t>((vmain_ & sppu::regs::kVmainTranslateMask) >> sppu::regs::kVmainTranslateShift);
   switch (mode) {
-    case 0:
-      return raw;
+    case 0: return raw;
     case 1: {
       const uint16_t high = static_cast<uint16_t>(raw & 0xFF00U);
-      const uint16_t rotated =
-          static_cast<uint16_t>(((raw & 0x00E0U) >> 5) | ((raw & 0x001FU) << 3));
+      const uint16_t rotated = static_cast<uint16_t>(((raw & 0x00E0U) >> 5) | ((raw & 0x001FU) << 3));
       return static_cast<uint16_t>(high | rotated);
     }
     case 2: {
       const uint16_t high = static_cast<uint16_t>(raw & 0xFE00U);
-      const uint16_t rotated =
-          static_cast<uint16_t>(((raw & 0x01C0U) >> 6) | ((raw & 0x003FU) << 3));
+      const uint16_t rotated = static_cast<uint16_t>(((raw & 0x01C0U) >> 6) | ((raw & 0x003FU) << 3));
       return static_cast<uint16_t>(high | rotated);
     }
     case 3: {
       const uint16_t high = static_cast<uint16_t>(raw & 0xFC00U);
-      const uint16_t rotated =
-          static_cast<uint16_t>(((raw & 0x0380U) >> 7) | ((raw & 0x007FU) << 3));
+      const uint16_t rotated = static_cast<uint16_t>(((raw & 0x0380U) >> 7) | ((raw & 0x007FU) << 3));
       return static_cast<uint16_t>(high | rotated);
     }
-    default:
-      return raw;
+    default: return raw;
   }
 }
 
@@ -508,7 +549,7 @@ uint16_t Ppu::VmainIncrementStep() const {
     case 0x01U: return 32;
     case 0x02U:
     case 0x03U: return 128;
-    default:    return 1;
+    default: return 1;
   }
 }
 
@@ -526,12 +567,8 @@ void Ppu::MaybeIncrementVmaddOnPort(bool is_high_port) {
   }
 }
 
-void Ppu::WriteOamByte(uint16_t byte_addr, uint8_t data) {
-  (*oam_)[OamByteSlot(byte_addr)] = data;
-}
+void Ppu::WriteOamByte(uint16_t byte_addr, uint8_t data) { (*oam_)[OamByteSlot(byte_addr)] = data; }
 
-uint8_t Ppu::ReadOamByte(uint16_t byte_addr) const {
-  return (*oam_)[OamByteSlot(byte_addr)];
-}
+uint8_t Ppu::ReadOamByte(uint16_t byte_addr) const { return (*oam_)[OamByteSlot(byte_addr)]; }
 
 }  // namespace pupsnes

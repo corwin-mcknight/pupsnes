@@ -1,5 +1,6 @@
 #include "pupsnes/hw/5a22/cpu_mmio.h"
 
+#include "pupsnes/hw/5a22/cpu.h"
 #include "pupsnes/hw/cartridge.h"
 #include "pupsnes/hw/snes.h"
 #include "pupsnes/hw/sppu/ppu.h"
@@ -27,6 +28,7 @@ CpuMmio::CpuMmio(SNES* snes) : Device(snes) {}
 void CpuMmio::Reset() {
   const bool was_fast = (memsel_ & 0x01U) != 0U;
   memsel_ = 0;
+  nmitimen_ = 0;
   // Mirror the write path: only rebuild the page table when FASTROM was
   // actually on. No-op remap on a cold machine where both state and bus
   // already agree.
@@ -80,7 +82,7 @@ MmioReadResult CpuMmio::ReadRegister(uint32_t offset, TimeMasterT current_time) 
   return {0x00U, 0x00U};
 }
 
-void CpuMmio::WriteRegister(uint32_t offset, uint8_t data, TimeMasterT /*current_time*/) {
+void CpuMmio::WriteRegister(uint32_t offset, uint8_t data, TimeMasterT current_time) {
   const uint32_t reg = offset & 0xFFFFU;
   if (reg == kMemSelOffset) {
     const bool was_fast = (memsel_ & 0x01U) != 0U;
@@ -92,6 +94,22 @@ void CpuMmio::WriteRegister(uint32_t offset, uint8_t data, TimeMasterT /*current
     if (was_fast != now_fast && snes_ != nullptr && snes_->cartridge != nullptr && snes_->system_bus != nullptr) {
       snes_->cartridge->OnMemSelChanged(*snes_->system_bus, now_fast);
     }
+    return;
+  }
+  if (reg == kNmiTimenOffset) {
+    const uint8_t prev = nmitimen_;
+    nmitimen_ = data;
+    // NMI-enable transitions trigger the two NMITIMEN.7 quirks (0→1
+    // transparency while /NMI is asserted → immediate NMI; 1→0 cancels any
+    // pending NMI). The CPU owns the flip-flop and runs the transition
+    // logic, since it's the one with the edge-tracker state.
+    if (((prev ^ data) & kNmiTimenNmiEnableMask) != 0U && snes_ != nullptr && snes_->cpu != nullptr) {
+      snes_->cpu->OnNmiTimenChanged(prev, data, current_time);
+    }
+    // V-IRQ / H-IRQ / auto-joypad bits stored but not acted upon in v1 —
+    // IRQ signal and joypad auto-read land in subsequent work. Keeping the
+    // shadow byte lets the debugger show the current enable state.
+    return;
   }
   // Stub: writes to other registers are accepted silently so ROMs can poke
   // them without the bus rejecting the transaction.
@@ -102,12 +120,16 @@ std::optional<uint8_t> CpuMmio::HandleDebugRead(uint32_t offset) const {
   if (reg == kMemSelOffset) {
     return memsel_;
   }
+  if (reg == kNmiTimenOffset) {
+    // $4200 is write-only on real hardware; expose the shadow for the debugger.
+    return nmitimen_;
+  }
   return 0x00U;
 }
 
 bool CpuMmio::HandleDebugWrite(uint32_t offset, uint8_t data) {
   const uint32_t reg = offset & 0xFFFFU;
-  if (reg == kMemSelOffset) {
+  if (reg == kMemSelOffset || reg == kNmiTimenOffset) {
     // Debug writes are out-of-band and don't belong to a bus cycle; pass 0
     // as the current time. CpuMmio commits synchronously, so the timestamp
     // is unused. Devices that use lazy replay (PPU) must not be debug-written
