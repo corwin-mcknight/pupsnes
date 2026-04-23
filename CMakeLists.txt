@@ -52,6 +52,7 @@ set(PUPSNES_TEST_SOURCES
   src/tests/cpu_mmio_tests.cpp
   src/tests/cpu_opcode_defs_tests.cpp
   src/tests/fastrom_tests.cpp
+  src/tests/rom_format_tests.cpp
   src/tests/rom_integration_tests.cpp
   src/tests/scheduler_tests.cpp
   src/tests/test_rom_builder_tests.cpp
@@ -276,6 +277,7 @@ set(PUPSNES_HEADERS
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/config.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/types.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/mem.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/rom_format.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/5a22/opcode_metadata.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/debugger/breakpoints.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/debugger/bus_event_log.h

@@ -23,6 +23,7 @@
 #include "panels/panels.h"
 #include "pupsnes/hw/cartridge.h"
 #include "pupsnes/hw/sppu/ppu.h"
+#include "pupsnes/rom_format.h"
 
 namespace pupsnes::debugger {
 
@@ -81,7 +82,11 @@ bool DebuggerApp::LoadRomFromPath(const std::string& path) {
     return false;
   }
 
-  const std::vector<uint8_t> rom((std::istreambuf_iterator<char>(stream)), std::istreambuf_iterator<char>());
+  std::vector<uint8_t> rom((std::istreambuf_iterator<char>(stream)), std::istreambuf_iterator<char>());
+  // Many .smc dumps carry a 512-byte copier header that is not part of the
+  // ROM image. Strip it before the size validation so a headered LoROM is
+  // accepted and mapped as its raw payload.
+  StripSmcCopierHeader(rom);
   if (rom.empty() || (rom.size() % Cartridge::kLoROMWindowSize) != 0U) {
     error_log_.Push({
         .master_time = snes_.GetMasterTime(),
