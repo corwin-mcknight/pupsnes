@@ -2451,6 +2451,181 @@ TEST_CASE("JMP absolute long sets PC and PBR", "[cpu][opcode]") {
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0xAB);
 }
 
+TEST_CASE("JMP (abs) indirect loads PC through a bank-0 pointer", "[cpu][opcode]") {
+  TestFixture f;
+  // $8000: JMP ($8100) ; pointer at $00:8100 = $8020 ; $8020: LDA #$55
+  f.LoadAt(0, {0x6C, 0x00, 0x81});
+  f.LoadAt(0x100, {0x20, 0x80});
+  f.LoadAt(0x20, {0xA9, 0x55});
+
+  // JMP (abs) = 5 cycles, LDA #$55 = 2 cycles; 7 × 8 = 56 master cycles.
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 56);
+
+  REQUIRE(r.completed_cycles == 56);
+  REQUIRE(f.cpu.GetRegs().PC == 0x8022);
+  REQUIRE(f.cpu.GetRegs().PBR == 0x00);
+  REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x55);
+}
+
+TEST_CASE("JMP [abs] indirect long loads PC+PBR through a 24-bit pointer", "[cpu][opcode]") {
+  TestFixture f;
+  // $8000: JMP [$8100] ; pointer at $00:8100 = $00:8020 ; target: LDA #$66
+  f.LoadAt(0, {0xDC, 0x00, 0x81});
+  f.LoadAt(0x100, {0x20, 0x80, 0x00});
+  f.LoadAt(0x20, {0xA9, 0x66});
+
+  // JMP [abs] = 6 cycles, LDA #$66 = 2; 8 × 8 = 64 master cycles.
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 64);
+
+  REQUIRE(r.completed_cycles == 64);
+  REQUIRE(f.cpu.GetRegs().PC == 0x8022);
+  REQUIRE(f.cpu.GetRegs().PBR == 0x00);
+  REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x66);
+}
+
+TEST_CASE("JMP (abs,X) indirect uses program-bank pointer with X offset", "[cpu][opcode]") {
+  TestFixture f;
+  // $8000: JMP ($80FE,X) with X=$02 → pointer at $00:8100 = $8020
+  f.LoadAt(0, {0x7C, 0xFE, 0x80});
+  f.LoadAt(0x100, {0x20, 0x80});
+  f.LoadAt(0x20, {0xA9, 0x77});
+  auto regs = f.cpu.GetRegs();
+  regs.X = 0x0002;
+  f.cpu.SetRegs(regs);
+
+  // JMP (abs,X) = 6 cycles (5 bus + 1 internal) + LDA = 2 bus
+  //             = 7 × 8 + 1 × 6 = 62 master cycles.
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 62);
+
+  REQUIRE(r.completed_cycles == 62);
+  REQUIRE(f.cpu.GetRegs().PC == 0x8022);
+  REQUIRE(f.cpu.GetRegs().PBR == 0x00);
+  REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x77);
+}
+
+TEST_CASE("ASL dp 8-bit shifts memory and sets carry", "[cpu][opcode][rmw]") {
+  ResetFixture f;
+  // ASL $10 with DP=0 → effective addr $0010.
+  f.LoadInstruction({0x06, 0x10});
+
+  f.cpu.Reset();
+  f.wram.WriteRegister(0x0010, 0x81, 0);
+
+  // ASL dp 8-bit = 5 cycles = 4 bus × 8 + 1 internal × 6 = 38 master cycles.
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 38);
+
+  REQUIRE(r.completed_cycles == 38);
+  REQUIRE(f.wram.ReadRegister(0x0010, 0).value == 0x02);  // 0x81 << 1 = 0x102 → 0x02
+  REQUIRE(f.cpu.GetRegs().P.C == true);                    // bit 7 went to C
+}
+
+TEST_CASE("INC abs 8-bit increments memory", "[cpu][opcode][rmw]") {
+  ResetFixture f;
+  // INC $1234
+  f.LoadInstruction({0xEE, 0x34, 0x12});
+
+  f.cpu.Reset();
+  f.wram.WriteRegister(0x1234, 0x7F, 0);
+
+  // INC abs 8-bit = 6 cycles = 5 bus × 8 + 1 internal × 6 = 46 master cycles.
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 46);
+
+  REQUIRE(r.completed_cycles == 46);
+  REQUIRE(f.wram.ReadRegister(0x1234, 0).value == 0x80);
+  REQUIRE(f.cpu.GetRegs().P.N == true);
+}
+
+TEST_CASE("DEC abs 16-bit decrements 16-bit memory", "[cpu][opcode][rmw]") {
+  ResetFixture f;
+  // DEC $1234 with M=0
+  f.LoadInstruction({0xCE, 0x34, 0x12});
+
+  f.cpu.Reset();
+  f.ModifyRegs([](auto& r) {
+    r.P.E = false;
+    r.P.M = false;
+  });
+  f.wram.WriteRegister(0x1234, 0x00, 0);
+  f.wram.WriteRegister(0x1235, 0x01, 0);  // 16-bit value 0x0100
+
+  // DEC abs 16-bit = 8 cycles = 7 bus × 8 + 1 internal × 6 = 62 master cycles.
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 62);
+
+  REQUIRE(r.completed_cycles == 62);
+  REQUIRE(f.wram.ReadRegister(0x1234, 0).value == 0xFF);
+  REQUIRE(f.wram.ReadRegister(0x1235, 0).value == 0x00);  // 0x0100 - 1 = 0x00FF
+}
+
+TEST_CASE("ROL dp,X 8-bit rotates memory through carry", "[cpu][opcode][rmw]") {
+  ResetFixture f;
+  // ROL $10,X with X=$02, DP=0 → effective addr $0012. C=1 rotates into bit 0.
+  f.LoadInstruction({0x36, 0x10});
+
+  f.cpu.Reset();
+  f.ModifyRegs([](auto& r) {
+    r.X = 0x0002;
+    r.P.C = true;
+  });
+  f.wram.WriteRegister(0x0012, 0x40, 0);
+
+  // ROL dp,X 8-bit = 6 cycles = 5 bus × 8 + 1 internal × 6 = 46 master cycles.
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 46);
+
+  REQUIRE(r.completed_cycles == 46);
+  REQUIRE(f.wram.ReadRegister(0x0012, 0).value == 0x81);  // (0x40 << 1) | 1 = 0x81
+  REQUIRE(f.cpu.GetRegs().P.C == false);                   // bit 7 of original (0x40) was 0
+}
+
+TEST_CASE("ASL abs,X 16-bit shifts 16-bit memory", "[cpu][opcode][rmw]") {
+  ResetFixture f;
+  // ASL $1230,X with X=4, M=0 → effective addr $1234.
+  f.LoadInstruction({0x1E, 0x30, 0x12});
+
+  f.cpu.Reset();
+  f.ModifyRegs([](auto& r) {
+    r.P.E = false;
+    r.P.M = false;
+    r.X = 0x0004;
+  });
+  f.wram.WriteRegister(0x1234, 0x00, 0);
+  f.wram.WriteRegister(0x1235, 0x80, 0);  // 16-bit value 0x8000
+
+  // ASL abs,X 16-bit = 9 cycles = 8 bus × 8 + 1 internal × 6 = 70 master cycles.
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 70);
+
+  REQUIRE(r.completed_cycles == 70);
+  REQUIRE(f.wram.ReadRegister(0x1234, 0).value == 0x00);
+  REQUIRE(f.wram.ReadRegister(0x1235, 0).value == 0x00);  // 0x8000 << 1 = 0x10000 → 0x0000
+  REQUIRE(f.cpu.GetRegs().P.C == true);
+  REQUIRE(f.cpu.GetRegs().P.Z == true);
+}
+
+TEST_CASE("JSR (abs,X) pushes return address and jumps through pointer", "[cpu][opcode]") {
+  TestFixture f;
+  // $8000: JSR ($80FE,X) with X=$02 → pointer at $00:8100 = $8020
+  // Target at $8020: LDA #$88 ; RTS
+  f.LoadAt(0, {0xFC, 0xFE, 0x80, 0xA9, 0x11});
+  f.LoadAt(0x100, {0x20, 0x80});
+  f.LoadAt(0x20, {0xA9, 0x88, 0x60});
+  auto regs = f.cpu.GetRegs();
+  regs.X = 0x0002;
+  f.cpu.SetRegs(regs);
+
+  // Master-cycle breakdown:
+  //   JSR (abs,X): 8 cycles = 7 bus (8 each) + 1 internal (6) = 62
+  //   LDA #$88:    2 bus = 16
+  //   RTS:         6 cycles = 3 bus (8 each) + 3 internal (6 each) = 42
+  //   LDA #$11:    16
+  //   Total:       136 master cycles
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 136);
+
+  REQUIRE(r.completed_cycles == 136);
+  // After JSR ($80FE,X) → $8020, LDA #$88, RTS to $8003, LDA #$11 → A=$11.
+  REQUIRE(f.cpu.GetRegs().PC == 0x8005);
+  REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x11);
+  REQUIRE(f.cpu.GetRegs().SP == 0x01FF);
+}
+
 TEST_CASE("TXY transfers X to Y using the index width", "[cpu][opcode]") {
   TestFixture f;
   f.LoadAt(0, {0x9B});

@@ -268,17 +268,18 @@ void UploadBackOverlayToTexture(const Ppu& ppu) {
   glPixelStorei(GL_UNPACK_ALIGNMENT, previous_unpack_alignment);
 }
 
-void DrawFramebufferPreview(const Ppu& ppu, bool paused) {
+void DrawFramebufferPreview(const Ppu& ppu, bool show_in_progress, const char* overlay_note) {
   const FrameBufferView view = ppu.BuildFrontView();
   if (view.pixels == nullptr || view.width == 0 || view.height == 0) {
     ImGui::TextDisabled("(no frame yet)");
     return;
   }
 
-  // When paused: upload front DARKENED (dim ghost of previous frame) as the
-  // base layer, then composite the in-progress back-buffer at full color on top.
-  // When running: upload front at full color with no overlay.
-  UploadFrameToTexture(view, /*darkened=*/paused);
+  // When the in-progress overlay is active (paused or slow-mo): upload front
+  // DARKENED (dim ghost of previous frame) as the base layer, then composite
+  // the in-progress back-buffer at full color on top. Otherwise: upload front
+  // at full color with no overlay.
+  UploadFrameToTexture(view, /*darkened=*/show_in_progress);
   const PreviewTexture& front = GetPreviewTexture();
   if (front.id == 0) {
     ImGui::TextDisabled("(texture unavailable)");
@@ -294,7 +295,7 @@ void DrawFramebufferPreview(const Ppu& ppu, bool paused) {
   const ImVec2 cursor = ImGui::GetCursorScreenPos();
   ImGui::Image(static_cast<ImTextureID>(static_cast<intptr_t>(front.id)), ImVec2(w, h));
 
-  if (paused) {
+  if (show_in_progress) {
     UploadBackOverlayToTexture(ppu);
     const PreviewTexture& overlay = GetOverlayTexture();
     if (overlay.id != 0) {
@@ -306,7 +307,7 @@ void DrawFramebufferPreview(const Ppu& ppu, bool paused) {
 
   ImGui::Text("%ux%u (%s)%s", view.width, view.height,
               ppu.IsOverscan() || ppu.GetForceOverscanDraw() ? "overscan" : "standard",
-              paused ? "  [paused: previous frame dimmed; in-progress highlighted]" : "");
+              show_in_progress ? overlay_note : "");
 }
 
 }  // namespace
@@ -334,7 +335,10 @@ void RenderPpuPanel(DebuggerApp& app) {
 
   if (ImGui::CollapsingHeader("Framebuffer", ImGuiTreeNodeFlags_DefaultOpen)) {
     const bool paused = app.GetRunControl().GetState() == RunState::kPaused;
-    DrawFramebufferPreview(ppu, paused);
+    const bool slow_mo = app.GetUiState().speed_multiplier < 0.25F;
+    const char* note = paused ? "  [paused: previous frame dimmed; in-progress highlighted]"
+                              : "  [slow-mo: in-progress frame overlay]";
+    DrawFramebufferPreview(ppu, paused || slow_mo, note);
   }
 
   ImGui::End();

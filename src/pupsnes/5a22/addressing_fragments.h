@@ -174,6 +174,49 @@ constexpr CycleFragment FetchDirectIndirect() {
       .Build();
 }
 
+// Direct indexed indirect X: add X to addr (bank-0 wrap), then read a 2-byte
+// pointer at the indexed DP address and assemble into DBR:(high:low). Three
+// additional cycles on top of FetchDirectPage. Used by (dp,X) addressing.
+// Cycle formula 7-m+w (Bruce Clark §6.1.1.1) — X add bank-wraps in the DP
+// arithmetic per 65C816 (DP + X stays in bank 0 even on overflow).
+constexpr CycleFragment FetchDirectIndexedIndirectX() {
+  return Fragment()
+      .Then(CycleSlotSpec{
+          MicroBusAction::kNone,
+          MicroInternalOp::kAddIndexToAddr,
+          Always(),
+          "add X to DP addr",
+          micro_op_params::PackAddIndex(Reg::kX, /*bank_wrap=*/true),
+      })
+      .Then(
+          CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kStashIndirectLow, Always(), "read pointer low", 0})
+      .Then(CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kFormAddrFromScratchDbr, Always(),
+                          "read pointer high, assemble", 0})
+      .Build();
+}
+
+// Direct indirect indexed Y: read a 2-byte pointer from bank 0 (DP-derived
+// addr), assemble into DBR:(high:low), then add Y with 24-bit carry into the
+// bank byte. Three additional cycles on top of FetchDirectPage. Used by
+// (dp),Y addressing. Always pays the index-add cycle (matches the abs,X
+// model — overcounts the no-page-cross case by one cycle, awaiting a future
+// kIndexedPageCrossed condition).
+constexpr CycleFragment FetchDirectIndirectIndexedY() {
+  return Fragment()
+      .Then(
+          CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kStashIndirectLow, Always(), "read pointer low", 0})
+      .Then(CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kFormAddrFromScratchDbr, Always(),
+                          "read pointer high, assemble", 0})
+      .Then(CycleSlotSpec{
+          MicroBusAction::kNone,
+          MicroInternalOp::kAddIndexToAddr,
+          Always(),
+          "add Y to addr",
+          micro_op_params::PackAddIndex(Reg::kY, /*bank_wrap=*/false),
+      })
+      .Build();
+}
+
 // Direct indirect long: read a 3-byte pointer from bank 0 and assemble into
 // bank:(high:low) using the bank byte from memory (not DBR). Three additional
 // cycles on top of FetchDirectPage. Used by [dp] addressing.
@@ -185,6 +228,139 @@ constexpr CycleFragment FetchDirectIndirectLong() {
                           0})
       .Then(CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kFormAddrFromScratchBank, Always(),
                           "read pointer bank, assemble", 0})
+      .Build();
+}
+
+// Direct indirect long indexed Y: read a 3-byte pointer from bank 0 (DP-derived
+// addr), assemble bank:high:low, and add Y with 24-bit carry into the bank
+// byte — all in three cycles. The Y add is folded into the bank-fetch cycle
+// via PackFormAddrFromScratchBank(with_y_add=true), matching Bruce Clark's
+// "7-m+w" formula exactly (no separate index-add cycle). Used by [dp],Y
+// addressing.
+constexpr CycleFragment FetchDirectIndirectLongIndexedY() {
+  return Fragment()
+      .Then(
+          CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kStashIndirectLow, Always(), "read pointer low", 0})
+      .Then(CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kStashIndirectHigh, Always(), "read pointer high",
+                          0})
+      .Then(CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kFormAddrFromScratchBank, Always(),
+                          "read pointer bank, assemble + add Y",
+                          micro_op_params::PackFormAddrFromScratchBank(/*with_y_add=*/true)})
+      .Build();
+}
+
+// Stack-relative indirect indexed Y: composed after FetchStackRelative (which
+// leaves addr_ = bank 0 : (SP + offset)). Reads a 2-byte pointer from bank 0,
+// assembles into DBR:(high:low), then adds Y with 24-bit carry. Three
+// additional cycles on top of FetchStackRelative. Used by (sr,S),Y addressing
+// (Bruce Clark §5.21; cycle formula 8-m). Structurally identical to
+// FetchDirectIndirectIndexedY — both read a 16-bit bank-0 pointer and add Y —
+// but named for clarity at the call site.
+constexpr CycleFragment FetchStackRelativeIndirectIndexedY() {
+  return Fragment()
+      .Then(
+          CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kStashIndirectLow, Always(), "read pointer low", 0})
+      .Then(CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kFormAddrFromScratchDbr, Always(),
+                          "read pointer high, assemble", 0})
+      .Then(CycleSlotSpec{
+          MicroBusAction::kNone,
+          MicroInternalOp::kAddIndexToAddr,
+          Always(),
+          "add Y to addr",
+          micro_op_params::PackAddIndex(Reg::kY, /*bank_wrap=*/false),
+      })
+      .Build();
+}
+
+// JMP (abs): fetch 16-bit operand forming a bank-0 pointer address, then
+// read the 2-byte destination and jump within the current program bank.
+// Cycle formula 5 (Bruce Clark §6.2.2.1 — 5C opcode is JMP long; 6C is JMP
+// (abs)). Four remaining cycles on top of the opcode fetch:
+//   1. fetch pointer low
+//   2. fetch pointer high, force bank=0
+//   3. read pointer low + stash
+//   4. read pointer high + set PC = fetch:scratch_low (PBR unchanged).
+// Pointer reads happen in bank 0 regardless of PBR (per 65C816 spec).
+constexpr CycleFragment FetchJumpAbsoluteIndirect() {
+  return Fragment()
+      .Then(FetchAddrByte(ByteSel::kLow, false, Always(), "fetch pointer low"))
+      .Then(CycleSlotSpec{
+          MicroBusAction::kFetchPc,
+          MicroInternalOp::kSetAddrByteFromFetch,
+          Always(),
+          "fetch pointer high, bank=0",
+          micro_op_params::PackSetAddrByte(ByteSel::kHigh, BankSrc::kZero),
+      })
+      .Then(CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kStashIndirectLow, Always(),
+                          "read target low", 0})
+      .Then(CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kSetPcFromScratchAndFetch, Always(),
+                          "read target high, set PC",
+                          /*with_pbr=*/0})
+      .Build();
+}
+
+// JMP [abs]: like JMP (abs) but with a 24-bit pointer. Cycle count 6
+// (Bruce Clark §6.2.2.1, DC opcode). Five remaining cycles:
+//   1. fetch pointer low
+//   2. fetch pointer high, force bank=0
+//   3. read pointer low + stash
+//   4. read pointer high + stash
+//   5. read pointer bank + set PC = scratch[15:0], PBR = fetch_data_.
+// The final cycle uses kSetPcFromScratchAndFetch(with_pbr=true) to route the
+// just-fetched bank byte into PBR.
+constexpr CycleFragment FetchJumpAbsoluteIndirectLong() {
+  return Fragment()
+      .Then(FetchAddrByte(ByteSel::kLow, false, Always(), "fetch pointer low"))
+      .Then(CycleSlotSpec{
+          MicroBusAction::kFetchPc,
+          MicroInternalOp::kSetAddrByteFromFetch,
+          Always(),
+          "fetch pointer high, bank=0",
+          micro_op_params::PackSetAddrByte(ByteSel::kHigh, BankSrc::kZero),
+      })
+      .Then(CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kStashIndirectLow, Always(),
+                          "read target low", 0})
+      .Then(CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kStashIndirectHigh, Always(),
+                          "read target high", 0})
+      .Then(CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kSetPcFromScratchAndFetch, Always(),
+                          "read target bank, set PC+PBR",
+                          /*with_pbr=*/1})
+      .Build();
+}
+
+// JMP/JSR (abs,X): fetch 16-bit operand, add X with bank-wrap in PBR,
+// then read the 2-byte destination. Five extra cycles on top of the base
+// opcode fetch (and push phase for JSR). Pointer reads happen in PBR
+// (K:(HHLL+X)) per Bruce Clark §5.5.
+// This helper covers the pointer-fetch sequence; callers prepend JSR's
+// push phase as needed. Cycle count contribution:
+//   1. fetch pointer low
+//   2. fetch pointer high, bank=PBR
+//   3. internal add X (bank-wrap within PBR)
+//   4. read pointer low + stash
+//   5. read pointer high + set PC = fetch:scratch_low (PBR unchanged).
+constexpr CycleFragment FetchJumpAbsoluteIndexedIndirectX() {
+  return Fragment()
+      .Then(FetchAddrByte(ByteSel::kLow, false, Always(), "fetch pointer low"))
+      .Then(CycleSlotSpec{
+          MicroBusAction::kFetchPc,
+          MicroInternalOp::kSetAddrByteFromFetch,
+          Always(),
+          "fetch pointer high, bank=PBR",
+          micro_op_params::PackSetAddrByte(ByteSel::kHigh, BankSrc::kPbr),
+      })
+      .Then(CycleSlotSpec{
+          MicroBusAction::kNone,
+          MicroInternalOp::kAddIndexToAddr,
+          Always(),
+          "add X to pointer",
+          micro_op_params::PackAddIndex(Reg::kX, /*bank_wrap=*/true),
+      })
+      .Then(CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kStashIndirectLow, Always(),
+                          "read target low", 0})
+      .Then(CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kSetPcFromScratchAndFetch, Always(),
+                          "read target high, set PC",
+                          /*with_pbr=*/0})
       .Build();
 }
 
@@ -241,6 +417,45 @@ constexpr CycleFragment StoreRegToAddr(WriteSrc src, TimingCondition wide_cond) 
   return Fragment()
       .Then(WriteRegByte(src, ByteSel::kLow, MicroInternalOp::kModifyAddr, Always(), "write low"))
       .Then(WriteRegByte(src, ByteSel::kHigh, MicroInternalOp::kNone, Condition(wide_cond), "write high"))
+      .Build();
+}
+
+// Read-modify-write through addr_. Covers ASL/LSR/ROL/ROR/INC/DEC on memory.
+// Width follows the M flag and is dispatched dynamically by kRmwMem rather
+// than encoded into separate slots; this keeps the total slot count to 5
+// (3 unconditional + 2 gated on kAccumulator16) so the helper composes with
+// FetchAbsoluteIndexed (3 slots) and FetchDirectPageIndexed (3 slots) without
+// overflowing kMaxRemainingOps = 8.
+//
+// Cycle sequence, 8-bit (M=1): read → modify → write. 3 cycles.
+// Cycle sequence, 16-bit (M=0): read-lo → read-hi → modify → write-hi →
+// write-lo. 5 cycles.
+//
+// kRmwMem rolls addr_ back by one in the 8-bit path so the subsequent paired
+// write cycle (kWriteRegByte + kModifyAddr(decrement)) lands at the original
+// effective address. In 16-bit the stash/advance on the first read leaves
+// addr_ pointing at the high byte, so the same paired write emits high first,
+// decrements, and the conditional final slot writes the low byte from
+// addr_scratch_.
+constexpr CycleFragment ReadModifyWriteFromAddr(RmwOp op) {
+  // Shared-params trick: kWriteRegByte reads bits [3:0]; kModifyAddr reads
+  // bit 4 for decrement. Combine the two so a single params byte encodes both.
+  constexpr auto kPackWriteDec = [](WriteSrc src) {
+    return static_cast<uint8_t>(micro_op_params::PackWriteAddr(src, ByteSel::kLow) |
+                                micro_op_params::PackModifyAddr(/*increment=*/false));
+  };
+  return Fragment()
+      .Then(CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kStashIndirectLow, Always(),
+                          "read byte / low", 0})
+      .Then(CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kNone,
+                          Condition(TimingCondition::kAccumulator16), "read high (16-bit)", 0})
+      .Then(CycleSlotSpec{MicroBusAction::kNone, MicroInternalOp::kRmwMem, Always(), "modify",
+                          micro_op_params::PackRmw(op)})
+      .Then(CycleSlotSpec{MicroBusAction::kWriteRegByte, MicroInternalOp::kModifyAddr, Always(),
+                          "write byte / high, dec", kPackWriteDec(WriteSrc::kFetchData)})
+      .Then(CycleSlotSpec{MicroBusAction::kWriteRegByte, MicroInternalOp::kNone,
+                          Condition(TimingCondition::kAccumulator16), "write low (16-bit)",
+                          micro_op_params::PackWriteAddr(WriteSrc::kScratchLow, ByteSel::kLow)})
       .Build();
 }
 

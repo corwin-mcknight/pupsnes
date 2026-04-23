@@ -505,6 +505,10 @@ void CPU::ExecuteInternalOp(MicroInternalOp op, [[maybe_unused]] uint8_t params)
       const uint32_t high = static_cast<uint32_t>(addr_scratch_ & 0xFF00U);
       const uint32_t bank = static_cast<uint32_t>(fetch_data_) << 16U;
       addr_ = bank | high | low;
+      if (mp::UnpackFormAddrFromScratchBankWithYAdd(params)) {
+        const uint16_t index = IsIndex16Bit(regs_) ? regs_.Y : static_cast<uint16_t>(regs_.Y & 0x00FFU);
+        addr_ = (addr_ + index) & 0x00FFFFFFU;
+      }
       return;
     }
 
@@ -512,8 +516,17 @@ void CPU::ExecuteInternalOp(MicroInternalOp op, [[maybe_unused]] uint8_t params)
       const Reg reg = mp::UnpackAddIndex(params);
       const uint16_t index = (reg == Reg::kY) ? regs_.Y : regs_.X;
       const uint16_t masked = IsIndex16Bit(regs_) ? index : static_cast<uint16_t>(index & 0x00FFU);
-      const uint32_t sum = addr_ + static_cast<uint32_t>(masked);
-      addr_ = mp::UnpackAddIndexBankWrap(params) ? (sum & 0x0000FFFFU) : (sum & 0x00FFFFFFU);
+      if (mp::UnpackAddIndexBankWrap(params)) {
+        // Preserve the original bank byte; wrap the add within the existing
+        // bank. Required by direct-page-indexed (bank always 0) and by
+        // (abs,X) indirect (bank = PBR — the pointer fetch stays in the
+        // program bank even if the low 16 bits overflow).
+        const uint32_t bank = addr_ & 0x00FF0000U;
+        const uint32_t low = (addr_ + static_cast<uint32_t>(masked)) & 0x0000FFFFU;
+        addr_ = bank | low;
+      } else {
+        addr_ = (addr_ + static_cast<uint32_t>(masked)) & 0x00FFFFFFU;
+      }
       return;
     }
 
@@ -522,9 +535,20 @@ void CPU::ExecuteInternalOp(MicroInternalOp op, [[maybe_unused]] uint8_t params)
       const unsigned shift = (sel == ByteSel::kLow) ? 0U : (sel == ByteSel::kHigh) ? 8U : 16U;
       const uint32_t mask = ~(uint32_t{0xFFU} << shift) & 0xFFFFFFU;
       addr_ = (addr_ & mask) | (static_cast<uint32_t>(fetch_data_) << shift);
-      // from_dbr is only meaningful with kHigh: also set bank byte from DBR.
-      if (sel == ByteSel::kHigh && mp::UnpackSetAddrFromDbr(params)) {
-        addr_ = (addr_ & 0x00FFFFU) | (static_cast<uint32_t>(regs_.DBR) << 16U);
+      // BankSrc is only meaningful with kHigh; the bank byte is written
+      // alongside the high byte when a source other than kLeave is requested.
+      if (sel == ByteSel::kHigh) {
+        const BankSrc bank_src = mp::UnpackSetAddrBankSrc(params);
+        switch (bank_src) {
+          case BankSrc::kLeave: break;
+          case BankSrc::kDbr:
+            addr_ = (addr_ & 0x00FFFFU) | (static_cast<uint32_t>(regs_.DBR) << 16U);
+            break;
+          case BankSrc::kPbr:
+            addr_ = (addr_ & 0x00FFFFU) | (static_cast<uint32_t>(regs_.PBR) << 16U);
+            break;
+          case BankSrc::kZero: addr_ = addr_ & 0x00FFFFU; break;
+        }
       }
       return;
     }
@@ -629,6 +653,24 @@ void CPU::ExecuteInternalOp(MicroInternalOp op, [[maybe_unused]] uint8_t params)
       return;
     }
 
+    case MicroInternalOp::kSetPcFromScratchAndFetch: {
+      // Final cycle of indirect-jump addressing modes. The prior cycles
+      // stashed pointer bytes into addr_scratch_; this cycle's kReadAddr
+      // filled fetch_data_ with the final pointer byte. with_pbr = true for
+      // [abs] (24-bit pointer — PBR gets fetch_data_, PC gets scratch
+      // [15:0]); with_pbr = false for (abs) / (abs,X) (16-bit pointer — PC
+      // gets fetch_data_:scratch_low, PBR unchanged).
+      const bool with_pbr = (params & 0x01U) != 0U;
+      if (with_pbr) {
+        regs_.PC = static_cast<uint16_t>(addr_scratch_ & 0xFFFFU);
+        regs_.PBR = fetch_data_;
+      } else {
+        const uint16_t scratch_low = static_cast<uint16_t>(addr_scratch_ & 0x00FFU);
+        regs_.PC = static_cast<uint16_t>((static_cast<uint16_t>(fetch_data_) << 8U) | scratch_low);
+      }
+      return;
+    }
+
     case MicroInternalOp::kShiftRotateA: {
       const ShiftOp sop = static_cast<ShiftOp>(params & 0x03U);
       const bool wide = IsAccumulator16Bit(regs_);
@@ -661,6 +703,74 @@ void CPU::ExecuteInternalOp(MicroInternalOp op, [[maybe_unused]] uint8_t params)
       regs_.P.Z = (result == 0U);
       regs_.P.N = (result & sign) != 0U;
       regs_.A = static_cast<uint16_t>((regs_.A & a_keep) | (result & mask));
+      return;
+    }
+
+    case MicroInternalOp::kRmwMem: {
+      // Memory RMW. Width follows M flag. 8-bit path consumes fetch_data_ (the
+      // byte read this instruction), rewrites it in place, and backs addr_ up
+      // by 1 so the paired write cycle emits at the original effective
+      // address. 16-bit path consumes addr_scratch_[7:0] (low byte, stashed
+      // earlier) + fetch_data_ (high byte just read) as a 16-bit operand;
+      // writes new_high back to fetch_data_ and new_low back to
+      // addr_scratch_[7:0], leaving addr_ at the high-byte address so the
+      // paired write emits high-first-then-low.
+      const RmwOp rop = static_cast<RmwOp>(params & 0x07U);
+      const bool wide = IsAccumulator16Bit(regs_);
+      const uint16_t mask = wide ? 0xFFFFU : 0x00FFU;
+      const uint16_t sign = wide ? 0x8000U : 0x0080U;
+      const uint32_t operand =
+          wide ? static_cast<uint32_t>((static_cast<uint32_t>(fetch_data_) << 8U) | (addr_scratch_ & 0x00FFU))
+               : static_cast<uint32_t>(fetch_data_);
+      uint32_t result = 0;
+      bool carry_out = false;
+      switch (rop) {
+        case RmwOp::kAsl:
+          carry_out = (operand & sign) != 0U;
+          result = (operand << 1U) & mask;
+          break;
+        case RmwOp::kLsr:
+          carry_out = (operand & 0x0001U) != 0U;
+          result = (operand >> 1U) & mask;
+          break;
+        case RmwOp::kRol:
+          carry_out = (operand & sign) != 0U;
+          result = ((operand << 1U) | (regs_.P.C ? 1U : 0U)) & mask;
+          break;
+        case RmwOp::kRor:
+          carry_out = (operand & 0x0001U) != 0U;
+          result = ((operand >> 1U) | (regs_.P.C ? static_cast<uint32_t>(sign) : 0U)) & mask;
+          break;
+        case RmwOp::kInc:
+          result = (operand + 1U) & mask;
+          // INC/DEC do NOT touch C.
+          carry_out = regs_.P.C;
+          break;
+        case RmwOp::kDec:
+          result = (operand + mask) & mask;  // +mask == -1 modulo mask+1
+          carry_out = regs_.P.C;
+          break;
+      }
+      // Shift/rotate ops update C; INC/DEC leave it alone (carry_out preset).
+      if (rop == RmwOp::kAsl || rop == RmwOp::kLsr || rop == RmwOp::kRol || rop == RmwOp::kRor) {
+        regs_.P.C = carry_out;
+      }
+      regs_.P.Z = (result == 0U);
+      regs_.P.N = (result & sign) != 0U;
+
+      if (wide) {
+        fetch_data_ = static_cast<uint8_t>((result >> 8U) & 0xFFU);
+        addr_scratch_ = static_cast<uint16_t>((addr_scratch_ & 0xFF00U) | (result & 0x00FFU));
+        // addr_ stays at the high-byte address — paired writes go high, dec, low.
+      } else {
+        fetch_data_ = static_cast<uint8_t>(result & 0xFFU);
+        // Back up addr_ so the paired write cycle (which pairs kWriteRegByte
+        // with kModifyAddr(decrement)) lands at the original effective
+        // address. Without this roll-back the write would go to addr+1
+        // because 8-bit RMW is emitted after a kStashIndirectLow (shared with
+        // the 16-bit path) that advanced addr_ past the byte.
+        addr_ = (addr_ + 0xFFFFFFU) & 0xFFFFFFU;
+      }
       return;
     }
 
@@ -844,6 +954,7 @@ TickResult CPU::PerformBusAction(MicroBusAction action, [[maybe_unused]] uint8_t
           byte = (sel == ByteSel::kLow) ? static_cast<uint8_t>(regs_.Y) : static_cast<uint8_t>(regs_.Y >> 8U);
           break;
         case WriteSrc::kZero: byte = 0; break;
+        case WriteSrc::kScratchLow: byte = static_cast<uint8_t>(addr_scratch_ & 0x00FFU); break;
       }
       return BusWrite(addr_, byte, cycle_time);
     }

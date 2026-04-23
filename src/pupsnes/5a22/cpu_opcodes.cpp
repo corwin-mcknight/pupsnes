@@ -562,6 +562,120 @@ constexpr auto MakeShiftSpecs() {
   };
 }
 
+// Memory read-modify-write on direct-page / absolute / DP,X / abs,X —
+// ASL/LSR/ROL/ROR/INC/DEC. Cycle formulas (Bruce Clark §6.2.1.1 / §6.2.3):
+//   dp:     7 - 2m + w   (5 at m=1, 7 at m=0, +1 DP low-nonzero)
+//   abs:    8 - 2m       (6 at m=1, 8 at m=0)
+//   dp,X:   8 - 2m + w
+//   abs,X:  9 - 2m
+// All paths: Fetch* address computation + ReadModifyWriteFromAddr.
+constexpr auto MakeRmwMemSpecs() {
+  return std::array{
+      // ASL dp/abs/dp,X/abs,X
+      Opcode(0x06, "ASL", "direct page")
+          .Then(FetchDirectPage())
+          .Then(ReadModifyWriteFromAddr(RmwOp::kAsl))
+          .Build(),
+      Opcode(0x0E, "ASL", "absolute")
+          .Then(FetchAbsolute())
+          .Then(ReadModifyWriteFromAddr(RmwOp::kAsl))
+          .Build(),
+      Opcode(0x16, "ASL", "direct page indexed X")
+          .Then(FetchDirectPageIndexed(Reg::kX))
+          .Then(ReadModifyWriteFromAddr(RmwOp::kAsl))
+          .Build(),
+      Opcode(0x1E, "ASL", "absolute indexed X")
+          .Then(FetchAbsoluteIndexed(Reg::kX))
+          .Then(ReadModifyWriteFromAddr(RmwOp::kAsl))
+          .Build(),
+      // LSR
+      Opcode(0x46, "LSR", "direct page")
+          .Then(FetchDirectPage())
+          .Then(ReadModifyWriteFromAddr(RmwOp::kLsr))
+          .Build(),
+      Opcode(0x4E, "LSR", "absolute")
+          .Then(FetchAbsolute())
+          .Then(ReadModifyWriteFromAddr(RmwOp::kLsr))
+          .Build(),
+      Opcode(0x56, "LSR", "direct page indexed X")
+          .Then(FetchDirectPageIndexed(Reg::kX))
+          .Then(ReadModifyWriteFromAddr(RmwOp::kLsr))
+          .Build(),
+      Opcode(0x5E, "LSR", "absolute indexed X")
+          .Then(FetchAbsoluteIndexed(Reg::kX))
+          .Then(ReadModifyWriteFromAddr(RmwOp::kLsr))
+          .Build(),
+      // ROL
+      Opcode(0x26, "ROL", "direct page")
+          .Then(FetchDirectPage())
+          .Then(ReadModifyWriteFromAddr(RmwOp::kRol))
+          .Build(),
+      Opcode(0x2E, "ROL", "absolute")
+          .Then(FetchAbsolute())
+          .Then(ReadModifyWriteFromAddr(RmwOp::kRol))
+          .Build(),
+      Opcode(0x36, "ROL", "direct page indexed X")
+          .Then(FetchDirectPageIndexed(Reg::kX))
+          .Then(ReadModifyWriteFromAddr(RmwOp::kRol))
+          .Build(),
+      Opcode(0x3E, "ROL", "absolute indexed X")
+          .Then(FetchAbsoluteIndexed(Reg::kX))
+          .Then(ReadModifyWriteFromAddr(RmwOp::kRol))
+          .Build(),
+      // ROR
+      Opcode(0x66, "ROR", "direct page")
+          .Then(FetchDirectPage())
+          .Then(ReadModifyWriteFromAddr(RmwOp::kRor))
+          .Build(),
+      Opcode(0x6E, "ROR", "absolute")
+          .Then(FetchAbsolute())
+          .Then(ReadModifyWriteFromAddr(RmwOp::kRor))
+          .Build(),
+      Opcode(0x76, "ROR", "direct page indexed X")
+          .Then(FetchDirectPageIndexed(Reg::kX))
+          .Then(ReadModifyWriteFromAddr(RmwOp::kRor))
+          .Build(),
+      Opcode(0x7E, "ROR", "absolute indexed X")
+          .Then(FetchAbsoluteIndexed(Reg::kX))
+          .Then(ReadModifyWriteFromAddr(RmwOp::kRor))
+          .Build(),
+      // INC
+      Opcode(0xE6, "INC", "direct page")
+          .Then(FetchDirectPage())
+          .Then(ReadModifyWriteFromAddr(RmwOp::kInc))
+          .Build(),
+      Opcode(0xEE, "INC", "absolute")
+          .Then(FetchAbsolute())
+          .Then(ReadModifyWriteFromAddr(RmwOp::kInc))
+          .Build(),
+      Opcode(0xF6, "INC", "direct page indexed X")
+          .Then(FetchDirectPageIndexed(Reg::kX))
+          .Then(ReadModifyWriteFromAddr(RmwOp::kInc))
+          .Build(),
+      Opcode(0xFE, "INC", "absolute indexed X")
+          .Then(FetchAbsoluteIndexed(Reg::kX))
+          .Then(ReadModifyWriteFromAddr(RmwOp::kInc))
+          .Build(),
+      // DEC
+      Opcode(0xC6, "DEC", "direct page")
+          .Then(FetchDirectPage())
+          .Then(ReadModifyWriteFromAddr(RmwOp::kDec))
+          .Build(),
+      Opcode(0xCE, "DEC", "absolute")
+          .Then(FetchAbsolute())
+          .Then(ReadModifyWriteFromAddr(RmwOp::kDec))
+          .Build(),
+      Opcode(0xD6, "DEC", "direct page indexed X")
+          .Then(FetchDirectPageIndexed(Reg::kX))
+          .Then(ReadModifyWriteFromAddr(RmwOp::kDec))
+          .Build(),
+      Opcode(0xDE, "DEC", "absolute indexed X")
+          .Then(FetchAbsoluteIndexed(Reg::kX))
+          .Then(ReadModifyWriteFromAddr(RmwOp::kDec))
+          .Build(),
+  };
+}
+
 constexpr auto MakeAluSpecs() {
   return std::array{
       Opcode(0x69, "ADC", "immediate").Then(AluImmediateAccumulator(AluOp::kAdc)).Build(),
@@ -600,12 +714,47 @@ constexpr auto MakeAluSpecs() {
   };
 }
 
+constexpr CycleFragment JsrAbsoluteIndexedIndirectX() {
+  // JSR (abs,X): 8 cycles total. Pushes PCH/PCL of (JSR+2) between the abs
+  // low and abs high fetches, then X-adds (bank-wrapped in PBR) and reads
+  // the 2-byte target through the pointer. Cycle ordering matches the
+  // 65C816's published sequence — see Bruce Clark §6.2.2.1 (FC opcode).
+  return Fragment()
+      .Then(FetchAddrByte(ByteSel::kLow, false, Always(), "fetch pointer low"))
+      .Then(PushRegSlot(PushSrc::kPch, Always(), "push PCH"))
+      .Then(PushRegSlot(PushSrc::kPcl, Always(), "push PCL"))
+      .Then(CycleSlotSpec{
+          MicroBusAction::kFetchPc,
+          MicroInternalOp::kSetAddrByteFromFetch,
+          Always(),
+          "fetch pointer high, bank=PBR",
+          micro_op_params::PackSetAddrByte(ByteSel::kHigh, BankSrc::kPbr),
+      })
+      .Then(CycleSlotSpec{
+          MicroBusAction::kNone,
+          MicroInternalOp::kAddIndexToAddr,
+          Always(),
+          "add X to pointer",
+          micro_op_params::PackAddIndex(Reg::kX, /*bank_wrap=*/true),
+      })
+      .Then(CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kStashIndirectLow, Always(),
+                          "read target low", 0})
+      .Then(CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kSetPcFromScratchAndFetch, Always(),
+                          "read target high, set PC",
+                          /*with_pbr=*/0})
+      .Build();
+}
+
 constexpr auto MakeJumpSpecs() {
   return std::array{
       Opcode(0x4C, "JMP", "absolute").Then(JumpAbsolute()).Build(),
       Opcode(0x5C, "JMP", "absolute long").Then(JumpAbsoluteLong()).Build(),
+      Opcode(0x6C, "JMP", "absolute indirect").Then(FetchJumpAbsoluteIndirect()).Build(),
+      Opcode(0xDC, "JMP", "absolute indirect long").Then(FetchJumpAbsoluteIndirectLong()).Build(),
+      Opcode(0x7C, "JMP", "absolute indexed indirect X").Then(FetchJumpAbsoluteIndexedIndirectX()).Build(),
       Opcode(0x20, "JSR", "absolute").Then(JsrAbsolute()).Build(),
       Opcode(0x22, "JSL", "absolute long").Then(JsrAbsoluteLong()).Build(),
+      Opcode(0xFC, "JSR", "absolute indexed indirect X").Then(JsrAbsoluteIndexedIndirectX()).Build(),
       Opcode(0x60, "RTS", "implied").Then(Rts()).Build(),
       Opcode(0x6B, "RTL", "implied").Then(Rtl()).Build(),
   };
@@ -743,6 +892,79 @@ constexpr auto MakeAluDpxSpecs() {
   };
 }
 
+// ALU (dp) and [dp] indirect specs — 6 ALU mnemonics each (no BIT (dp) or
+// BIT [dp] per Bruce Clark §6.1.1.1). LDA/STA variants (0xB2/0xA7/0x92/0x87)
+// are NOT registered here — they already live in MakeLoadSpecs / MakeStoreSpecs;
+// re-adding would trip the duplicate-byte static_assert. Cycle formulas:
+//   (dp)  → 6-m+w   (FetchDirectPage 1+w + FetchDirectIndirect 2 + AluFromAddr 2-m)
+//   [dp]  → 7-m+w   (FetchDirectPage 1+w + FetchDirectIndirectLong 3 + AluFromAddr 2-m)
+constexpr auto MakeAluIndirectDpSpecs() {
+  return std::array{
+      // ALU (dp) — 6 mnemonics
+      Opcode(0x72, "ADC", "direct indirect")
+          .Then(FetchDirectPage())
+          .Then(FetchDirectIndirect())
+          .Then(AluFromAddr(AluOp::kAdc, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0xF2, "SBC", "direct indirect")
+          .Then(FetchDirectPage())
+          .Then(FetchDirectIndirect())
+          .Then(AluFromAddr(AluOp::kSbc, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0x32, "AND", "direct indirect")
+          .Then(FetchDirectPage())
+          .Then(FetchDirectIndirect())
+          .Then(AluFromAddr(AluOp::kAnd, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0x12, "ORA", "direct indirect")
+          .Then(FetchDirectPage())
+          .Then(FetchDirectIndirect())
+          .Then(AluFromAddr(AluOp::kOra, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0x52, "EOR", "direct indirect")
+          .Then(FetchDirectPage())
+          .Then(FetchDirectIndirect())
+          .Then(AluFromAddr(AluOp::kEor, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0xD2, "CMP", "direct indirect")
+          .Then(FetchDirectPage())
+          .Then(FetchDirectIndirect())
+          .Then(AluFromAddr(AluOp::kCmp, TimingCondition::kAccumulator16))
+          .Build(),
+      // ALU [dp] — 6 mnemonics
+      Opcode(0x67, "ADC", "direct indirect long")
+          .Then(FetchDirectPage())
+          .Then(FetchDirectIndirectLong())
+          .Then(AluFromAddr(AluOp::kAdc, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0xE7, "SBC", "direct indirect long")
+          .Then(FetchDirectPage())
+          .Then(FetchDirectIndirectLong())
+          .Then(AluFromAddr(AluOp::kSbc, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0x27, "AND", "direct indirect long")
+          .Then(FetchDirectPage())
+          .Then(FetchDirectIndirectLong())
+          .Then(AluFromAddr(AluOp::kAnd, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0x07, "ORA", "direct indirect long")
+          .Then(FetchDirectPage())
+          .Then(FetchDirectIndirectLong())
+          .Then(AluFromAddr(AluOp::kOra, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0x47, "EOR", "direct indirect long")
+          .Then(FetchDirectPage())
+          .Then(FetchDirectIndirectLong())
+          .Then(AluFromAddr(AluOp::kEor, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0xC7, "CMP", "direct indirect long")
+          .Then(FetchDirectPage())
+          .Then(FetchDirectIndirectLong())
+          .Then(AluFromAddr(AluOp::kCmp, TimingCondition::kAccumulator16))
+          .Build(),
+  };
+}
+
 // ALU sr,S specs (plan 01-04) — 6 ALU mnemonics (BIT has no sr,S form per
 // Bruce Clark). Cycle formula 5-m per Bruce Clark §6.1.1.1. STA sr,S (0x83)
 // and LDA sr,S (0xA3) are NOT registered here — they already live in
@@ -774,6 +996,57 @@ constexpr auto MakeAluSrSpecs() {
       Opcode(0xC3, "CMP", "stack relative")
           .Then(FetchStackRelative())
           .Then(AluFromAddr(AluOp::kCmp, TimingCondition::kAccumulator16))
+          .Build(),
+  };
+}
+
+// ALU / Load / Store (sr,S),Y specs — Bruce Clark §6.1.1.1 cycle formula
+// 8-m (at m=1 → 7 cycles, at m=0 → 8 cycles). No DL-nonzero penalty; this
+// is a stack-based indirect so the dp "+w" never applies. Composed as
+// FetchStackRelative (3 cycles: offset fetch + internal add) +
+// FetchStackRelativeIndirectIndexedY (3 cycles: read ptr lo/hi + add Y) +
+// operand access (2-m for LDA/ALU, 2 for STA).
+constexpr auto MakeAluSrIndyYSpecs() {
+  return std::array{
+      Opcode(0x73, "ADC", "stack relative indirect indexed Y")
+          .Then(FetchStackRelative())
+          .Then(FetchStackRelativeIndirectIndexedY())
+          .Then(AluFromAddr(AluOp::kAdc, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0xF3, "SBC", "stack relative indirect indexed Y")
+          .Then(FetchStackRelative())
+          .Then(FetchStackRelativeIndirectIndexedY())
+          .Then(AluFromAddr(AluOp::kSbc, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0x33, "AND", "stack relative indirect indexed Y")
+          .Then(FetchStackRelative())
+          .Then(FetchStackRelativeIndirectIndexedY())
+          .Then(AluFromAddr(AluOp::kAnd, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0x13, "ORA", "stack relative indirect indexed Y")
+          .Then(FetchStackRelative())
+          .Then(FetchStackRelativeIndirectIndexedY())
+          .Then(AluFromAddr(AluOp::kOra, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0x53, "EOR", "stack relative indirect indexed Y")
+          .Then(FetchStackRelative())
+          .Then(FetchStackRelativeIndirectIndexedY())
+          .Then(AluFromAddr(AluOp::kEor, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0xD3, "CMP", "stack relative indirect indexed Y")
+          .Then(FetchStackRelative())
+          .Then(FetchStackRelativeIndirectIndexedY())
+          .Then(AluFromAddr(AluOp::kCmp, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0xB3, "LDA", "stack relative indirect indexed Y")
+          .Then(FetchStackRelative())
+          .Then(FetchStackRelativeIndirectIndexedY())
+          .Then(LoadRegFromAddr(Reg::kA, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0x93, "STA", "stack relative indirect indexed Y")
+          .Then(FetchStackRelative())
+          .Then(FetchStackRelativeIndirectIndexedY())
+          .Then(StoreRegToAddr(WriteSrc::kA, TimingCondition::kAccumulator16))
           .Build(),
   };
 }
@@ -819,6 +1092,213 @@ constexpr auto MakeAluAbsXSpecs() {
       Opcode(0xBC, "LDY", "absolute indexed X")
           .Then(FetchAbsoluteIndexed(Reg::kX))
           .Then(LoadRegFromAddr(Reg::kY, TimingCondition::kIndex16))
+          .Build(),
+  };
+}
+
+// ALU / Load / Store (dp,X) indexed-indirect-X specs — 8 mnemonics. Cycle
+// formula 7-m+w (Bruce Clark §6.1.1.1). X is added to DP+offset before the
+// pointer read; X add bank-wraps within bank 0.
+constexpr auto MakeAluIndexedIndirectXSpecs() {
+  return std::array{
+      Opcode(0x61, "ADC", "direct indexed indirect X")
+          .Then(FetchDirectPage())
+          .Then(FetchDirectIndexedIndirectX())
+          .Then(AluFromAddr(AluOp::kAdc, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0xE1, "SBC", "direct indexed indirect X")
+          .Then(FetchDirectPage())
+          .Then(FetchDirectIndexedIndirectX())
+          .Then(AluFromAddr(AluOp::kSbc, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0x21, "AND", "direct indexed indirect X")
+          .Then(FetchDirectPage())
+          .Then(FetchDirectIndexedIndirectX())
+          .Then(AluFromAddr(AluOp::kAnd, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0x01, "ORA", "direct indexed indirect X")
+          .Then(FetchDirectPage())
+          .Then(FetchDirectIndexedIndirectX())
+          .Then(AluFromAddr(AluOp::kOra, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0x41, "EOR", "direct indexed indirect X")
+          .Then(FetchDirectPage())
+          .Then(FetchDirectIndexedIndirectX())
+          .Then(AluFromAddr(AluOp::kEor, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0xC1, "CMP", "direct indexed indirect X")
+          .Then(FetchDirectPage())
+          .Then(FetchDirectIndexedIndirectX())
+          .Then(AluFromAddr(AluOp::kCmp, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0xA1, "LDA", "direct indexed indirect X")
+          .Then(FetchDirectPage())
+          .Then(FetchDirectIndexedIndirectX())
+          .Then(LoadRegFromAddr(Reg::kA, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0x81, "STA", "direct indexed indirect X")
+          .Then(FetchDirectPage())
+          .Then(FetchDirectIndexedIndirectX())
+          .Then(StoreRegToAddr(WriteSrc::kA, TimingCondition::kAccumulator16))
+          .Build(),
+  };
+}
+
+// ALU / Load / Store [dp],Y indirect-long-indexed-Y specs — 8 mnemonics.
+// Cycle formula 7-m+w (Bruce Clark §6.1.1.1). The Y add is folded into the
+// bank-fetch cycle (see FetchDirectIndirectLongIndexedY), so we hit Clark's
+// count exactly with 8 micro-op slots — staying within kMaxRemainingOps=8.
+constexpr auto MakeAluIndirectLongDpYSpecs() {
+  return std::array{
+      Opcode(0x77, "ADC", "direct indirect long indexed Y")
+          .Then(FetchDirectPage())
+          .Then(FetchDirectIndirectLongIndexedY())
+          .Then(AluFromAddr(AluOp::kAdc, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0xF7, "SBC", "direct indirect long indexed Y")
+          .Then(FetchDirectPage())
+          .Then(FetchDirectIndirectLongIndexedY())
+          .Then(AluFromAddr(AluOp::kSbc, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0x37, "AND", "direct indirect long indexed Y")
+          .Then(FetchDirectPage())
+          .Then(FetchDirectIndirectLongIndexedY())
+          .Then(AluFromAddr(AluOp::kAnd, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0x17, "ORA", "direct indirect long indexed Y")
+          .Then(FetchDirectPage())
+          .Then(FetchDirectIndirectLongIndexedY())
+          .Then(AluFromAddr(AluOp::kOra, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0x57, "EOR", "direct indirect long indexed Y")
+          .Then(FetchDirectPage())
+          .Then(FetchDirectIndirectLongIndexedY())
+          .Then(AluFromAddr(AluOp::kEor, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0xD7, "CMP", "direct indirect long indexed Y")
+          .Then(FetchDirectPage())
+          .Then(FetchDirectIndirectLongIndexedY())
+          .Then(AluFromAddr(AluOp::kCmp, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0xB7, "LDA", "direct indirect long indexed Y")
+          .Then(FetchDirectPage())
+          .Then(FetchDirectIndirectLongIndexedY())
+          .Then(LoadRegFromAddr(Reg::kA, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0x97, "STA", "direct indirect long indexed Y")
+          .Then(FetchDirectPage())
+          .Then(FetchDirectIndirectLongIndexedY())
+          .Then(StoreRegToAddr(WriteSrc::kA, TimingCondition::kAccumulator16))
+          .Build(),
+  };
+}
+
+// ALU / Load / Store (dp),Y indirect-indexed-Y specs — 8 mnemonics. Cycle
+// formula 7-m+w in our always-pay-index model (Bruce Clark's "7-m+w-x+x*p"
+// for reads collapses to 7-m+w; STA's formula is already 7-m+w). Composes
+// FetchDirectPage + FetchDirectIndirectIndexedY + LoadRegFromAddr /
+// StoreRegToAddr / AluFromAddr.
+constexpr auto MakeAluIndirectDpYSpecs() {
+  return std::array{
+      Opcode(0x71, "ADC", "direct indirect indexed Y")
+          .Then(FetchDirectPage())
+          .Then(FetchDirectIndirectIndexedY())
+          .Then(AluFromAddr(AluOp::kAdc, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0xF1, "SBC", "direct indirect indexed Y")
+          .Then(FetchDirectPage())
+          .Then(FetchDirectIndirectIndexedY())
+          .Then(AluFromAddr(AluOp::kSbc, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0x31, "AND", "direct indirect indexed Y")
+          .Then(FetchDirectPage())
+          .Then(FetchDirectIndirectIndexedY())
+          .Then(AluFromAddr(AluOp::kAnd, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0x11, "ORA", "direct indirect indexed Y")
+          .Then(FetchDirectPage())
+          .Then(FetchDirectIndirectIndexedY())
+          .Then(AluFromAddr(AluOp::kOra, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0x51, "EOR", "direct indirect indexed Y")
+          .Then(FetchDirectPage())
+          .Then(FetchDirectIndirectIndexedY())
+          .Then(AluFromAddr(AluOp::kEor, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0xD1, "CMP", "direct indirect indexed Y")
+          .Then(FetchDirectPage())
+          .Then(FetchDirectIndirectIndexedY())
+          .Then(AluFromAddr(AluOp::kCmp, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0xB1, "LDA", "direct indirect indexed Y")
+          .Then(FetchDirectPage())
+          .Then(FetchDirectIndirectIndexedY())
+          .Then(LoadRegFromAddr(Reg::kA, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0x91, "STA", "direct indirect indexed Y")
+          .Then(FetchDirectPage())
+          .Then(FetchDirectIndirectIndexedY())
+          .Then(StoreRegToAddr(WriteSrc::kA, TimingCondition::kAccumulator16))
+          .Build(),
+  };
+}
+
+// ALU / Load abs,Y specs — 8 mnemonics. STA abs,Y (0x99) is NOT registered
+// here — it already lives in MakeStoreSpecs. FetchAbsoluteIndexed(Reg::kY)
+// pays the index-add unconditionally (same model as abs,X), so the effective
+// formula collapses to 5-m for ALU + LDA, 5-x for LDX (Bruce Clark's
+// "6-m-x+x*p" / "6-2*x+x*p" with x=1/p=1).
+constexpr auto MakeAluAbsYSpecs() {
+  return std::array{
+      Opcode(0x79, "ADC", "absolute indexed Y")
+          .Then(FetchAbsoluteIndexed(Reg::kY))
+          .Then(AluFromAddr(AluOp::kAdc, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0xF9, "SBC", "absolute indexed Y")
+          .Then(FetchAbsoluteIndexed(Reg::kY))
+          .Then(AluFromAddr(AluOp::kSbc, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0x39, "AND", "absolute indexed Y")
+          .Then(FetchAbsoluteIndexed(Reg::kY))
+          .Then(AluFromAddr(AluOp::kAnd, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0x19, "ORA", "absolute indexed Y")
+          .Then(FetchAbsoluteIndexed(Reg::kY))
+          .Then(AluFromAddr(AluOp::kOra, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0x59, "EOR", "absolute indexed Y")
+          .Then(FetchAbsoluteIndexed(Reg::kY))
+          .Then(AluFromAddr(AluOp::kEor, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0xD9, "CMP", "absolute indexed Y")
+          .Then(FetchAbsoluteIndexed(Reg::kY))
+          .Then(AluFromAddr(AluOp::kCmp, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0xB9, "LDA", "absolute indexed Y")
+          .Then(FetchAbsoluteIndexed(Reg::kY))
+          .Then(LoadRegFromAddr(Reg::kA, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0xBE, "LDX", "absolute indexed Y")
+          .Then(FetchAbsoluteIndexed(Reg::kY))
+          .Then(LoadRegFromAddr(Reg::kX, TimingCondition::kIndex16))
+          .Build(),
+  };
+}
+
+// BIT misc — BIT dp (0x24) and BIT abs,X (0x3C). Both use kBitMem for correct
+// N/V/Z semantics (Bruce Clark §6.1.2.2). BIT dp shares ADC dp's lowering;
+// BIT abs,X shares ADC abs,X's lowering. BIT dp,X (0x34) is registered in
+// MakeBitDpxSpec; BIT abs (0x2C) is in MakeAluAbsSpecs; BIT imm (0x89) is in
+// MakeAluSpecs — so we don't re-register them here.
+constexpr auto MakeBitMiscSpecs() {
+  return std::array{
+      Opcode(0x24, "BIT", "direct page")
+          .Then(FetchDirectPage())
+          .Then(AluFromAddr(AluOp::kBitMem, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0x3C, "BIT", "absolute indexed X")
+          .Then(FetchAbsoluteIndexed(Reg::kX))
+          .Then(AluFromAddr(AluOp::kBitMem, TimingCondition::kAccumulator16))
           .Build(),
   };
 }
@@ -877,7 +1357,12 @@ constexpr auto kExplicitOpcodeSpecs = ConcatArrays(
                              ConcatArrays(MakeAluSpecs(), MakeShiftSpecs()))),
             ConcatArrays(MakeAluAbsSpecs(), MakeBitDpxSpec())),
         ConcatArrays(MakeAluDpxSpecs(), MakeAluSrSpecs())),
-    ConcatArrays(MakeLongXSpecs(), MakeAluAbsXSpecs()));
+    ConcatArrays(ConcatArrays(ConcatArrays(MakeLongXSpecs(), MakeAluAbsXSpecs()), MakeAluIndirectDpSpecs()),
+                 ConcatArrays(ConcatArrays(MakeAluAbsYSpecs(), MakeBitMiscSpecs()),
+                              ConcatArrays(ConcatArrays(MakeAluIndirectDpYSpecs(), MakeAluIndirectLongDpYSpecs()),
+                                           ConcatArrays(ConcatArrays(MakeAluIndexedIndirectXSpecs(),
+                                                                     MakeAluSrIndyYSpecs()),
+                                                        MakeRmwMemSpecs())))));
 
 static_assert(ValidateOpcodeSpecs(kExplicitOpcodeSpecs), "Opcode specification validation failed");
 
@@ -943,6 +1428,27 @@ constexpr OpcodeAddressingMode MapAddressingMode(std::string_view mode) {
   if (mode == "absolute long indexed X") {
     return OpcodeAddressingMode::kAbsoluteLongIndexedX;
   }
+  if (mode == "direct indirect indexed Y") {
+    return OpcodeAddressingMode::kDirectIndirectIndexedY;
+  }
+  if (mode == "direct indirect long indexed Y") {
+    return OpcodeAddressingMode::kDirectIndirectLongIndexedY;
+  }
+  if (mode == "direct indexed indirect X") {
+    return OpcodeAddressingMode::kDirectIndexedIndirectX;
+  }
+  if (mode == "absolute indirect") {
+    return OpcodeAddressingMode::kAbsoluteIndirect;
+  }
+  if (mode == "absolute indirect long") {
+    return OpcodeAddressingMode::kAbsoluteIndirectLong;
+  }
+  if (mode == "absolute indexed indirect X") {
+    return OpcodeAddressingMode::kAbsoluteIndexedIndirectX;
+  }
+  if (mode == "stack relative indirect indexed Y") {
+    return OpcodeAddressingMode::kStackRelativeIndirectIndexedY;
+  }
   return OpcodeAddressingMode::kUnknown;
 }
 
@@ -976,8 +1482,15 @@ constexpr OpcodeMetadataView LowerPublicMetadata(const opcode_defs_internal::Opc
     case OpcodeAddressingMode::kAbsoluteIndexedX:
     case OpcodeAddressingMode::kAbsoluteIndexedY: view.base_length = 3; break;
     case OpcodeAddressingMode::kDirectIndirect:
-    case OpcodeAddressingMode::kDirectIndirectLong: view.base_length = 2; break;
+    case OpcodeAddressingMode::kDirectIndirectLong:
+    case OpcodeAddressingMode::kDirectIndirectIndexedY:
+    case OpcodeAddressingMode::kDirectIndirectLongIndexedY:
+    case OpcodeAddressingMode::kDirectIndexedIndirectX:
+    case OpcodeAddressingMode::kStackRelativeIndirectIndexedY: view.base_length = 2; break;
     case OpcodeAddressingMode::kAbsoluteLongIndexedX: view.base_length = 4; break;
+    case OpcodeAddressingMode::kAbsoluteIndirect:
+    case OpcodeAddressingMode::kAbsoluteIndirectLong:
+    case OpcodeAddressingMode::kAbsoluteIndexedIndirectX: view.base_length = 3; break;
   }
 
   return view;
@@ -1031,6 +1544,13 @@ std::string_view GetAddressingModeName(OpcodeAddressingMode mode) {
     case OpcodeAddressingMode::kDirectIndirect: return "direct indirect";
     case OpcodeAddressingMode::kDirectIndirectLong: return "direct indirect long";
     case OpcodeAddressingMode::kAbsoluteLongIndexedX: return "absolute long indexed X";
+    case OpcodeAddressingMode::kDirectIndirectIndexedY: return "direct indirect indexed Y";
+    case OpcodeAddressingMode::kDirectIndirectLongIndexedY: return "direct indirect long indexed Y";
+    case OpcodeAddressingMode::kDirectIndexedIndirectX: return "direct indexed indirect X";
+    case OpcodeAddressingMode::kAbsoluteIndirect: return "absolute indirect";
+    case OpcodeAddressingMode::kAbsoluteIndirectLong: return "absolute indirect long";
+    case OpcodeAddressingMode::kAbsoluteIndexedIndirectX: return "absolute indexed indirect X";
+    case OpcodeAddressingMode::kStackRelativeIndirectIndexedY: return "stack relative indirect indexed Y";
   }
   return "unknown";
 }

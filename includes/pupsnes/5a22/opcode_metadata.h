@@ -27,6 +27,13 @@ enum class OpcodeAddressingMode : uint8_t {
   kDirectIndirect = 15,
   kDirectIndirectLong = 16,
   kAbsoluteLongIndexedX = 17,
+  kDirectIndirectIndexedY = 18,
+  kDirectIndirectLongIndexedY = 19,
+  kDirectIndexedIndirectX = 20,
+  kAbsoluteIndirect = 21,
+  kAbsoluteIndirectLong = 22,
+  kAbsoluteIndexedIndirectX = 23,
+  kStackRelativeIndirectIndexedY = 24,
 };
 
 enum class OpcodeImplementationStatus : uint8_t {

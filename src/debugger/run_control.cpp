@@ -1,6 +1,5 @@
 #include "pupsnes/debugger/run_control.h"
 
-#include <algorithm>
 #include <exception>
 
 #include "pupsnes/hw/5a22/cpu.h"
@@ -174,7 +173,17 @@ void RunControl::TickFrame(std::chrono::steady_clock::duration wall_clock_budget
       break;
     }
 
-    const TimeMasterT target = snes_.GetScheduler().NextEventMasterTime();
+    TimeMasterT target = snes_.GetScheduler().NextEventMasterTime();
+    // Clamp to the cycle budget so the CPU doesn't overshoot into the next
+    // scheduler event. Without this clamp, a TickToTarget call would advance
+    // all the way to the next kFrameEnd (~357K master cycles), blowing past
+    // smaller budgets and producing ~200% effective speed at >60Hz hosts.
+    if (master_cycles_budget.has_value()) {
+      const TimeMasterT budget_target = start_master_time + *master_cycles_budget;
+      if (budget_target < target) {
+        target = budget_target;
+      }
+    }
 
     TickResult result{0, TickStopReason::kReachedTarget};
     try {

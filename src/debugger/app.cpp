@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
@@ -307,20 +308,19 @@ void DebuggerApp::TickEmulation() {
     return;
   }
 
-  std::optional<TimeMasterT> cycles_budget;
-  if (ui_state_.realtime_limiter) {
-    // Cap emulated master cycles to match wall-clock time elapsed since the last
-    // tick, so the emulator tracks a real SNES at 100% speed regardless of host
-    // refresh rate. Clamp the dt so pause/stall doesn't produce a giant catch-up.
-    double dt_secs = std::chrono::duration<double>(now - last_tick_time_).count();
-    if (dt_secs < 0.0) {
-      dt_secs = 0.0;
-    } else if (dt_secs > 0.1) {
-      dt_secs = 0.1;
-    }
-    cycles_budget = static_cast<TimeMasterT>(dt_secs * kMasterClockHz);
+  // Cap emulated master cycles to wall-clock elapsed * speed multiplier so the
+  // emulator tracks the selected fraction of real-hardware speed regardless of
+  // host refresh rate. Clamp dt so pause/stall doesn't produce a giant catch-up.
+  double dt_secs = std::chrono::duration<double>(now - last_tick_time_).count();
+  if (dt_secs < 0.0) {
+    dt_secs = 0.0;
+  } else if (dt_secs > 0.1) {
+    dt_secs = 0.1;
   }
   last_tick_time_ = now;
+
+  const double multiplier = std::clamp(static_cast<double>(ui_state_.speed_multiplier), 0.0, 10.0);
+  const auto cycles_budget = static_cast<TimeMasterT>(dt_secs * kMasterClockHz * multiplier);
 
   try {
     run_control_.TickFrame(std::chrono::milliseconds(16), cycles_budget);
@@ -375,9 +375,32 @@ void DebuggerApp::RenderMenuBar() {
       ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Emulation")) {
-      if (ImGui::MenuItem("Limit to Real-Time (60 FPS)", nullptr, &ui_state_.realtime_limiter)) {
-        last_tick_time_ = std::chrono::steady_clock::now();
-        SaveAppConfig();
+      if (ImGui::BeginMenu("Speed")) {
+        struct SpeedPreset {
+          const char* label;
+          float value;
+        };
+        static constexpr SpeedPreset kPresets[] = {
+            {"1%", 0.01F},  {"5%", 0.05F},    {"10%", 0.10F},   {"25%", 0.25F},
+            {"50%", 0.5F},  {"100%", 1.0F},   {"200%", 2.0F},   {"400%", 4.0F},
+        };
+        for (const SpeedPreset& p : kPresets) {
+          const bool selected = std::fabs(ui_state_.speed_multiplier - p.value) < 1e-4F;
+          if (ImGui::MenuItem(p.label, nullptr, selected)) {
+            ui_state_.speed_multiplier = p.value;
+            last_tick_time_ = std::chrono::steady_clock::now();
+            SaveAppConfig();
+          }
+        }
+        ImGui::Separator();
+        float custom_pct = ui_state_.speed_multiplier * 100.0F;
+        ImGui::SetNextItemWidth(120.0F);
+        if (ImGui::InputFloat("Custom %", &custom_pct, 10.0F, 100.0F, "%.1f")) {
+          ui_state_.speed_multiplier = std::clamp(custom_pct / 100.0F, 0.001F, 10.0F);
+          last_tick_time_ = std::chrono::steady_clock::now();
+          SaveAppConfig();
+        }
+        ImGui::EndMenu();
       }
       ImGui::EndMenu();
     }
@@ -660,8 +683,11 @@ void DebuggerApp::LoadAppConfig() {
       ui_state_.show_errors_panel = value != "0";
     } else if (key == "show_bus_panel") {
       ui_state_.show_bus_panel = value != "0";
-    } else if (key == "realtime_limiter") {
-      ui_state_.realtime_limiter = value != "0";
+    } else if (key == "speed_multiplier") {
+      const float parsed = std::strtof(value.c_str(), nullptr);
+      if (parsed > 0.0F) {
+        ui_state_.speed_multiplier = std::clamp(parsed, 0.001F, 10.0F);
+      }
     }
   }
 }
@@ -685,7 +711,7 @@ void DebuggerApp::SaveAppConfig() {
   stream << "show_scheduler_panel=" << (ui_state_.show_scheduler_panel ? 1 : 0) << "\n";
   stream << "show_errors_panel=" << (ui_state_.show_errors_panel ? 1 : 0) << "\n";
   stream << "show_bus_panel=" << (ui_state_.show_bus_panel ? 1 : 0) << "\n";
-  stream << "realtime_limiter=" << (ui_state_.realtime_limiter ? 1 : 0) << "\n";
+  stream << "speed_multiplier=" << ui_state_.speed_multiplier << "\n";
 }
 
 void DebuggerApp::RenderFatalModal() {

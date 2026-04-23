@@ -128,6 +128,29 @@ enum class MicroInternalOp : uint8_t {
                              // kSetAddrByteFromFetch(kLow)) and fetch_data_ (high). Params
                              // pack AluOp in bits [3:0]. Dispatch lives in the kAlu16Imm case in ExecuteInternalOp
                              // in cpu.cpp.
+  kSetPcFromScratchAndFetch, // PC/PBR load from indirect-pointer assembly. Params bit 0 =
+                             // with_pbr: when 0 (JMP (abs) / JMP (abs,X)) PC =
+                             // fetch_data_:addr_scratch_[7:0] and PBR is unchanged; when 1
+                             // (JMP [abs]) PC = addr_scratch_[15:0] and PBR = fetch_data_.
+                             // The prior cycle's kStashIndirectLow/kStashIndirectHigh
+                             // populated addr_scratch_; this cycle's kReadAddr supplies the
+                             // last pointer byte in fetch_data_.
+  kRmwMem,                   // Memory read-modify-write. Params bits [2:0] = RmwOp
+                             // (kAsl/kLsr/kRol/kRor/kInc/kDec). Width follows the M flag
+                             // at runtime:
+                             //   M=1 (8-bit): fetch_data_ holds the byte just read; the op
+                             //     modifies fetch_data_ in place, updates N/Z/C flags, AND
+                             //     decrements addr_ by 1 so the subsequent paired-write
+                             //     cycle (kWriteRegByte + kModifyAddr(decrement)) lands at
+                             //     the original effective address.
+                             //   M=0 (16-bit): a prior kStashIndirectLow stashed the low
+                             //     byte into addr_scratch_[7:0] and advanced addr_ past the
+                             //     high byte. fetch_data_ holds the high byte just read.
+                             //     The op combines the 16-bit operand, modifies it, and
+                             //     writes new_high back to fetch_data_ and new_low back to
+                             //     addr_scratch_[7:0]. addr_ is left at the high-byte
+                             //     address (original+1) so the write phase emits
+                             //     high-first-then-low in standard 65C816 order.
 };
 
 // Typed enums for MicroOp::params packing. Populated in subsequent refactor
@@ -136,6 +159,12 @@ enum class MicroInternalOp : uint8_t {
 enum class Reg : uint8_t { kA, kX, kY, kSp, kDp, kDbr, kP, kPcl, kPch, kPbr };
 enum class Width : uint8_t { kByMFlag, kByXFlag, kForce8, kForce16 };
 enum class ByteSel : uint8_t { kLow, kHigh, kBank };
+// Bank byte source for kSetAddrByteFromFetch when writing the high byte in the
+// same cycle. Packed alongside ByteSel in the micro-op params (bits [3:2]).
+// kLeave preserves addr_[23:16] unchanged (used when the bank will be fetched
+// explicitly on a later cycle). kDbr/kPbr/kZero set it from DBR/PBR/0
+// respectively — see micro_op_params::PackSetAddrByte.
+enum class BankSrc : uint8_t { kLeave, kDbr, kPbr, kZero };
 enum class Flag : uint8_t { kC, kD, kI, kV, kZ, kN, kM, kX };
 enum class BranchCond : uint8_t { kAlways, kZ, kNotZ, kC, kNotC, kN, kNotN, kV, kNotV };
 // kBitMem: memory BIT — sets N from bit 7/15 and V from bit 6/14 of the memory
@@ -145,7 +174,13 @@ enum class BranchCond : uint8_t { kAlways, kZ, kNotZ, kC, kNotC, kN, kNotN, kV, 
 // kAlu8Imm/kAlu16Imm dispatch (updated to handle kBitMem).
 enum class AluOp : uint8_t { kAdc, kSbc, kAnd, kOra, kEor, kCmp, kCpx, kCpy, kBit, kBitMem };
 enum class ShiftOp : uint8_t { kAsl, kLsr, kRol, kRor };
-enum class WriteSrc : uint8_t { kFetchData, kA, kX, kY, kZero };
+// Memory read-modify-write ops. kAsl/kLsr/kRol/kRor mirror ShiftOp; kInc/kDec
+// are the memory forms of INC/DEC. Packed into a MicroInternalOp::kRmwMem
+// params byte (see micro_op_params::PackRmw).
+enum class RmwOp : uint8_t { kAsl, kLsr, kRol, kRor, kInc, kDec };
+// kScratchLow: write the low byte of addr_scratch_ (used by 16-bit RMW to
+// emit the modified low byte back to memory on the final write cycle).
+enum class WriteSrc : uint8_t { kFetchData, kA, kX, kY, kZero, kScratchLow };
 enum class PushSrc : uint8_t {
   kA8,
   kAHigh,

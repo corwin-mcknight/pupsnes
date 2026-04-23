@@ -203,13 +203,20 @@ constexpr std::string_view NormalizeAddressing(std::string_view internal) {
   if (internal == "stack relative") return "stk,S";
   if (internal == "direct indirect") return "(dir)";
   if (internal == "direct indirect long") return "[dir]";
+  if (internal == "direct indirect indexed Y") return "(dir),Y";
+  if (internal == "direct indirect long indexed Y") return "[dir],Y";
+  if (internal == "direct indexed indirect X") return "(dir,X)";
+  if (internal == "absolute indirect") return "(abs)";
+  if (internal == "absolute indirect long") return "[abs]";
+  if (internal == "absolute indexed indirect X") return "(abs,X)";
+  if (internal == "stack relative indirect indexed Y") return "(stk,S),Y";
   return internal;
 }
 
 // One row per currently implemented opcode. Add rows as new opcodes land.
 // Columns lifted verbatim from docs/plans/6502opcodes.md. Flag masks built
 // with FlagsFrom() from Clark's nvmxdizc column.
-constexpr std::array<SpecEntry, 117> kSpec = {{
+constexpr std::array<SpecEntry, 207> kSpec = {{
     // Misc
     {0xEA, "NOP", "impl", "1", "2", FlagsFrom("........")},
 
@@ -247,12 +254,82 @@ constexpr std::array<SpecEntry, 117> kSpec = {{
     // Stack relative
     {0xA3, "LDA", "stk,S", "2", "5-m", FlagsFrom("n.....z.")},
     {0x83, "STA", "stk,S", "2", "5-m", FlagsFrom("........")},
+    {0x63, "ADC", "stk,S", "2", "5-m", FlagsFrom("nvm...mm")},
+    {0xE3, "SBC", "stk,S", "2", "5-m", FlagsFrom("nvm...mm")},
+    {0x23, "AND", "stk,S", "2", "5-m", FlagsFrom("n.m...m.")},
+    {0x03, "ORA", "stk,S", "2", "5-m", FlagsFrom("n.m...m.")},
+    {0x43, "EOR", "stk,S", "2", "5-m", FlagsFrom("n.m...m.")},
+    {0xC3, "CMP", "stk,S", "2", "5-m", FlagsFrom("n.m...mm")},
 
     // Direct indirect
     {0xB2, "LDA", "(dir)", "2", "6-m+w", FlagsFrom("n.....z."), 0U, true},
     {0x92, "STA", "(dir)", "2", "6-m+w", FlagsFrom("........"), 0U, true},
     {0xA7, "LDA", "[dir]", "2", "7-m+w", FlagsFrom("n.....z."), 0U, true},
     {0x87, "STA", "[dir]", "2", "7-m+w", FlagsFrom("........"), 0U, true},
+
+    // ALU (dir) — 6 mnemonics
+    {0x72, "ADC", "(dir)", "2", "6-m+w", FlagsFrom("nvm...mm"), 0U, true},
+    {0xF2, "SBC", "(dir)", "2", "6-m+w", FlagsFrom("nvm...mm"), 0U, true},
+    {0x32, "AND", "(dir)", "2", "6-m+w", FlagsFrom("n.m...m."), 0U, true},
+    {0x12, "ORA", "(dir)", "2", "6-m+w", FlagsFrom("n.m...m."), 0U, true},
+    {0x52, "EOR", "(dir)", "2", "6-m+w", FlagsFrom("n.m...m."), 0U, true},
+    {0xD2, "CMP", "(dir)", "2", "6-m+w", FlagsFrom("n.m...mm"), 0U, true},
+
+    // ALU [dir] — 6 mnemonics
+    {0x67, "ADC", "[dir]", "2", "7-m+w", FlagsFrom("nvm...mm"), 0U, true},
+    {0xE7, "SBC", "[dir]", "2", "7-m+w", FlagsFrom("nvm...mm"), 0U, true},
+    {0x27, "AND", "[dir]", "2", "7-m+w", FlagsFrom("n.m...m."), 0U, true},
+    {0x07, "ORA", "[dir]", "2", "7-m+w", FlagsFrom("n.m...m."), 0U, true},
+    {0x47, "EOR", "[dir]", "2", "7-m+w", FlagsFrom("n.m...m."), 0U, true},
+    {0xC7, "CMP", "[dir]", "2", "7-m+w", FlagsFrom("n.m...mm"), 0U, true},
+
+    // ALU / Load abs,Y. Same "always pay index-add" model as abs,X — formula
+    // collapses to 5-m for ALU + LDA, 5-x for LDX.
+    {0x79, "ADC", "abs,Y", "3", "5-m", FlagsFrom("nvm...mm")},
+    {0xF9, "SBC", "abs,Y", "3", "5-m", FlagsFrom("nvm...mm")},
+    {0x39, "AND", "abs,Y", "3", "5-m", FlagsFrom("n.m...m.")},
+    {0x19, "ORA", "abs,Y", "3", "5-m", FlagsFrom("n.m...m.")},
+    {0x59, "EOR", "abs,Y", "3", "5-m", FlagsFrom("n.m...m.")},
+    {0xD9, "CMP", "abs,Y", "3", "5-m", FlagsFrom("n.m...mm")},
+    {0xB9, "LDA", "abs,Y", "3", "5-m", FlagsFrom("n.....z.")},
+    {0xBE, "LDX", "abs,Y", "3", "5-x", FlagsFrom("n.....z.")},
+
+    // BIT misc — BIT dp (4-m+w) and BIT abs,X (5-m, always-pay model).
+    {0x24, "BIT", "dir", "2", "4-m+w", FlagsFrom("nvm...m."), 0U, true},
+    {0x3C, "BIT", "abs,X", "3", "5-m", FlagsFrom("nvm...m.")},
+
+    // ALU / Load / Store (dir),Y — always-pay-index lowering collapses
+    // 7-m+w-x+x*p to 7-m+w. STA (dir),Y is already 7-m+w in Clark.
+    {0x71, "ADC", "(dir),Y", "2", "7-m+w", FlagsFrom("nvm...mm"), 0U, true},
+    {0xF1, "SBC", "(dir),Y", "2", "7-m+w", FlagsFrom("nvm...mm"), 0U, true},
+    {0x31, "AND", "(dir),Y", "2", "7-m+w", FlagsFrom("n.m...m."), 0U, true},
+    {0x11, "ORA", "(dir),Y", "2", "7-m+w", FlagsFrom("n.m...m."), 0U, true},
+    {0x51, "EOR", "(dir),Y", "2", "7-m+w", FlagsFrom("n.m...m."), 0U, true},
+    {0xD1, "CMP", "(dir),Y", "2", "7-m+w", FlagsFrom("n.m...mm"), 0U, true},
+    {0xB1, "LDA", "(dir),Y", "2", "7-m+w", FlagsFrom("n.....z."), 0U, true},
+    {0x91, "STA", "(dir),Y", "2", "7-m+w", FlagsFrom("........"), 0U, true},
+
+    // ALU / Load / Store [dir],Y — Bruce Clark "7-m+w". Y add is folded into
+    // the bank-fetch cycle via PackFormAddrFromScratchBank(with_y_add=true);
+    // matches Clark's count exactly.
+    {0x77, "ADC", "[dir],Y", "2", "7-m+w", FlagsFrom("nvm...mm"), 0U, true},
+    {0xF7, "SBC", "[dir],Y", "2", "7-m+w", FlagsFrom("nvm...mm"), 0U, true},
+    {0x37, "AND", "[dir],Y", "2", "7-m+w", FlagsFrom("n.m...m."), 0U, true},
+    {0x17, "ORA", "[dir],Y", "2", "7-m+w", FlagsFrom("n.m...m."), 0U, true},
+    {0x57, "EOR", "[dir],Y", "2", "7-m+w", FlagsFrom("n.m...m."), 0U, true},
+    {0xD7, "CMP", "[dir],Y", "2", "7-m+w", FlagsFrom("n.m...mm"), 0U, true},
+    {0xB7, "LDA", "[dir],Y", "2", "7-m+w", FlagsFrom("n.....z."), 0U, true},
+    {0x97, "STA", "[dir],Y", "2", "7-m+w", FlagsFrom("........"), 0U, true},
+
+    // ALU / Load / Store (dir,X) — Bruce Clark "7-m+w".
+    {0x61, "ADC", "(dir,X)", "2", "7-m+w", FlagsFrom("nvm...mm"), 0U, true},
+    {0xE1, "SBC", "(dir,X)", "2", "7-m+w", FlagsFrom("nvm...mm"), 0U, true},
+    {0x21, "AND", "(dir,X)", "2", "7-m+w", FlagsFrom("n.m...m."), 0U, true},
+    {0x01, "ORA", "(dir,X)", "2", "7-m+w", FlagsFrom("n.m...m."), 0U, true},
+    {0x41, "EOR", "(dir,X)", "2", "7-m+w", FlagsFrom("n.m...m."), 0U, true},
+    {0xC1, "CMP", "(dir,X)", "2", "7-m+w", FlagsFrom("n.m...mm"), 0U, true},
+    {0xA1, "LDA", "(dir,X)", "2", "7-m+w", FlagsFrom("n.....z."), 0U, true},
+    {0x81, "STA", "(dir,X)", "2", "7-m+w", FlagsFrom("........"), 0U, true},
 
     // Direct page
     {0xA5, "LDA", "dir", "2", "4-m+w", FlagsFrom("n.....z."), 0U, true},
@@ -365,10 +442,51 @@ constexpr std::array<SpecEntry, 117> kSpec = {{
     // Jumps
     {0x4C, "JMP", "abs", "3", "3", FlagsFrom("........")},
     {0x5C, "JMP", "long", "4", "4", FlagsFrom("........")},
+    {0x6C, "JMP", "(abs)", "3", "5", FlagsFrom("........")},
+    {0xDC, "JMP", "[abs]", "3", "6", FlagsFrom("........")},
+    {0x7C, "JMP", "(abs,X)", "3", "6", FlagsFrom("........")},
     {0x20, "JSR", "abs", "3", "6", FlagsFrom("........")},
     {0x22, "JSL", "long", "4", "8", FlagsFrom("........")},
+    {0xFC, "JSR", "(abs,X)", "3", "8", FlagsFrom("........")},
     {0x60, "RTS", "impl", "1", "6", FlagsFrom("........")},
     {0x6B, "RTL", "impl", "1", "6", FlagsFrom("........")},
+
+    // ALU / Load / Store (sr,S),Y — cycle formula 8-m, no DL penalty.
+    {0x73, "ADC", "(stk,S),Y", "2", "8-m", FlagsFrom("nvm...mm")},
+    {0xF3, "SBC", "(stk,S),Y", "2", "8-m", FlagsFrom("nvm...mm")},
+    {0x33, "AND", "(stk,S),Y", "2", "8-m", FlagsFrom("n.m...m.")},
+    {0x13, "ORA", "(stk,S),Y", "2", "8-m", FlagsFrom("n.m...m.")},
+    {0x53, "EOR", "(stk,S),Y", "2", "8-m", FlagsFrom("n.m...m.")},
+    {0xD3, "CMP", "(stk,S),Y", "2", "8-m", FlagsFrom("n.m...mm")},
+    {0xB3, "LDA", "(stk,S),Y", "2", "8-m", FlagsFrom("n.....z.")},
+    {0x93, "STA", "(stk,S),Y", "2", "8-m", FlagsFrom("........")},
+
+    // Memory RMW: ASL/LSR/ROL/ROR/INC/DEC. ShiftOps touch N/Z/C; INC/DEC
+    // touch only N/Z (Bruce Clark §6.2.1.1 / §6.2.3).
+    {0x06, "ASL", "dir", "2", "7-2*m+w", FlagsFrom("n.....mm"), 0, true},
+    {0x0E, "ASL", "abs", "3", "8-2*m", FlagsFrom("n.....mm")},
+    {0x16, "ASL", "dir,X", "2", "8-2*m+w", FlagsFrom("n.....mm"), 0, true},
+    {0x1E, "ASL", "abs,X", "3", "9-2*m", FlagsFrom("n.....mm")},
+    {0x46, "LSR", "dir", "2", "7-2*m+w", FlagsFrom("0.....mm"), 0, true},
+    {0x4E, "LSR", "abs", "3", "8-2*m", FlagsFrom("0.....mm")},
+    {0x56, "LSR", "dir,X", "2", "8-2*m+w", FlagsFrom("0.....mm"), 0, true},
+    {0x5E, "LSR", "abs,X", "3", "9-2*m", FlagsFrom("0.....mm")},
+    {0x26, "ROL", "dir", "2", "7-2*m+w", FlagsFrom("n.....mm"), 0, true},
+    {0x2E, "ROL", "abs", "3", "8-2*m", FlagsFrom("n.....mm")},
+    {0x36, "ROL", "dir,X", "2", "8-2*m+w", FlagsFrom("n.....mm"), 0, true},
+    {0x3E, "ROL", "abs,X", "3", "9-2*m", FlagsFrom("n.....mm")},
+    {0x66, "ROR", "dir", "2", "7-2*m+w", FlagsFrom("n.....mm"), 0, true},
+    {0x6E, "ROR", "abs", "3", "8-2*m", FlagsFrom("n.....mm")},
+    {0x76, "ROR", "dir,X", "2", "8-2*m+w", FlagsFrom("n.....mm"), 0, true},
+    {0x7E, "ROR", "abs,X", "3", "9-2*m", FlagsFrom("n.....mm")},
+    {0xE6, "INC", "dir", "2", "7-2*m+w", FlagsFrom("n.....m."), 0, true},
+    {0xEE, "INC", "abs", "3", "8-2*m", FlagsFrom("n.....m.")},
+    {0xF6, "INC", "dir,X", "2", "8-2*m+w", FlagsFrom("n.....m."), 0, true},
+    {0xFE, "INC", "abs,X", "3", "9-2*m", FlagsFrom("n.....m.")},
+    {0xC6, "DEC", "dir", "2", "7-2*m+w", FlagsFrom("n.....m."), 0, true},
+    {0xCE, "DEC", "abs", "3", "8-2*m", FlagsFrom("n.....m.")},
+    {0xD6, "DEC", "dir,X", "2", "8-2*m+w", FlagsFrom("n.....m."), 0, true},
+    {0xDE, "DEC", "abs,X", "3", "9-2*m", FlagsFrom("n.....m.")},
 }};
 
 // Linear lookup — 256 entries max, table is tiny so we don't bother with a

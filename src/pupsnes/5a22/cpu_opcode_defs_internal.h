@@ -132,19 +132,34 @@ inline constexpr bool UnpackAluLowFromScratch(uint8_t params) {
 }
 
 // Set addr byte from fetch (kSetAddrByteFromFetch): bits [1:0] = ByteSel
-// (kLow/kHigh/kBank), bit [2] = from_dbr. from_dbr is only meaningful with
-// byte_sel == kHigh; that combination replicates the old
-// kSetAddrHighFromFetchAndBankFromDbr semantics (high from fetch, bank from
-// DBR).
-inline constexpr uint8_t PackSetAddrByte(ByteSel byte_sel, bool from_dbr) {
+// (kLow/kHigh/kBank), bits [3:2] = BankSrc. BankSrc is only meaningful with
+// byte_sel == kHigh (bank byte is set simultaneously with the high byte). The
+// four variants mirror the four ways the bank byte can be populated alongside
+// a high-byte PC fetch:
+//   kLeave (0) — bank unchanged (used when the bank will be explicitly fetched
+//     in a later cycle, e.g. absolute long).
+//   kDbr   (1) — bank = DBR (used by absolute for ALU/load/store operands).
+//   kPbr   (2) — bank = PBR (used by (abs,X) indirect: pointer lives in the
+//     program bank).
+//   kZero  (3) — bank = 0 (used by (abs) / [abs] indirect: pointer always in
+//     bank 0).
+// The old from_dbr overload is retained for call-site compatibility and maps
+// to kLeave/kDbr.
+inline constexpr uint8_t PackSetAddrByte(ByteSel byte_sel, BankSrc bank_src) {
   return static_cast<uint8_t>((static_cast<uint32_t>(byte_sel) & 0x03U) |
-                              ((from_dbr ? 1U : 0U) << 2U));
+                              ((static_cast<uint32_t>(bank_src) & 0x03U) << 2U));
+}
+inline constexpr uint8_t PackSetAddrByte(ByteSel byte_sel, bool from_dbr) {
+  return PackSetAddrByte(byte_sel, from_dbr ? BankSrc::kDbr : BankSrc::kLeave);
 }
 inline constexpr ByteSel UnpackSetAddrByteSel(uint8_t params) {
   return static_cast<ByteSel>(params & 0x03U);
 }
+inline constexpr BankSrc UnpackSetAddrBankSrc(uint8_t params) {
+  return static_cast<BankSrc>((params >> 2U) & 0x03U);
+}
 inline constexpr bool UnpackSetAddrFromDbr(uint8_t params) {
-  return (params & 0x04U) != 0U;
+  return UnpackSetAddrBankSrc(params) == BankSrc::kDbr;
 }
 
 // Modify addr (kModifyAddr): bit 4 = decrement flag (0 = +1, 1 = -1). Encoded
@@ -230,6 +245,17 @@ inline constexpr bool UnpackAddIndexBankWrap(uint8_t params) {
   return (params & 0x10U) != 0U;
 }
 
+// Form addr from scratch (kFormAddrFromScratchBank): bit 0 = with_y_add. When
+// set, after assembling addr_ = bank:(scratch high:low), Y is added with
+// 24-bit carry into the bank byte. Used by [dp],Y addressing to fold the
+// index add into the bank-fetch cycle (matches Bruce Clark's "7-m+w" count).
+inline constexpr uint8_t PackFormAddrFromScratchBank(bool with_y_add = false) {
+  return static_cast<uint8_t>(with_y_add ? 0x01U : 0x00U);
+}
+inline constexpr bool UnpackFormAddrFromScratchBankWithYAdd(uint8_t params) {
+  return (params & 0x01U) != 0U;
+}
+
 // Mask status (kMaskStatus): bit 0 = or_bits (1 = SEP/OR, 0 = REP/AND-NOT).
 // Both paths preserve E-mode forcing of M/X back to 1.
 inline constexpr uint8_t PackMaskStatus(bool or_bits) {
@@ -237,6 +263,17 @@ inline constexpr uint8_t PackMaskStatus(bool or_bits) {
 }
 inline constexpr bool UnpackMaskStatusOr(uint8_t params) {
   return (params & 0x01U) != 0U;
+}
+
+// Memory RMW (kRmwMem): bits [2:0] = RmwOp (kAsl/kLsr/kRol/kRor/kInc/kDec).
+// Width follows regs_.P.M at runtime — the op dispatches 8-bit vs 16-bit
+// dynamically rather than through a packed width bit. See kRmwMem dispatch in
+// ExecuteInternalOp in cpu.cpp.
+inline constexpr uint8_t PackRmw(RmwOp op) {
+  return static_cast<uint8_t>(static_cast<uint32_t>(op) & 0x07U);
+}
+inline constexpr RmwOp UnpackRmwOp(uint8_t params) {
+  return static_cast<RmwOp>(params & 0x07U);
 }
 }  // namespace micro_op_params
 

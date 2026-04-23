@@ -68,8 +68,14 @@ set(PUPSNES_TEST_SOURCES
   src/tests/opcode_alu_abs_tests.cpp
   src/tests/opcode_alu_dpx_tests.cpp
   src/tests/opcode_alu_sr_tests.cpp
+  src/tests/opcode_alu_sr_indy_tests.cpp
   src/tests/opcode_alu_longx_tests.cpp
   src/tests/opcode_alu_absx_tests.cpp
+  src/tests/opcode_alu_indirect_tests.cpp
+  src/tests/opcode_alu_absy_tests.cpp
+  src/tests/opcode_alu_indy_tests.cpp
+  src/tests/opcode_alu_lindy_tests.cpp
+  src/tests/opcode_alu_indx_tests.cpp
   src/tests/opcode_bcd_tests.cpp
   src/tests/ppu_tests.cpp
 )
@@ -82,6 +88,13 @@ target_compile_features(pupsnes PUBLIC cxx_std_20)
 target_include_directories(pupsnes PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/includes)
 target_include_directories(pupsnes PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_compile_definitions(pupsnes PUBLIC "PUPSNES_PROFILE_${PUPSNES_PROFILE}")
+# kOpcodeArtifacts (cpu_opcodes.cpp) is built at compile time over the full
+# spec table. Each new opcode increases the constexpr-evaluator step count.
+# Default clang limit (~1M) overflows once the table grows past ~190 specs;
+# bump to 16M so we have headroom as more opcodes land.
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  target_compile_options(pupsnes PRIVATE -fconstexpr-steps=16777216)
+endif()
 
 add_library(pupsnes_debugger_core STATIC ${PUPSNES_DEBUGGER_CORE_SOURCES})
 target_compile_features(pupsnes_debugger_core PUBLIC cxx_std_20)
