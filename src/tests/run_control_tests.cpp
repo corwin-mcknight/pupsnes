@@ -151,9 +151,21 @@ TEST_CASE("RunControl StepOne microop stops after one bus access", "[unit][debug
 
 TEST_CASE("RunControl RunUntilBreak halts on CPU fault and logs it", "[unit][debugger]") {
   DebuggerFixture fixture;
-  fixture.SetBytes({0xEA, 0x00, 0xEA});
+  fixture.SetBytes({0xEA, 0xEA, 0xEA});
 
   RunControl run_control = fixture.BuildRunControl();
+
+  // Retire the first NOP so the trace has one entry, matching the pre-fault
+  // execution that used to come from the unimplemented-opcode path.
+  run_control.RequestStepOne();
+  run_control.TickFrame(std::chrono::seconds(1));
+  REQUIRE(fixture.trace.Size() == 1);
+
+  // Inject a CPU fault at the PC of the next instruction. Every 65C816 opcode
+  // is implemented, so the only way to drive the fault-handling path is via
+  // the test-only injection API.
+  fixture.snes.GetCpu().DebugInjectFault(0xFF, 0x008001);
+
   run_control.RequestRunUntilBreak();
   run_control.TickFrame(std::chrono::seconds(1));
 

@@ -68,6 +68,8 @@ std::string FormatOperand(const OpcodeMetadataView& metadata, SnesAddrT pc, uint
       return std::format("(${:04X},X)", static_cast<unsigned>(bytes[1] | (static_cast<uint16_t>(bytes[2]) << 8U)));
     case OpcodeAddressingMode::kStackRelativeIndirectIndexedY:
       return std::format("(${:02X},S),Y", static_cast<unsigned>(bytes[1]));
+    case OpcodeAddressingMode::kBlockMove:
+      return std::format("#${:02X},#${:02X}", static_cast<unsigned>(bytes[2]), static_cast<unsigned>(bytes[1]));
   }
   return "";
 }

@@ -210,15 +210,18 @@ constexpr std::string_view NormalizeAddressing(std::string_view internal) {
   if (internal == "absolute indirect long") return "[abs]";
   if (internal == "absolute indexed indirect X") return "(abs,X)";
   if (internal == "stack relative indirect indexed Y") return "(stk,S),Y";
+  if (internal == "src,dest") return "src,dest";
   return internal;
 }
 
 // One row per currently implemented opcode. Add rows as new opcodes land.
 // Columns lifted verbatim from docs/plans/6502opcodes.md. Flag masks built
 // with FlagsFrom() from Clark's nvmxdizc column.
-constexpr std::array<SpecEntry, 207> kSpec = {{
+constexpr std::array<SpecEntry, 224> kSpec = {{
     // Misc
     {0xEA, "NOP", "impl", "1", "2", FlagsFrom("........")},
+    {0x42, "WDM", "imm", "2", "2", FlagsFrom("........")},
+    {0xEB, "XBA", "impl", "1", "3", FlagsFrom("n.....z.")},
 
     // Stack push/pull
     {0x48, "PHA", "impl", "1", "4-m", FlagsFrom("........")},
@@ -235,6 +238,8 @@ constexpr std::array<SpecEntry, 207> kSpec = {{
     {0x28, "PLP", "impl", "1", "4", FlagsFrom("nvmxdizc")},
     {0x2B, "PLD", "impl", "1", "5", FlagsFrom("n.....z.")},
     {0xF4, "PEA", "abs", "3", "5", FlagsFrom("........")},
+    {0x62, "PER", "rlng", "3", "6", FlagsFrom("........")},
+    {0xD4, "PEI", "dir", "2", "6+w", FlagsFrom("........"), 0U, true},
 
     // Load immediate
     {0xA9, "LDA", "imm", "3-m", "3-m", FlagsFrom("n.....z.")},
@@ -412,6 +417,8 @@ constexpr std::array<SpecEntry, 207> kSpec = {{
     {0x89, "BIT", "imm", "3-m", "3-m", FlagsFrom("......m.")},
     {0xE0, "CPX", "imm", "3-x", "3-x", FlagsFrom("n.x...xx")},
     {0xC0, "CPY", "imm", "3-x", "3-x", FlagsFrom("n.x...xx")},
+    {0xE4, "CPX", "dir", "2", "4-x+w", FlagsFrom("n.x...xx"), 0U, true},
+    {0xC4, "CPY", "dir", "2", "4-x+w", FlagsFrom("n.x...xx"), 0U, true},
 
     // Shift/rotate on accumulator
     {0x0A, "ASL", "impl", "1", "2", FlagsFrom("n.....zc")},
@@ -450,6 +457,16 @@ constexpr std::array<SpecEntry, 207> kSpec = {{
     {0xFC, "JSR", "(abs,X)", "3", "8", FlagsFrom("........")},
     {0x60, "RTS", "impl", "1", "6", FlagsFrom("........")},
     {0x6B, "RTL", "impl", "1", "6", FlagsFrom("........")},
+    {0x40, "RTI", "impl", "1", "7-e", FlagsFrom("********")},
+    {0x00, "BRK", "imm", "2", "8-e", FlagsFrom("....01..")},
+    {0x02, "COP", "imm", "2", "8-e", FlagsFrom("....01..")},
+    {0xDB, "STP", "impl", "1", "3", FlagsFrom("........")},
+    {0xCB, "WAI", "impl", "1", "3", FlagsFrom("........")},
+    // Block moves. The Bruce Clark cycle count is "7" per byte moved; the
+    // instruction re-executes itself from the same PC until A == $FFFF, so
+    // the per-opcode cycle count is the listed 7.
+    {0x54, "MVN", "src,dest", "3", "7", FlagsFrom("........")},
+    {0x44, "MVP", "src,dest", "3", "7", FlagsFrom("........")},
 
     // ALU / Load / Store (sr,S),Y — cycle formula 8-m, no DL penalty.
     {0x73, "ADC", "(stk,S),Y", "2", "8-m", FlagsFrom("nvm...mm")},
@@ -487,6 +504,12 @@ constexpr std::array<SpecEntry, 207> kSpec = {{
     {0xCE, "DEC", "abs", "3", "8-2*m", FlagsFrom("n.....m.")},
     {0xD6, "DEC", "dir,X", "2", "8-2*m+w", FlagsFrom("n.....m."), 0, true},
     {0xDE, "DEC", "abs,X", "3", "9-2*m", FlagsFrom("n.....m.")},
+
+    // TSB / TRB (Bruce Clark §6.1.2.3) — only Z is touched.
+    {0x04, "TSB", "dir", "2", "7-2*m+w", FlagsFrom("......m."), 0, true},
+    {0x0C, "TSB", "abs", "3", "8-2*m", FlagsFrom("......m.")},
+    {0x14, "TRB", "dir", "2", "7-2*m+w", FlagsFrom("......m."), 0, true},
+    {0x1C, "TRB", "abs", "3", "8-2*m", FlagsFrom("......m.")},
 }};
 
 // Linear lookup — 256 entries max, table is tiny so we don't bother with a

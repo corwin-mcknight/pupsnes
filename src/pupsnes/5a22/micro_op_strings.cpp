@@ -36,6 +36,16 @@ std::string_view ToString(MicroInternalOp op) {
     case MicroInternalOp::kSetFlag: return "SetFlag";
     case MicroInternalOp::kMaskStatus: return "MaskStatus";
     case MicroInternalOp::kExchangeCarryEmulation: return "ExchangeCarryEmulation";
+    case MicroInternalOp::kSwapBA: return "SwapBA";
+    case MicroInternalOp::kAddPcToAddr: return "AddPcToAddr";
+    case MicroInternalOp::kSetInterruptVector: return "SetInterruptVector";
+    case MicroInternalOp::kEnterInterruptHandler: return "EnterInterruptHandler";
+    case MicroInternalOp::kHaltCpu: return "HaltCpu";
+    case MicroInternalOp::kMoveSetDbr: return "MoveSetDbr";
+    case MicroInternalOp::kMoveSetAddrFromSrc: return "MoveSetAddrFromSrc";
+    case MicroInternalOp::kMoveSetAddrFromDst: return "MoveSetAddrFromDst";
+    case MicroInternalOp::kMoveAdjust: return "MoveAdjust";
+    case MicroInternalOp::kMoveLoopCheck: return "MoveLoopCheck";
     case MicroInternalOp::kTransferReg: return "TransferReg";
     case MicroInternalOp::kSetPcFromAddr: return "SetPcFromAddr";
     case MicroInternalOp::kLoadAddrByteAndSetPc: return "LoadAddrByteAndSetPc";

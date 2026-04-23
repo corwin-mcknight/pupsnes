@@ -128,6 +128,19 @@ constexpr CycleFragment PullDataBank() {
 constexpr auto MakeMiscSpecs() {
   return std::array{
       Opcode(0xEA, "NOP", "implied").Then(Internal(MicroInternalOp::kNone, Always(), "idle")).Build(),
+      // WDM (0x42): 2-byte, 2-cycle reserved prefix (Bruce Clark §6.7). The
+      // second byte is read from PBR:PC (advancing PC) and discarded; no
+      // flags or registers change.
+      Opcode(0x42, "WDM", "immediate byte")
+          .Then(FetchPc(MicroInternalOp::kNone, Always(), "fetch signature (discard)"))
+          .Build(),
+      // XBA (0xEB): swap A's high and low bytes. 3 cycles total; N/Z are
+      // always set from the new 8-bit low byte regardless of M (Bruce Clark
+      // §6.10.3). Two internal cycles follow the opcode fetch.
+      Opcode(0xEB, "XBA", "implied")
+          .Then(Internal(MicroInternalOp::kSwapBA, Always(), "swap B/A"))
+          .Then(Internal(MicroInternalOp::kNone, Always(), "idle"))
+          .Build(),
   };
 }
 
@@ -187,6 +200,31 @@ constexpr CycleFragment PushEffectiveAbsolute() {
       .Then(FetchAddrByte(ByteSel::kHigh, false, Always(), "fetch value high"))
       .Then(PushRegSlot(PushSrc::kAddrHigh, Always(), "push value high"))
       .Then(PushRegSlot(PushSrc::kAddrLow, Always(), "push value low"))
+      .Build();
+}
+
+constexpr CycleFragment PushEffectiveRelative() {
+  // PER rel16: 6 cycles total (Bruce Clark §6.8.1). Fetch the signed 16-bit
+  // displacement into addr_[15:0], then add PC (which already points past the
+  // PER instruction after the two FetchPc cycles), and push the resulting
+  // 16-bit effective address high-first.
+  return Fragment()
+      .Then(FetchAddrByte(ByteSel::kLow, false, Always(), "fetch disp low"))
+      .Then(FetchAddrByte(ByteSel::kHigh, false, Always(), "fetch disp high"))
+      .Then(Internal(MicroInternalOp::kAddPcToAddr, Always(), "addr += PC"))
+      .Then(PushRegSlot(PushSrc::kAddrHigh, Always(), "push addr high"))
+      .Then(PushRegSlot(PushSrc::kAddrLow, Always(), "push addr low"))
+      .Build();
+}
+
+constexpr CycleFragment PushEffectiveIndirectTail() {
+  // Tail of PEI dp — the three cycles that follow FetchDirectPage +
+  // FetchDirectIndirect. FetchDirectIndirect left the 16-bit pointer's low and
+  // high bytes in addr_[7:0] and addr_[15:8] (bank := DBR but unused for the
+  // pushes). Push high-first then low. Always 16 bits regardless of the M flag.
+  return Fragment()
+      .Then(PushRegSlot(PushSrc::kAddrHigh, Always(), "push ptr high"))
+      .Then(PushRegSlot(PushSrc::kAddrLow, Always(), "push ptr low"))
       .Build();
 }
 
@@ -257,6 +295,12 @@ constexpr auto MakeStackSpecs() {
       Opcode(0x28, "PLP", "implied").Then(PullStatus()).Build(),
       Opcode(0x2B, "PLD", "implied").Then(PullDirectPage()).Build(),
       Opcode(0xF4, "PEA", "absolute").Then(PushEffectiveAbsolute()).Build(),
+      Opcode(0x62, "PER", "relative long").Then(PushEffectiveRelative()).Build(),
+      Opcode(0xD4, "PEI", "direct page")
+          .Then(FetchDirectPage())
+          .Then(FetchDirectIndirect())
+          .Then(PushEffectiveIndirectTail())
+          .Build(),
   };
 }
 
@@ -543,6 +587,53 @@ constexpr CycleFragment Rtl() {
       .Build();
 }
 
+constexpr CycleFragment SoftwareInterrupt(bool is_cop) {
+  // BRK (0x00) / COP (0x02): 8 cycles native, 7 cycles emulation (Bruce Clark
+  // §6.3.1, §6.11). Both are 2-byte instructions; after the opcode, the
+  // signature byte is fetched (and discarded, but PC advances so RTI returns
+  // past it). The native path pushes PBR (skipped in emulation), then PCH,
+  // PCL, P, and finally reads the appropriate interrupt vector into PC with
+  // PBR=0, I=1, D=0. kSetInterruptVector is folded into the signature-fetch
+  // cycle so addr_ is ready by the vector-read cycles without adding a slot.
+  return Fragment()
+      .Then(CycleSlotSpec{
+          MicroBusAction::kFetchPc,
+          MicroInternalOp::kSetInterruptVector,
+          Always(),
+          "fetch signature, prime vector",
+          static_cast<uint8_t>(is_cop ? 0x01U : 0x00U),
+      })
+      .Then(PushRegSlot(PushSrc::kPbr, Not(Condition(TimingCondition::kEmulationMode)), "push PBR (native)"))
+      .Then(PushRegSlot(PushSrc::kPch, Always(), "push PCH"))
+      .Then(PushRegSlot(PushSrc::kPcl, Always(), "push PCL"))
+      .Then(PushRegSlot(PushSrc::kP, Always(), "push P"))
+      .Then(CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kStashIndirectLow, Always(),
+                          "read vector low", 0})
+      .Then(CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kEnterInterruptHandler, Always(),
+                          "read vector high, enter handler", 0})
+      .Build();
+}
+
+constexpr CycleFragment ReturnFromInterrupt() {
+  // RTI: 7 cycles native (e=0), 6 cycles emulation (e=1). Pull P, PCL, PCH
+  // in both modes; pull PBR only in native. PC is not incremented after the
+  // pull (unlike RTS/RTL). Bruce Clark §6.3.2.
+  return Fragment()
+      .Then(Internal(MicroInternalOp::kNone, Always(), "internal"))
+      .Then(Internal(MicroInternalOp::kNone, Always(), "internal"))
+      .Then(PullPreIncLoadReg(Reg::kP, ByteSel::kLow, false, Always(), "pull P"))
+      .Then(PullPreIncLoadPcByte(Reg::kPcl, "pull PCL"))
+      .Then(PullPreIncLoadPcByte(Reg::kPch, "pull PCH"))
+      .Then(CycleSlotSpec{
+          MicroBusAction::kPreIncPullStack,
+          MicroInternalOp::kLoadReg,
+          Not(Condition(TimingCondition::kEmulationMode)),
+          "pull PBR (native)",
+          micro_op_params::PackLoadReg(Reg::kPbr, ByteSel::kLow, false),
+      })
+      .Build();
+}
+
 constexpr CycleSlotSpec ShiftRotateAccumulator(ShiftOp op, std::string_view label) {
   return CycleSlotSpec{
       MicroBusAction::kNone,
@@ -673,6 +764,24 @@ constexpr auto MakeRmwMemSpecs() {
           .Then(FetchAbsoluteIndexed(Reg::kX))
           .Then(ReadModifyWriteFromAddr(RmwOp::kDec))
           .Build(),
+      // TSB / TRB — test-and-set / test-and-reset bits (Bruce Clark §6.1.2.3).
+      // Same RMW shape as INC/DEC; only Z is updated.
+      Opcode(0x04, "TSB", "direct page")
+          .Then(FetchDirectPage())
+          .Then(ReadModifyWriteFromAddr(RmwOp::kTsb))
+          .Build(),
+      Opcode(0x0C, "TSB", "absolute")
+          .Then(FetchAbsolute())
+          .Then(ReadModifyWriteFromAddr(RmwOp::kTsb))
+          .Build(),
+      Opcode(0x14, "TRB", "direct page")
+          .Then(FetchDirectPage())
+          .Then(ReadModifyWriteFromAddr(RmwOp::kTrb))
+          .Build(),
+      Opcode(0x1C, "TRB", "absolute")
+          .Then(FetchAbsolute())
+          .Then(ReadModifyWriteFromAddr(RmwOp::kTrb))
+          .Build(),
   };
 }
 
@@ -710,6 +819,14 @@ constexpr auto MakeAluSpecs() {
       Opcode(0xC5, "CMP", "direct page")
           .Then(FetchDirectPage())
           .Then(AluFromAddr(AluOp::kCmp, TimingCondition::kAccumulator16))
+          .Build(),
+      Opcode(0xE4, "CPX", "direct page")
+          .Then(FetchDirectPage())
+          .Then(AluFromAddr(AluOp::kCpx, TimingCondition::kIndex16))
+          .Build(),
+      Opcode(0xC4, "CPY", "direct page")
+          .Then(FetchDirectPage())
+          .Then(AluFromAddr(AluOp::kCpy, TimingCondition::kIndex16))
           .Build(),
   };
 }
@@ -757,6 +874,57 @@ constexpr auto MakeJumpSpecs() {
       Opcode(0xFC, "JSR", "absolute indexed indirect X").Then(JsrAbsoluteIndexedIndirectX()).Build(),
       Opcode(0x60, "RTS", "implied").Then(Rts()).Build(),
       Opcode(0x6B, "RTL", "implied").Then(Rtl()).Build(),
+      Opcode(0x40, "RTI", "implied").Then(ReturnFromInterrupt()).Build(),
+      Opcode(0x00, "BRK", "immediate byte").Then(SoftwareInterrupt(/*is_cop=*/false)).Build(),
+      Opcode(0x02, "COP", "immediate byte").Then(SoftwareInterrupt(/*is_cop=*/true)).Build(),
+      // STP (0xDB) / WAI (0xCB): 3 cycles, halt the CPU (Bruce Clark §6.9).
+      // STP stops until reset; WAI waits for an interrupt. Without an interrupt
+      // model the two share behavior — both halt until Reset() clears halted_.
+      Opcode(0xDB, "STP", "implied")
+          .Then(Internal(MicroInternalOp::kNone, Always(), "internal"))
+          .Then(Internal(MicroInternalOp::kHaltCpu, Always(), "halt"))
+          .Build(),
+      Opcode(0xCB, "WAI", "implied")
+          .Then(Internal(MicroInternalOp::kNone, Always(), "internal"))
+          .Then(Internal(MicroInternalOp::kHaltCpu, Always(), "halt"))
+          .Build(),
+      // MVN / MVP block moves (Bruce Clark §6.6). 7 cycles per byte moved;
+      // when A != $FFFF the last cycle rewinds PC by 3 so the opcode fetches
+      // itself again for the next byte. A is the (count-1), X and Y are the
+      // source/destination low-16 addresses, source and dest banks come from
+      // the two operand bytes. DBR ends up at the destination bank.
+      Opcode(0x54, "MVN", "src,dest")
+          .Then(FetchPc(MicroInternalOp::kMoveSetDbr, Always(), "fetch dest bank → DBR"))
+          .Then(FetchPc(MicroInternalOp::kMoveSetAddrFromSrc, Always(), "fetch src bank, addr=src:X"))
+          .Then(CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kMoveSetAddrFromDst, Always(),
+                              "read src byte; addr=DBR:Y", 0})
+          .Then(CycleSlotSpec{
+              MicroBusAction::kWriteRegByte,
+              MicroInternalOp::kMoveAdjust,
+              Always(),
+              "write dest byte; adjust A/X/Y (inc)",
+              micro_op_params::PackWriteAddr(WriteSrc::kFetchData, ByteSel::kLow),
+          })
+          .Then(Internal(MicroInternalOp::kMoveLoopCheck, Always(), "loop if A != $FFFF"))
+          .Then(Internal(MicroInternalOp::kNone, Always(), "idle"))
+          .Build(),
+      Opcode(0x44, "MVP", "src,dest")
+          .Then(FetchPc(MicroInternalOp::kMoveSetDbr, Always(), "fetch dest bank → DBR"))
+          .Then(FetchPc(MicroInternalOp::kMoveSetAddrFromSrc, Always(), "fetch src bank, addr=src:X"))
+          .Then(CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kMoveSetAddrFromDst, Always(),
+                              "read src byte; addr=DBR:Y", 0})
+          .Then(CycleSlotSpec{
+              MicroBusAction::kWriteRegByte,
+              MicroInternalOp::kMoveAdjust,
+              Always(),
+              "write dest byte; adjust A/X/Y (dec)",
+              // WriteSrc::kFetchData occupies bits [2:0]; the dec flag rides in bit 4
+              // so it does not collide with the write-source encoding.
+              static_cast<uint8_t>(micro_op_params::PackWriteAddr(WriteSrc::kFetchData, ByteSel::kLow) | 0x10U),
+          })
+          .Then(Internal(MicroInternalOp::kMoveLoopCheck, Always(), "loop if A != $FFFF"))
+          .Then(Internal(MicroInternalOp::kNone, Always(), "idle"))
+          .Build(),
   };
 }
 
@@ -1449,6 +1617,9 @@ constexpr OpcodeAddressingMode MapAddressingMode(std::string_view mode) {
   if (mode == "stack relative indirect indexed Y") {
     return OpcodeAddressingMode::kStackRelativeIndirectIndexedY;
   }
+  if (mode == "src,dest") {
+    return OpcodeAddressingMode::kBlockMove;
+  }
   return OpcodeAddressingMode::kUnknown;
 }
 
@@ -1490,7 +1661,8 @@ constexpr OpcodeMetadataView LowerPublicMetadata(const opcode_defs_internal::Opc
     case OpcodeAddressingMode::kAbsoluteLongIndexedX: view.base_length = 4; break;
     case OpcodeAddressingMode::kAbsoluteIndirect:
     case OpcodeAddressingMode::kAbsoluteIndirectLong:
-    case OpcodeAddressingMode::kAbsoluteIndexedIndirectX: view.base_length = 3; break;
+    case OpcodeAddressingMode::kAbsoluteIndexedIndirectX:
+    case OpcodeAddressingMode::kBlockMove: view.base_length = 3; break;
   }
 
   return view;
@@ -1551,6 +1723,7 @@ std::string_view GetAddressingModeName(OpcodeAddressingMode mode) {
     case OpcodeAddressingMode::kAbsoluteIndirectLong: return "absolute indirect long";
     case OpcodeAddressingMode::kAbsoluteIndexedIndirectX: return "absolute indexed indirect X";
     case OpcodeAddressingMode::kStackRelativeIndirectIndexedY: return "stack relative indirect indexed Y";
+    case OpcodeAddressingMode::kBlockMove: return "src,dest";
   }
   return "unknown";
 }

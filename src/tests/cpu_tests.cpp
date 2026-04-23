@@ -2654,3 +2654,427 @@ TEST_CASE("REP in emulation mode cannot clear M or X", "[cpu][opcode]") {
   REQUIRE(out.M == true);
   REQUIRE(out.X == true);
 }
+
+TEST_CASE("CPX dp compares X to memory and sets flags", "[unit][cpu][opcode]") {
+  ResetFixture f;
+  f.LoadInstruction({0xE4, 0x20});
+
+  f.cpu.Reset();
+  f.wram.WriteRegister(0x0020, 0x42, 0);
+  f.ModifyRegs([](auto& r) { r.X = 0x0042; });
+
+  (void)f.cpu.TickToTarget(f.snes.GetMasterTime() + 100);
+
+  REQUIRE(f.cpu.GetRegs().P.Z == true);
+  REQUIRE(f.cpu.GetRegs().P.C == true);
+  REQUIRE(f.cpu.GetRegs().P.N == false);
+  REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().X) == 0x42);
+}
+
+TEST_CASE("CPY dp compares Y to memory and sets carry/negative", "[unit][cpu][opcode]") {
+  ResetFixture f;
+  f.LoadInstruction({0xC4, 0x20});
+
+  f.cpu.Reset();
+  f.wram.WriteRegister(0x0020, 0x80, 0);
+  f.ModifyRegs([](auto& r) { r.Y = 0x0001; });
+
+  (void)f.cpu.TickToTarget(f.snes.GetMasterTime() + 100);
+
+  // 0x01 - 0x80 = 0x81 (N=1), and Y < mem so C=0.
+  REQUIRE(f.cpu.GetRegs().P.Z == false);
+  REQUIRE(f.cpu.GetRegs().P.C == false);
+  REQUIRE(f.cpu.GetRegs().P.N == true);
+  REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().Y) == 0x01);
+}
+
+TEST_CASE("TSB dp sets memory bits from A and updates Z from (A AND mem)", "[unit][cpu][opcode][rmw]") {
+  ResetFixture f;
+  f.LoadInstruction({0x04, 0x10});
+
+  f.cpu.Reset();
+  f.wram.WriteRegister(0x0010, 0x0C, 0);
+  f.ModifyRegs([](auto& r) {
+    r.A = 0x0003;
+    r.P.N = true;  // must be preserved
+    r.P.C = true;  // must be preserved
+  });
+
+  (void)f.cpu.TickToTarget(f.snes.GetMasterTime() + 100);
+
+  // mem was 0x0C, A=0x03; (A & mem) = 0 → Z=1; result mem = 0x0C | 0x03 = 0x0F.
+  REQUIRE(f.wram.ReadRegister(0x0010, 0).value == 0x0F);
+  REQUIRE(f.cpu.GetRegs().P.Z == true);
+  REQUIRE(f.cpu.GetRegs().P.N == true);   // preserved
+  REQUIRE(f.cpu.GetRegs().P.C == true);   // preserved
+  REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x03);  // A unchanged
+}
+
+TEST_CASE("TRB abs clears memory bits from A and leaves Z=0 on overlap", "[unit][cpu][opcode][rmw]") {
+  ResetFixture f;
+  f.LoadInstruction({0x1C, 0x34, 0x12});
+
+  f.cpu.Reset();
+  f.wram.WriteRegister(0x1234, 0xFF, 0);
+  f.ModifyRegs([](auto& r) { r.A = 0x0055; });
+
+  (void)f.cpu.TickToTarget(f.snes.GetMasterTime() + 100);
+
+  // (A & mem) = 0x55 → Z=0; result mem = 0xFF & ~0x55 = 0xAA.
+  REQUIRE(f.wram.ReadRegister(0x1234, 0).value == 0xAA);
+  REQUIRE(f.cpu.GetRegs().P.Z == false);
+  REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x55);
+}
+
+TEST_CASE("TSB abs 16-bit ORs a 16-bit value and uses 16-bit Z", "[unit][cpu][opcode][rmw]") {
+  ResetFixture f;
+  f.LoadInstruction({0x0C, 0x34, 0x12});
+
+  f.cpu.Reset();
+  f.ModifyRegs([](auto& r) {
+    r.P.E = false;
+    r.P.M = false;
+    r.A = 0x0000;  // AND with zero → Z=1, mem unchanged
+  });
+  f.wram.WriteRegister(0x1234, 0xAA, 0);
+  f.wram.WriteRegister(0x1235, 0x55, 0);
+
+  (void)f.cpu.TickToTarget(f.snes.GetMasterTime() + 100);
+
+  // A=0 so result = mem | 0 = unchanged; Z=1 from (A & mem) == 0.
+  REQUIRE(f.wram.ReadRegister(0x1234, 0).value == 0xAA);
+  REQUIRE(f.wram.ReadRegister(0x1235, 0).value == 0x55);
+  REQUIRE(f.cpu.GetRegs().P.Z == true);
+}
+
+TEST_CASE("WDM is a 2-byte, 2-cycle no-op that advances PC by 2", "[unit][cpu][opcode]") {
+  TestFixture f;
+  f.LoadAt(0, {0x42, 0xAB});
+
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 16);
+
+  // 2 cycles × 8 master (FetchPc on slow rom) = 16 master.
+  REQUIRE(r.completed_cycles == 16);
+  REQUIRE(f.cpu.GetRegs().PC == 0x8002);
+}
+
+TEST_CASE("XBA swaps A high and low bytes and sets N/Z from new low byte", "[unit][cpu][opcode]") {
+  ResetFixture f;
+  f.LoadInstruction({0xEB});
+
+  f.cpu.Reset();
+  f.ModifyRegs([](auto& r) {
+    r.P.E = false;
+    r.P.M = false;
+    r.A = 0x6789;  // B=0x67, A=0x89
+  });
+
+  (void)f.cpu.TickToTarget(f.snes.GetMasterTime() + 100);
+
+  // After swap: A = 0x8967. New low byte = 0x67 → N=0, Z=0.
+  REQUIRE(f.cpu.GetRegs().A == 0x8967);
+  REQUIRE(f.cpu.GetRegs().P.N == false);
+  REQUIRE(f.cpu.GetRegs().P.Z == false);
+}
+
+TEST_CASE("XBA with high byte zero sets Z regardless of M flag", "[unit][cpu][opcode]") {
+  ResetFixture f;
+  f.LoadInstruction({0xEB});
+
+  f.cpu.Reset();
+  f.ModifyRegs([](auto& r) { r.A = 0x0080; });  // B=0x00, A=0x80, M=1
+
+  (void)f.cpu.TickToTarget(f.snes.GetMasterTime() + 100);
+
+  // After swap A = 0x8000. New low byte = 0x00 → Z=1, N=0.
+  REQUIRE(f.cpu.GetRegs().A == 0x8000);
+  REQUIRE(f.cpu.GetRegs().P.Z == true);
+  REQUIRE(f.cpu.GetRegs().P.N == false);
+}
+
+TEST_CASE("PEI pushes 16-bit value read from DP+offset, high first", "[unit][cpu][opcode]") {
+  ResetFixture f;
+  f.LoadInstruction({0xD4, 0x10});
+
+  f.cpu.Reset();
+  // Value at $0010 (little-endian): $BEEF → low=$EF at $0010, high=$BE at $0011.
+  f.wram.WriteRegister(0x0010, 0xEF, 0);
+  f.wram.WriteRegister(0x0011, 0xBE, 0);
+
+  const uint16_t sp_before = f.cpu.GetRegs().SP;
+  (void)f.cpu.TickToTarget(f.snes.GetMasterTime() + 200);
+
+  // Push order: high to $sp, low to $sp-1; final SP = sp_before - 2.
+  REQUIRE(f.wram.ReadRegister(sp_before, 0).value == 0xBE);
+  REQUIRE(f.wram.ReadRegister(static_cast<uint16_t>(sp_before - 1U), 0).value == 0xEF);
+  REQUIRE(f.cpu.GetRegs().SP == static_cast<uint16_t>(sp_before - 2U));
+}
+
+TEST_CASE("PER pushes (PC + signed displacement) after the instruction", "[unit][cpu][opcode]") {
+  ResetFixture f;
+  // Opcode at $8000; displacement $0020 → effective addr = ($8003 + $0020) = $8023.
+  f.LoadInstruction({0x62, 0x20, 0x00});
+
+  f.cpu.Reset();
+  const uint16_t sp_before = f.cpu.GetRegs().SP;
+
+  // PER = 6 cycles: 5 bus × 8 + 1 internal × 6 = 46 master cycles.
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 46);
+  REQUIRE(r.completed_cycles == 46);
+
+  // High = $80, low = $23.
+  REQUIRE(f.wram.ReadRegister(sp_before, 0).value == 0x80);
+  REQUIRE(f.wram.ReadRegister(static_cast<uint16_t>(sp_before - 1U), 0).value == 0x23);
+  REQUIRE(f.cpu.GetRegs().SP == static_cast<uint16_t>(sp_before - 2U));
+  REQUIRE(f.cpu.GetRegs().PC == 0x8003);
+}
+
+TEST_CASE("BRK in emulation mode jumps through $FFFE, pushes PC+2 and P", "[unit][cpu][opcode]") {
+  ResetFixture f;
+  f.LoadInstruction({0x00, 0x42});  // BRK + signature
+  // Emulation BRK vector at $00:FFFE → handler $8100.
+  f.SetRomByte(0x7FFE, 0x00);
+  f.SetRomByte(0x7FFF, 0x81);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  const uint16_t sp_before = f.cpu.GetRegs().SP;
+
+  // BRK emulation = 7 cycles × 8 master = 56.
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 56);
+  REQUIRE(r.completed_cycles == 56);
+
+  REQUIRE(f.cpu.GetRegs().PC == 0x8100);
+  REQUIRE(f.cpu.GetRegs().PBR == 0x00);
+  REQUIRE(f.cpu.GetRegs().P.I == true);
+  REQUIRE(f.cpu.GetRegs().P.D == false);
+  // Pushed (top-down): PCH=$80 at $sp, PCL=$02 at $sp-1, P at $sp-2.
+  REQUIRE(f.wram.ReadRegister(sp_before, 0).value == 0x80);
+  REQUIRE(f.wram.ReadRegister(static_cast<uint16_t>(sp_before - 1U), 0).value == 0x02);
+  REQUIRE(f.cpu.GetRegs().SP == static_cast<uint16_t>(sp_before - 3U));
+}
+
+TEST_CASE("BRK in native mode pushes PBR and uses the $FFE6 vector", "[unit][cpu][opcode]") {
+  ResetFixture f;
+  f.LoadInstruction({0x00, 0x42});
+  // Native BRK vector at $00:FFE6.
+  f.SetRomByte(0x7FE6, 0x00);
+  f.SetRomByte(0x7FE7, 0x90);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  f.ModifyRegs([](auto& r) {
+    r.P.E = false;  // enter native mode
+    r.PBR = 0x80;
+  });
+  const uint16_t sp_before = f.cpu.GetRegs().SP;
+
+  // BRK native = 8 cycles × 8 master = 64.
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 64);
+  REQUIRE(r.completed_cycles == 64);
+
+  REQUIRE(f.cpu.GetRegs().PC == 0x9000);
+  REQUIRE(f.cpu.GetRegs().PBR == 0x00);
+  // Native push order: PBR, PCH, PCL, P.
+  REQUIRE(f.wram.ReadRegister(sp_before, 0).value == 0x80);  // PBR
+  REQUIRE(f.wram.ReadRegister(static_cast<uint16_t>(sp_before - 1U), 0).value == 0x80);  // PCH
+  REQUIRE(f.wram.ReadRegister(static_cast<uint16_t>(sp_before - 2U), 0).value == 0x02);  // PCL
+  REQUIRE(f.cpu.GetRegs().SP == static_cast<uint16_t>(sp_before - 4U));
+}
+
+TEST_CASE("COP jumps through its own emulation vector at $FFF4", "[unit][cpu][opcode]") {
+  ResetFixture f;
+  f.LoadInstruction({0x02, 0x55});  // COP + signature
+  f.SetRomByte(0x7FF4, 0x00);
+  f.SetRomByte(0x7FF5, 0x82);
+  f.SyncCartridge();
+
+  f.cpu.Reset();
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 56);
+  REQUIRE(r.completed_cycles == 56);
+
+  REQUIRE(f.cpu.GetRegs().PC == 0x8200);
+  REQUIRE(f.cpu.GetRegs().PBR == 0x00);
+  REQUIRE(f.cpu.GetRegs().P.I == true);
+  REQUIRE(f.cpu.GetRegs().P.D == false);
+}
+
+TEST_CASE("RTI in emulation pulls P then 16-bit PC", "[unit][cpu][opcode]") {
+  ResetFixture f;
+  f.LoadInstruction({0x40});
+
+  f.cpu.Reset();
+  // Pre-populate stack (emulation uses page 1). SP starts at $01FF.
+  f.ModifyRegs([](auto& r) {
+    r.SP = 0x01FC;
+    r.P.I = true;
+    r.P.D = true;
+  });
+  // After RTI with SP=$01FC: first increments SP and pulls P from $01FD,
+  // then PCL from $01FE, then PCH from $01FF.
+  f.wram.WriteRegister(0x01FD, 0x30, 0);  // P byte: M=1, Z=1 (just to see restore)
+  f.wram.WriteRegister(0x01FE, 0x34, 0);  // PCL
+  f.wram.WriteRegister(0x01FF, 0x12, 0);  // PCH
+
+  // RTI emulation = 6 cycles × 8 master = 48.
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 48);
+  REQUIRE(r.completed_cycles == 48);
+
+  REQUIRE(f.cpu.GetRegs().PC == 0x1234);
+  REQUIRE(f.cpu.GetRegs().SP == 0x01FF);
+  // $30 in P means M=1, X=1 (bits 5,4) set; D,I,Z,C are 0. In emulation
+  // M/X stay forced to 1 so the observable changes are D=0 (was 1), I=0, Z=0.
+  REQUIRE(f.cpu.GetRegs().P.D == false);
+  REQUIRE(f.cpu.GetRegs().P.I == false);
+}
+
+TEST_CASE("RTI in native also pulls PBR", "[unit][cpu][opcode]") {
+  ResetFixture f;
+  f.LoadInstruction({0x40});
+
+  f.cpu.Reset();
+  f.ModifyRegs([](auto& r) {
+    r.P.E = false;
+    r.SP = 0x01FB;
+    r.PBR = 0x80;
+  });
+  f.wram.WriteRegister(0x01FC, 0x00, 0);  // P
+  f.wram.WriteRegister(0x01FD, 0x34, 0);  // PCL
+  f.wram.WriteRegister(0x01FE, 0x12, 0);  // PCH
+  f.wram.WriteRegister(0x01FF, 0x42, 0);  // PBR
+
+  // RTI native = 7 cycles × 8 master = 56.
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 56);
+  REQUIRE(r.completed_cycles == 56);
+
+  REQUIRE(f.cpu.GetRegs().PC == 0x1234);
+  REQUIRE(f.cpu.GetRegs().PBR == 0x42);
+  REQUIRE(f.cpu.GetRegs().SP == 0x01FF);
+}
+
+TEST_CASE("STP halts the CPU: subsequent ticks do not advance PC", "[unit][cpu][opcode]") {
+  ResetFixture f;
+  // STP at $8000, followed by an INX ($E8) we must NOT execute.
+  f.LoadInstruction({0xDB, 0xE8, 0xE8, 0xE8});
+
+  f.cpu.Reset();
+  f.ModifyRegs([](auto& r) { r.X = 0x0001; });
+
+  // STP = 3 cycles × 8 master = 24.
+  TickResult r1 = f.cpu.TickToTarget(f.snes.GetMasterTime() + 24);
+  REQUIRE(r1.completed_cycles == 24);
+  // PC advanced past the 1-byte STP.
+  REQUIRE(f.cpu.GetRegs().PC == 0x8001);
+  REQUIRE(f.cpu.GetRegs().X == 0x0001);
+
+  // Further ticks should consume time but not execute any further instructions.
+  TickResult r2 = f.cpu.TickToTarget(f.snes.GetMasterTime() + 200);
+  REQUIRE(r2.completed_cycles == 200);
+  REQUIRE(f.cpu.GetRegs().PC == 0x8001);
+  REQUIRE(f.cpu.GetRegs().X == 0x0001);
+}
+
+TEST_CASE("MVN copies a block forward one byte per 7-cycle pass", "[unit][cpu][opcode]") {
+  ResetFixture f;
+  // MVN #$00,#$00 — src bank = dest bank = $00. Operand layout on 65C816 is
+  // dest bank byte first, then source bank (Clark §6.6).
+  f.LoadInstruction({0x54, 0x00, 0x00});
+
+  f.cpu.Reset();
+  f.ModifyRegs([](auto& r) {
+    r.P.E = false;  // enable 16-bit A/X/Y
+    r.P.M = false;
+    r.P.X = false;
+    r.A = 0x0002;   // 3 bytes: count - 1
+    r.X = 0x0300;   // source low 16
+    r.Y = 0x0400;   // destination low 16
+    r.DBR = 0x55;   // will be overwritten by dest bank ($00)
+  });
+  f.wram.WriteRegister(0x0300, 0xAA, 0);
+  f.wram.WriteRegister(0x0301, 0xBB, 0);
+  f.wram.WriteRegister(0x0302, 0xCC, 0);
+  // Clear the destination region.
+  f.wram.WriteRegister(0x0400, 0x00, 0);
+  f.wram.WriteRegister(0x0401, 0x00, 0);
+  f.wram.WriteRegister(0x0402, 0x00, 0);
+
+  // MVN per iteration = 5 bus (8 master each) + 2 internal (6 master each) =
+  // 52 master. 3 iterations = 156 master.
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 156);
+  REQUIRE(r.completed_cycles == 156);
+
+  REQUIRE(f.wram.ReadRegister(0x0400, 0).value == 0xAA);
+  REQUIRE(f.wram.ReadRegister(0x0401, 0).value == 0xBB);
+  REQUIRE(f.wram.ReadRegister(0x0402, 0).value == 0xCC);
+  REQUIRE(f.cpu.GetRegs().A == 0xFFFF);
+  REQUIRE(f.cpu.GetRegs().X == 0x0303);
+  REQUIRE(f.cpu.GetRegs().Y == 0x0403);
+  REQUIRE(f.cpu.GetRegs().DBR == 0x00);
+  // PC advanced past the 3-byte instruction after the final iteration.
+  REQUIRE(f.cpu.GetRegs().PC == 0x8003);
+}
+
+TEST_CASE("MVP copies a block backward one byte per 7-cycle pass", "[unit][cpu][opcode]") {
+  ResetFixture f;
+  // MVP #$00,#$00 — dest and src bank both $00.
+  f.LoadInstruction({0x44, 0x00, 0x00});
+
+  f.cpu.Reset();
+  f.ModifyRegs([](auto& r) {
+    r.P.E = false;
+    r.P.M = false;
+    r.P.X = false;
+    r.A = 0x0002;   // 3 bytes to move
+    r.X = 0x0302;   // source = end of block (MVP walks downward)
+    r.Y = 0x0402;   // destination = end of block
+    r.DBR = 0x55;
+  });
+  f.wram.WriteRegister(0x0300, 0xAA, 0);
+  f.wram.WriteRegister(0x0301, 0xBB, 0);
+  f.wram.WriteRegister(0x0302, 0xCC, 0);
+  f.wram.WriteRegister(0x0400, 0x00, 0);
+  f.wram.WriteRegister(0x0401, 0x00, 0);
+  f.wram.WriteRegister(0x0402, 0x00, 0);
+
+  // MVP per iteration = 5 bus × 8 + 2 internal × 6 = 52 master. 3 iterations = 156.
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 156);
+  REQUIRE(r.completed_cycles == 156);
+
+  REQUIRE(f.wram.ReadRegister(0x0400, 0).value == 0xAA);
+  REQUIRE(f.wram.ReadRegister(0x0401, 0).value == 0xBB);
+  REQUIRE(f.wram.ReadRegister(0x0402, 0).value == 0xCC);
+  REQUIRE(f.cpu.GetRegs().A == 0xFFFF);
+  REQUIRE(f.cpu.GetRegs().X == 0x02FF);
+  REQUIRE(f.cpu.GetRegs().Y == 0x03FF);
+  REQUIRE(f.cpu.GetRegs().DBR == 0x00);
+  REQUIRE(f.cpu.GetRegs().PC == 0x8003);
+}
+
+TEST_CASE("WAI halts the CPU until reset", "[unit][cpu][opcode]") {
+  ResetFixture f;
+  f.LoadInstruction({0xCB, 0xE8, 0xE8});
+
+  f.cpu.Reset();
+  f.ModifyRegs([](auto& r) { r.X = 0x0010; });
+
+  TickResult r1 = f.cpu.TickToTarget(f.snes.GetMasterTime() + 24);
+  REQUIRE(r1.completed_cycles == 24);
+
+  TickResult r2 = f.cpu.TickToTarget(f.snes.GetMasterTime() + 128);
+  REQUIRE(r2.completed_cycles == 128);
+  REQUIRE(f.cpu.GetRegs().PC == 0x8001);
+  REQUIRE(f.cpu.GetRegs().X == 0x0010);  // INX never executed
+}
+
+TEST_CASE("PER with negative displacement wraps within the bank", "[unit][cpu][opcode]") {
+  ResetFixture f;
+  // Opcode at $8000; disp = $FFF0 (-16) → effective = ($8003 - 16) = $7FF3.
+  f.LoadInstruction({0x62, 0xF0, 0xFF});
+
+  f.cpu.Reset();
+  const uint16_t sp_before = f.cpu.GetRegs().SP;
+  (void)f.cpu.TickToTarget(f.snes.GetMasterTime() + 200);
+
+  REQUIRE(f.wram.ReadRegister(sp_before, 0).value == 0x7F);
+  REQUIRE(f.wram.ReadRegister(static_cast<uint16_t>(sp_before - 1U), 0).value == 0xF3);
+}

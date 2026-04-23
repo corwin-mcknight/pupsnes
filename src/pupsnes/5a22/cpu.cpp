@@ -256,6 +256,7 @@ void CPU::Reset() {
   addr_scratch_ = 0;
   timing_context_ = TimingContext{};
   fault_.reset();
+  halted_ = false;
   retired_instruction_count_ = 0;
   current_instr_ = nullptr;
   needs_drain_ = false;
@@ -330,6 +331,10 @@ void CPU::DrainSkippedMicroOpsSlow() {
 void CPU::RecordFault(Fault::Type type, uint8_t opcode, SnesAddrT opcode_address) {
   fault_ = Fault{type, opcode, opcode_address, regs_};
   FinishInstruction();
+}
+
+void CPU::DebugInjectFault(uint8_t opcode, SnesAddrT address) {
+  RecordFault(Fault::Type::kUnimplementedOpcode, opcode, address);
 }
 
 BusFollowResult CPU::PlanAndFollow(SnesAddrT addr, BusAccessType type, uint8_t data, TimeMasterDeltaT cycle_time) {
@@ -608,6 +613,80 @@ void CPU::ExecuteInternalOp(MicroInternalOp op, [[maybe_unused]] uint8_t params)
       return;
     }
 
+    case MicroInternalOp::kSwapBA: {
+      regs_.A = static_cast<uint16_t>(((regs_.A & 0x00FFU) << 8U) | ((regs_.A & 0xFF00U) >> 8U));
+      const uint8_t low = static_cast<uint8_t>(regs_.A & 0x00FFU);
+      regs_.P.Z = (low == 0U);
+      regs_.P.N = (low & 0x80U) != 0U;
+      return;
+    }
+
+    case MicroInternalOp::kAddPcToAddr: {
+      const uint32_t sum = (static_cast<uint32_t>(regs_.PC) + (addr_ & 0xFFFFU)) & 0xFFFFU;
+      addr_ = (addr_ & 0xFF0000U) | sum;
+      return;
+    }
+
+    case MicroInternalOp::kSetInterruptVector: {
+      const bool is_cop = (params & 0x01U) != 0U;
+      if (is_cop) {
+        addr_ = regs_.P.E ? 0x00FFF4U : 0x00FFE4U;
+      } else {
+        addr_ = regs_.P.E ? 0x00FFFEU : 0x00FFE6U;
+      }
+      return;
+    }
+
+    case MicroInternalOp::kEnterInterruptHandler: {
+      const uint16_t scratch_low = static_cast<uint16_t>(addr_scratch_ & 0x00FFU);
+      regs_.PC = static_cast<uint16_t>((static_cast<uint16_t>(fetch_data_) << 8U) | scratch_low);
+      regs_.PBR = 0;
+      regs_.P.I = true;
+      regs_.P.D = false;
+      return;
+    }
+
+    case MicroInternalOp::kHaltCpu:
+      halted_ = true;
+      return;
+
+    case MicroInternalOp::kMoveSetDbr:
+      regs_.DBR = fetch_data_;
+      return;
+
+    case MicroInternalOp::kMoveSetAddrFromSrc:
+      addr_ = (static_cast<uint32_t>(fetch_data_) << 16U) | static_cast<uint32_t>(regs_.X & 0xFFFFU);
+      return;
+
+    case MicroInternalOp::kMoveSetAddrFromDst:
+      addr_ = (static_cast<uint32_t>(regs_.DBR) << 16U) | static_cast<uint32_t>(regs_.Y & 0xFFFFU);
+      return;
+
+    case MicroInternalOp::kMoveAdjust: {
+      // Shared params with kWriteRegByte: WriteSrc lives in bits [2:0] and
+      // ByteSel in bit 3. Use bit 4 for the direction flag so kWriteRegByte
+      // still sees WriteSrc::kFetchData (0x00).
+      const bool dec = (params & 0x10U) != 0U;
+      regs_.A = static_cast<uint16_t>((regs_.A - 1U) & 0xFFFFU);
+      const uint32_t delta = dec ? 0xFFFFU : 0x0001U;  // -1 or +1 mod 65536
+      if (IsIndex16Bit(regs_)) {
+        regs_.X = static_cast<uint16_t>((regs_.X + delta) & 0xFFFFU);
+        regs_.Y = static_cast<uint16_t>((regs_.Y + delta) & 0xFFFFU);
+      } else {
+        regs_.X =
+            static_cast<uint16_t>((regs_.X & 0xFF00U) | ((static_cast<uint32_t>(regs_.X) + delta) & 0x00FFU));
+        regs_.Y =
+            static_cast<uint16_t>((regs_.Y & 0xFF00U) | ((static_cast<uint32_t>(regs_.Y) + delta) & 0x00FFU));
+      }
+      return;
+    }
+
+    case MicroInternalOp::kMoveLoopCheck:
+      if (regs_.A != 0xFFFFU) {
+        regs_.PC = static_cast<uint16_t>((regs_.PC - 3U) & 0xFFFFU);
+      }
+      return;
+
     case MicroInternalOp::kTransferReg: {
       const Reg src = mp::UnpackTransferSrc(params);
       const Reg dst = mp::UnpackTransferDst(params);
@@ -750,6 +829,22 @@ void CPU::ExecuteInternalOp(MicroInternalOp op, [[maybe_unused]] uint8_t params)
           result = (operand + mask) & mask;  // +mask == -1 modulo mask+1
           carry_out = regs_.P.C;
           break;
+        case RmwOp::kTsb:
+        case RmwOp::kTrb: {
+          // TSB/TRB: Z reflects (A & mem), then mem' = mem | A (TSB) or
+          // mem & ~A (TRB). N and C are preserved. Bruce Clark §6.1.2.3.
+          const uint32_t a_masked = static_cast<uint32_t>(regs_.A) & mask;
+          regs_.P.Z = ((operand & a_masked) == 0U);
+          result = (rop == RmwOp::kTsb) ? ((operand | a_masked) & mask) : ((operand & ~a_masked) & mask);
+          if (wide) {
+            fetch_data_ = static_cast<uint8_t>((result >> 8U) & 0xFFU);
+            addr_scratch_ = static_cast<uint16_t>((addr_scratch_ & 0xFF00U) | (result & 0x00FFU));
+          } else {
+            fetch_data_ = static_cast<uint8_t>(result & 0xFFU);
+            addr_ = (addr_ + 0xFFFFFFU) & 0xFFFFFFU;
+          }
+          return;
+        }
       }
       // Shift/rotate ops update C; INC/DEC leave it alone (carry_out preset).
       if (rop == RmwOp::kAsl || rop == RmwOp::kLsr || rop == RmwOp::kRol || rop == RmwOp::kRor) {
@@ -1093,6 +1188,15 @@ TickResult CPU::TickToTarget(TimeMasterT target_master_time) {
 
   const TimeMasterT start = snes_->GetMasterTime();
 
+  // STP / WAI: once halted, consume the remainder of the tick target without
+  // fetching or executing. No interrupt path exists yet to wake WAI, so both
+  // effectively stop the CPU until Reset() clears halted_.
+  if (halted_) {
+    snes_->SetMasterTime(target_master_time);
+    local_time_ = target_master_time;
+    return {target_master_time - start, TickStopReason::kReachedTarget};
+  }
+
   while (snes_->GetMasterTime() < target_master_time) {
     // DRAM refresh: stall the CPU for its window, consume mcyc without
     // issuing bus ops. Clamp to remaining target.
@@ -1135,6 +1239,11 @@ TickResult CPU::TickToTarget(TimeMasterT target_master_time) {
     local_time_ = snes_->GetMasterTime();
     partial_op_cycles_ = 0;
 
+    if (halted_ && ShouldFetchInstruction()) {
+      snes_->SetMasterTime(target_master_time);
+      local_time_ = target_master_time;
+      return {snes_->GetMasterTime() - start, TickStopReason::kReachedTarget};
+    }
     StepResult step = ShouldFetchInstruction() ? FetchOpcode(0) : ExecuteMicroOp(0);
     if (step.stopped) {
       return {snes_->GetMasterTime() - start,

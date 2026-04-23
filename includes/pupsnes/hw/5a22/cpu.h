@@ -108,6 +108,42 @@ enum class MicroInternalOp : uint8_t {
                              // (P &= ~fetch_data_). Both paths preserve the E-mode forcing of
                              // M/X back to 1 via regs.P.FromByte + ApplyEmulationForcing.
   kExchangeCarryEmulation,   // swap C and E; on E=1 force M,X=1, XH/YH=0, SH=$01
+  kSwapBA,                   // XBA: swap the high and low bytes of the 16-bit A register.
+                             // N and Z are always set from the new low byte (i.e. the prior
+                             // high byte) regardless of the M flag (Bruce Clark §6.10.3).
+                             // No params.
+  kAddPcToAddr,              // PER: addr_[15:0] = (PC + addr_[15:0]) & 0xFFFF. Used to
+                             // compute the PC-relative effective address a PER pushes after
+                             // the signed 16-bit displacement has been stashed into addr_[15:0]
+                             // by two kSetAddrByteFromFetch cycles. Bank byte of addr_ is left
+                             // unchanged; callers only consume addr_[15:0] via PushSrc::
+                             // kAddrHigh/kAddrLow. No params.
+  kSetInterruptVector,       // BRK/COP: addr_ = <interrupt vector for (is_cop, E)>. Params bit 0
+                             // = is_cop (0 = BRK, 1 = COP). Native (E=0): BRK=$00FFE6,
+                             // COP=$00FFE4. Emulation (E=1): BRK=$00FFFE, COP=$00FFF4.
+                             // Bruce Clark §6.3.1 / §6.11.
+  kEnterInterruptHandler,    // BRK/COP/HW interrupt entry — consumes the 16-bit handler PC built
+                             // from addr_scratch_[7:0] (low, stashed by a prior kStashIndirectLow)
+                             // and fetch_data_ (high). Sets PC = fetch_data_:scratch_low, PBR = 0,
+                             // I = 1, D = 0. No params.
+  kHaltCpu,                  // STP / WAI: set halted_ = true. TickToTarget consumes master
+                             // cycles without fetching or executing further instructions until
+                             // Reset() clears the flag. No params.
+  kMoveSetDbr,               // MVN/MVP: DBR = fetch_data_ (no flag changes). Emitted in the
+                             // cycle that fetches the destination-bank operand byte.
+  kMoveSetAddrFromSrc,       // MVN/MVP: addr_ = (fetch_data_ << 16) | X, where fetch_data_
+                             // holds the just-fetched source-bank byte. Emitted in the cycle
+                             // that fetches the source-bank operand.
+  kMoveSetAddrFromDst,       // MVN/MVP: addr_ = (DBR << 16) | Y. Emitted during the read cycle
+                             // (paired with kReadAddr) so the next cycle's write lands at
+                             // dest_bank:Y.
+  kMoveAdjust,               // MVN/MVP post-move register update. A -= 1 (always 16-bit); when
+                             // the X flag is 0, X and Y adjust as 16-bit; when X=1, only the
+                             // low byte of X and Y is updated. Params bit 0 = decrement (1 =
+                             // MVP: dec X/Y, 0 = MVN: inc X/Y).
+  kMoveLoopCheck,            // MVN/MVP: if A != $FFFF then PC -= 3 (re-execute the 3-byte
+                             // instruction for the next byte). When A == $FFFF the move is
+                             // complete and PC (already past the instruction) is unchanged.
   kTransferReg,              // dst = src; width/flag semantics per (src,dst) pair; params
                              // packs src in [3:0] and dst in [7:4] (see micro_op_params::PackTransfer)
   kSetPcFromAddr,            // PC = addr_[15:0]. Params bit 0 = with_pbr: when 1, also set
@@ -175,9 +211,12 @@ enum class BranchCond : uint8_t { kAlways, kZ, kNotZ, kC, kNotC, kN, kNotN, kV, 
 enum class AluOp : uint8_t { kAdc, kSbc, kAnd, kOra, kEor, kCmp, kCpx, kCpy, kBit, kBitMem };
 enum class ShiftOp : uint8_t { kAsl, kLsr, kRol, kRor };
 // Memory read-modify-write ops. kAsl/kLsr/kRol/kRor mirror ShiftOp; kInc/kDec
-// are the memory forms of INC/DEC. Packed into a MicroInternalOp::kRmwMem
-// params byte (see micro_op_params::PackRmw).
-enum class RmwOp : uint8_t { kAsl, kLsr, kRol, kRor, kInc, kDec };
+// are the memory forms of INC/DEC. kTsb/kTrb are the test-and-set / test-and-
+// reset bit ops (Bruce Clark §6.1.2.3): result = mem | A or mem & ~A, and the
+// only flag updated is Z, computed from (A & mem). Packed into a
+// MicroInternalOp::kRmwMem params byte (see micro_op_params::PackRmw); the
+// three-bit field has room for eight variants.
+enum class RmwOp : uint8_t { kAsl, kLsr, kRol, kRor, kInc, kDec, kTsb, kTrb };
 // kScratchLow: write the low byte of addr_scratch_ (used by 16-bit RMW to
 // emit the modified low byte back to memory on the final write cycle).
 enum class WriteSrc : uint8_t { kFetchData, kA, kX, kY, kZero, kScratchLow };
@@ -272,6 +311,13 @@ class CPU : public MasterClockDriver {
   void SetRegs(const Regs& r) { regs_ = r; }
   [[nodiscard]] uint8_t GetMicroOpIndex() const { return micro_op_index_; }
   [[nodiscard]] const std::optional<Fault>& GetFault() const { return fault_; }
+
+  // Test-only: inject a fault as if the CPU encountered an unimplemented
+  // opcode at `address`. Exists so debugger/run-control tests can exercise
+  // the fault-handling path without relying on an unimplemented opcode
+  // (every 65C816 opcode is now implemented). Not intended for production
+  // callers.
+  void DebugInjectFault(uint8_t opcode, SnesAddrT address);
   [[nodiscard]] uint64_t GetRetiredInstructionCount() const { return retired_instruction_count_; }
 
   // DRAM-refresh telemetry. Windows counts the number of 40-cycle refresh
@@ -334,6 +380,12 @@ class CPU : public MasterClockDriver {
   uint16_t addr_scratch_ = 0;
   TimingContext timing_context_{};
   std::optional<Fault> fault_ = std::nullopt;
+  // Set by STP / WAI via MicroInternalOp::kHaltCpu. While true, TickToTarget
+  // consumes master cycles without fetching or executing further instructions.
+  // Cleared by Reset(). The distinction between STP (stopped until reset) and
+  // WAI (waiting for interrupt) is not observable without an interrupt model;
+  // both currently halt until Reset().
+  bool halted_ = false;
   uint64_t retired_instruction_count_ = 0;
   MicroOpRecorder* micro_op_recorder_ = nullptr;
   DebuggerContract debugger_contract_{};
