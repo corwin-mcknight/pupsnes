@@ -2,6 +2,7 @@
 
 #include "pupsnes/hw/cartridge.h"
 #include "pupsnes/hw/snes.h"
+#include "pupsnes/hw/sppu/ppu.h"
 #include "pupsnes/hw/systembus.h"
 
 namespace pupsnes {
@@ -42,10 +43,36 @@ void CpuMmio::MapSystemBus(SystemBus& bus) {
   }
 }
 
-MmioReadResult CpuMmio::ReadRegister(uint32_t offset, TimeMasterT /*current_time*/) {
+MmioReadResult CpuMmio::ReadRegister(uint32_t offset, TimeMasterT current_time) {
   const uint32_t reg = offset & 0xFFFFU;
   if (reg == kMemSelOffset) {
     return {memsel_, 0xFFU};
+  }
+  if (reg == kRdNmiOffset) {
+    // RDNMI read both samples and clears the VBlank NMI latch. Polling loops
+    // of the form `BIT $4210 / BPL` see bit 7 high once per frame at VBlank
+    // entry and fall back to 0 on the next read until the latch re-arms.
+    bool vblank_nmi = false;
+    if (snes_ != nullptr && snes_->ppu != nullptr) {
+      vblank_nmi = snes_->ppu->QueryAndClearVblankNmiFlag(current_time);
+    }
+    uint8_t value = kRdNmiCpuVersion;
+    if (vblank_nmi) value = static_cast<uint8_t>(value | kRdNmiVblankFlagMask);
+    return {value, kRdNmiDrivenMask};
+  }
+  if (reg == kHvbJoyOffset) {
+    // Query the PPU directly so the flags reflect the bus cycle's master time.
+    // The PPU catches up internally; missing the call would leak stale h/v
+    // from whenever the PPU last advanced.
+    PpuHvbStatus status{false, false};
+    if (snes_ != nullptr && snes_->ppu != nullptr) {
+      status = snes_->ppu->QueryHvbStatus(current_time);
+    }
+    uint8_t value = 0;
+    if (status.vblank) value = static_cast<uint8_t>(value | kHvbJoyVblankMask);
+    if (status.hblank) value = static_cast<uint8_t>(value | kHvbJoyHblankMask);
+    // Auto-joypad busy bit stays 0 until the joypad auto-read controller lands.
+    return {value, kHvbJoyDrivenMask};
   }
   // Stub: other CPU MMIO registers (NMITIMEN, RDNMI, joypad, HDMA) are not yet
   // modeled. Return pure open-bus (mask=0) so the bus merges in the last data

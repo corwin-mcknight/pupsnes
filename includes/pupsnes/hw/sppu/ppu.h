@@ -33,6 +33,14 @@ struct PpuPokeLogEntry {
   uint8_t data;
 };
 
+// H/V-blank status bits surfaced to CPU-side consumers ($4212 HVBJOY today;
+// IRQ/NMI wiring later). Computed lazily from the PPU's dot/scanline cursor
+// after catching up to the caller's master time.
+struct PpuHvbStatus {
+  bool vblank;
+  bool hblank;
+};
+
 // SPPU — Super Nintendo Picture Processing Unit (v1 scaffold).
 //
 // v1 scope (backdrop-only rendering):
@@ -72,6 +80,21 @@ class Ppu : public Device {
   void CatchUpTo(TimeMasterT target) override;
   [[nodiscard]] MmioReadResult ReadRegister(uint32_t offset, TimeMasterT current_time) override;
   void WriteRegister(uint32_t offset, uint8_t data, TimeMasterT current_time) override;
+
+  // Catch up to `current_time` and report the H/V-blank flags the CPU-side
+  // HVBJOY ($4212) register would see. Per fullsnes: VBlank spans V>=225 (or
+  // V>=240 when SETINI overscan is enabled) through end of frame; HBlank
+  // spans H>=274 through the start of the next scanline.
+  [[nodiscard]] PpuHvbStatus QueryHvbStatus(TimeMasterT current_time);
+
+  // Catch up to `current_time`, sample the VBlank-NMI latch, and clear it.
+  // The latch sets when the PPU enters VBlank (V transitions to 225, or 240
+  // under overscan) and clears on either a read or V rolling back to 0 at
+  // frame start. Backs RDNMI ($4210) bit 7; BIT $4210 / BPL polling loops
+  // see the latch go high once per frame and fall back to 0 after sampling.
+  [[nodiscard]] bool QueryAndClearVblankNmiFlag(TimeMasterT current_time);
+  // Read-only peek at the latch (no catch-up, no clear) — for the debugger.
+  [[nodiscard]] bool PeekVblankNmiFlag() const { return vblank_nmi_flag_; }
 
   // Buffer accessors — both buffers are always readable so the debugger can
   // sample the in-progress frame without waiting for a swap. Buffers are sized
@@ -223,6 +246,11 @@ class Ppu : public Device {
   uint32_t h_ = 0;
   uint32_t v_ = 0;
   bool field_ = false;
+
+  // VBlank NMI latch. Armed inside AdvanceHv when V steps onto the VBlank
+  // start line (225 normally, 240 under overscan); cleared on RDNMI ($4210)
+  // read or when V wraps back to 0 at frame start.
+  bool vblank_nmi_flag_ = false;
   // Cycles already consumed toward the current dot from prior CatchUpTo calls.
   // Range: [0, DotCost(h_, v_, field_)). Lets one dot span multiple calls
   // when target lands mid-dot — no overshoot permitted.

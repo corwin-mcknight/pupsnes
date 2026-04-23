@@ -85,6 +85,8 @@ void Ppu::Reset() {
   pending_writes_cursor_ = 0;
   partial_dot_cycles_ = 0;
 
+  vblank_nmi_flag_ = false;
+
   vram_->fill(0);
   oam_->fill(0);
   cgram_->fill(0);
@@ -144,6 +146,29 @@ void Ppu::CatchUpTo(TimeMasterT target) {
       drawn_mask_->fill(0);
     }
   }
+}
+
+bool Ppu::QueryAndClearVblankNmiFlag(TimeMasterT current_time) {
+  CatchUpTo(current_time);
+  const bool was_set = vblank_nmi_flag_;
+  vblank_nmi_flag_ = false;
+  return was_set;
+}
+
+PpuHvbStatus Ppu::QueryHvbStatus(TimeMasterT current_time) {
+  CatchUpTo(current_time);
+  // h_/v_ point at the next dot to emit after catch-up. VBlank start tracks
+  // SETINI overscan live — fullsnes notes the bit can flip mid-frame; v1
+  // scaffold follows the current overscan_ value rather than a per-frame
+  // latch.
+  const uint32_t vblank_start =
+      overscan_ ? sppu::regs::kVisibleVEnd239 : sppu::regs::kVisibleVEnd224;
+  const bool vblank = v_ >= vblank_start;
+  // HBlank canonical boundary: H>=274 (fullsnes). Narrower than the
+  // "outside visible window" definition by 4 dots, matching how games that
+  // poll HVBJOY bit 6 expect the edge to land.
+  const bool hblank = h_ >= 274U;
+  return {vblank, hblank};
 }
 
 void Ppu::OnFrameEndSignal(TimeMasterT master_time) {
@@ -301,6 +326,18 @@ void Ppu::AdvanceHv() {
     ++v_;
     if (v_ >= sppu::regs::kLinesPerFrameNtsc) {
       v_ = 0;
+    }
+    // Drive the VBlank NMI latch off live scanline transitions. Arm it the
+    // instant V steps onto the first VBlank line; clear it at the frame-start
+    // wrap so a subsequent VBlank can re-arm. Real hardware fires a pulse
+    // from the NMI line at this boundary; we only need the latch until CPU
+    // interrupt delivery lands.
+    const uint32_t vblank_start =
+        overscan_ ? sppu::regs::kVisibleVEnd239 : sppu::regs::kVisibleVEnd224;
+    if (v_ == vblank_start) {
+      vblank_nmi_flag_ = true;
+    } else if (v_ == 0) {
+      vblank_nmi_flag_ = false;
     }
   }
 }

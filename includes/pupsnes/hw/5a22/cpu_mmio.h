@@ -21,6 +21,26 @@ class CpuMmio : public Device {
   // $80-$FF. 0 = slow (8 master cycles), 1 = fast (6 master cycles).
   static constexpr uint32_t kMemSelOffset = 0x420DU;
 
+  // RDNMI ($4210): bit 7 = VBlank-NMI latch (set at VBlank entry, cleared on
+  // read), bits 6:4 = open-bus, bits 3:0 = 5A22 CPU revision. Fullsnes notes
+  // real hardware reports revision 2 on all retail consoles.
+  static constexpr uint32_t kRdNmiOffset = 0x4210U;
+  static constexpr uint8_t kRdNmiVblankFlagMask = 0x80U;
+  static constexpr uint8_t kRdNmiVersionMask = 0x0FU;
+  static constexpr uint8_t kRdNmiCpuVersion = 0x02U;
+  static constexpr uint8_t kRdNmiDrivenMask = kRdNmiVblankFlagMask | kRdNmiVersionMask;
+
+  // HVBJOY ($4212): bit 7 = V-Blank flag, bit 6 = H-Blank flag, bit 0 = auto-
+  // joypad busy. Bit-0 stays 0 until auto-joypad read is modeled. Computed
+  // on demand from PPU dot/scanline state via Ppu::QueryHvbStatus so polling
+  // loops see state current to the read's master cycle.
+  static constexpr uint32_t kHvbJoyOffset = 0x4212U;
+  static constexpr uint8_t kHvbJoyVblankMask = 0x80U;
+  static constexpr uint8_t kHvbJoyHblankMask = 0x40U;
+  static constexpr uint8_t kHvbJoyAutoJoypadMask = 0x01U;
+  static constexpr uint8_t kHvbJoyDrivenMask =
+      kHvbJoyVblankMask | kHvbJoyHblankMask | kHvbJoyAutoJoypadMask;
+
   explicit CpuMmio(SNES* snes);
   ~CpuMmio() override = default;
 

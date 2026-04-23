@@ -56,3 +56,67 @@ TEST_CASE("CpuMmio MEMSEL access is routed as kSameClockMmio via plan", "[unit][
   REQUIRE(plan.target_device == snes.GetCpuMmio().GetDeviceId());
   REQUIRE(plan.access_cycles == 8);
 }
+
+TEST_CASE("HVBJOY ($4212) reports PPU VBlank bit through the bus",
+          "[unit][cpu_mmio]") {
+  SNES snes;
+  snes.Reset();
+
+  // Read at t=0 (v=0, h=0): neither flag set, bit 0 (auto-joypad) clear.
+  BusPlan plan = snes.system_bus->Plan(0x00'4212U, BusAccessType::kRead);
+  REQUIRE(plan.outcome == BusPlanOutcome::kInlineComplete);
+  REQUIRE(plan.target_device == snes.GetCpuMmio().GetDeviceId());
+  auto result = snes.system_bus->Follow(plan, /*current_time=*/0, 0);
+  REQUIRE(result.outcome == BusPlanOutcome::kInlineComplete);
+  REQUIRE((result.data & CpuMmio::kHvbJoyVblankMask) == 0);
+  REQUIRE((result.data & CpuMmio::kHvbJoyHblankMask) == 0);
+
+  // Read at the start of V=225: VBlank bit set, HBlank clear (h=0).
+  constexpr TimeMasterT kStartOfV225 = 225U * 1364U;
+  BusPlan plan2 = snes.system_bus->Plan(0x00'4212U, BusAccessType::kRead);
+  result = snes.system_bus->Follow(plan2, kStartOfV225, 0);
+  REQUIRE(result.outcome == BusPlanOutcome::kInlineComplete);
+  REQUIRE((result.data & CpuMmio::kHvbJoyVblankMask) != 0);
+  REQUIRE((result.data & CpuMmio::kHvbJoyHblankMask) == 0);
+}
+
+TEST_CASE("RDNMI ($4210) latches bit 7 at VBlank entry and clears on read",
+          "[unit][cpu_mmio]") {
+  SNES snes;
+  snes.Reset();
+
+  // Before VBlank: only the CPU revision bits (0x02) are driven.
+  BusPlan plan = snes.system_bus->Plan(0x00'4210U, BusAccessType::kRead);
+  REQUIRE(plan.outcome == BusPlanOutcome::kInlineComplete);
+  auto result = snes.system_bus->Follow(plan, /*current_time=*/0, 0);
+  REQUIRE(result.outcome == BusPlanOutcome::kInlineComplete);
+  REQUIRE((result.data & CpuMmio::kRdNmiVblankFlagMask) == 0);
+  REQUIRE((result.data & CpuMmio::kRdNmiVersionMask) == CpuMmio::kRdNmiCpuVersion);
+
+  // Inside VBlank: bit 7 set on the first read.
+  constexpr TimeMasterT kStartOfV225 = 225U * 1364U;
+  BusPlan plan2 = snes.system_bus->Plan(0x00'4210U, BusAccessType::kRead);
+  result = snes.system_bus->Follow(plan2, kStartOfV225, 0);
+  REQUIRE((result.data & CpuMmio::kRdNmiVblankFlagMask) != 0);
+
+  // Latch clears on read — a second read in the same VBlank returns 0 on bit 7.
+  BusPlan plan3 = snes.system_bus->Plan(0x00'4210U, BusAccessType::kRead);
+  result = snes.system_bus->Follow(plan3, kStartOfV225 + 100, 0);
+  REQUIRE((result.data & CpuMmio::kRdNmiVblankFlagMask) == 0);
+  REQUIRE((result.data & CpuMmio::kRdNmiVersionMask) == CpuMmio::kRdNmiCpuVersion);
+}
+
+TEST_CASE("HVBJOY ($4212) reports HBlank bit inside the end-of-line pause",
+          "[unit][cpu_mmio]") {
+  SNES snes;
+  snes.Reset();
+
+  // Dot cost is 4 mcyc for H < 322. After 274 dots, h_ == 274 → HBlank set.
+  BusPlan plan = snes.system_bus->Plan(0x00'4212U, BusAccessType::kRead);
+  auto result = snes.system_bus->Follow(plan, /*current_time=*/274U * 4U, 0);
+  REQUIRE(result.outcome == BusPlanOutcome::kInlineComplete);
+  REQUIRE((result.data & CpuMmio::kHvbJoyHblankMask) != 0);
+  REQUIRE((result.data & CpuMmio::kHvbJoyVblankMask) == 0);
+  // Only bit 7 / bit 6 / bit 0 are driven. Other bits come from the merged
+  // open-bus data so we don't assert on them.
+}

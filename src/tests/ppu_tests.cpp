@@ -695,3 +695,82 @@ TEST_CASE("Lazy replay — many writes incur a single catch-up", "[unit][ppu]") 
   REQUIRE(ppu.IsForcedBlank() == false);
   REQUIRE(ppu.GetBrightness() == 0x0F);
 }
+
+TEST_CASE("PPU QueryHvbStatus tracks VBlank and HBlank transitions", "[unit][ppu]") {
+  SNES snes;
+  snes.Reset();
+  Ppu& ppu = snes.GetPpu();
+
+  // At power-on both flags are clear: v=0, h=0.
+  auto status = ppu.QueryHvbStatus(0);
+  REQUIRE_FALSE(status.vblank);
+  REQUIRE_FALSE(status.hblank);
+
+  // Dot cost = 4 mcyc for H in [0, 322]. Catching up 274 dots puts h_ at 274
+  // with v_ still 0 — HBlank set, VBlank clear.
+  status = ppu.QueryHvbStatus(274U * 4U);
+  REQUIRE_FALSE(status.vblank);
+  REQUIRE(status.hblank);
+
+  // Advance to the start of scanline 225 (first VBlank line, no overscan).
+  // Every line up to V=239 is 1364 mcyc (no short-line work at field=false).
+  constexpr TimeMasterT kStartOfV225 = 225U * 1364U;
+  status = ppu.QueryHvbStatus(kStartOfV225);
+  REQUIRE(status.vblank);
+  REQUIRE_FALSE(status.hblank);  // h_ back to 0 at line start
+}
+
+TEST_CASE("PPU VBlank NMI latch arms at V=225, clears on read", "[unit][ppu]") {
+  SNES snes;
+  snes.Reset();
+  Ppu& ppu = snes.GetPpu();
+
+  // Before VBlank the latch is clear.
+  REQUIRE_FALSE(ppu.QueryAndClearVblankNmiFlag(224U * 1364U));
+
+  // First read after V=225 sees the latch high.
+  constexpr TimeMasterT kStartOfV225 = 225U * 1364U;
+  REQUIRE(ppu.QueryAndClearVblankNmiFlag(kStartOfV225));
+
+  // Subsequent read inside the same VBlank returns clear — the prior read
+  // consumed the latch and nothing has re-armed it.
+  REQUIRE_FALSE(ppu.QueryAndClearVblankNmiFlag(kStartOfV225 + 1000));
+
+  // After a full frame wraps (V=0 again), re-entering VBlank rearms.
+  constexpr TimeMasterT kNextVblank = 262U * 1364U + 225U * 1364U;
+  REQUIRE(ppu.QueryAndClearVblankNmiFlag(kNextVblank));
+}
+
+TEST_CASE("PPU VBlank NMI latch honors overscan start line", "[unit][ppu]") {
+  SNES snes;
+  snes.Reset();
+  Ppu& ppu = snes.GetPpu();
+
+  BusWrite(snes, sppu::regs::kSetini, sppu::regs::kSetiniOverscanMask,
+           /*now=*/0);
+
+  // Under overscan, V=225 no longer triggers NMI; V=240 does.
+  REQUIRE_FALSE(ppu.QueryAndClearVblankNmiFlag(225U * 1364U));
+  REQUIRE(ppu.QueryAndClearVblankNmiFlag(240U * 1364U));
+}
+
+TEST_CASE("PPU QueryHvbStatus honors SETINI overscan for VBlank start line",
+          "[unit][ppu]") {
+  SNES snes;
+  snes.Reset();
+  Ppu& ppu = snes.GetPpu();
+
+  // Enable overscan before any dot emits so V=225..239 is still active.
+  BusWrite(snes, sppu::regs::kSetini, sppu::regs::kSetiniOverscanMask,
+           /*now=*/0);
+
+  // At V=225 H=0 with overscan, VBlank should still be clear.
+  constexpr TimeMasterT kStartOfV225 = 225U * 1364U;
+  auto status = ppu.QueryHvbStatus(kStartOfV225);
+  REQUIRE_FALSE(status.vblank);
+
+  // At V=240 H=0 with overscan, VBlank becomes active.
+  constexpr TimeMasterT kStartOfV240 = 240U * 1364U;
+  status = ppu.QueryHvbStatus(kStartOfV240);
+  REQUIRE(status.vblank);
+}
