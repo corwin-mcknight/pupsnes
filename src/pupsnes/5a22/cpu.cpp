@@ -315,7 +315,10 @@ bool CPU::WaiShouldWake(TimeMasterT t) {
   // post-wake instruction-boundary sample — WAI wakes on masked interrupts
   // and simply resumes the instruction after WAI without entering a handler.
   const bool nmi_raw = (snes_ != nullptr && snes_->ppu != nullptr) ? snes_->ppu->SampleNmiLine(t) : false;
-  return nmi_raw || abort_pending_ || irq_line_asserted_;
+  // Also honour the edge-latched flip-flop: an NMI edge caught on a prior
+  // sample (before V advanced past the VBlank-entry line) must still wake WAI
+  // even once the raw line has de-asserted.
+  return nmi_pending_ || nmi_raw || abort_pending_ || irq_line_asserted_;
 }
 
 void CPU::OnNmiTimenChanged(uint8_t prev_byte, uint8_t new_byte, TimeMasterT t) {
@@ -544,7 +547,16 @@ void CPU::ExecuteInternalOp(MicroInternalOp op, [[maybe_unused]] uint8_t params)
     }
 
     case MicroInternalOp::kSetAddrFromDp: {
-      addr_ = (static_cast<uint32_t>(regs_.DP) + static_cast<uint32_t>(fetch_data_)) & 0x0000FFFFU;
+      // In emulation mode with DL=0, direct-page operand addition wraps within
+      // the DP page (bank 0, DH fixed): matches 6502 "zero-page" wrap. In
+      // native mode — or when DL != 0 — the full 16-bit add in bank 0 applies.
+      if (regs_.P.E && (regs_.DP & 0x00FFU) == 0U) {
+        const uint32_t page = static_cast<uint32_t>(regs_.DP) & 0xFF00U;
+        const uint32_t offset = (static_cast<uint32_t>(regs_.DP) + static_cast<uint32_t>(fetch_data_)) & 0x00FFU;
+        addr_ = page | offset;
+      } else {
+        addr_ = (static_cast<uint32_t>(regs_.DP) + static_cast<uint32_t>(fetch_data_)) & 0x0000FFFFU;
+      }
       return;
     }
 
@@ -555,14 +567,17 @@ void CPU::ExecuteInternalOp(MicroInternalOp op, [[maybe_unused]] uint8_t params)
 
     case MicroInternalOp::kStashIndirectLow: {
       addr_scratch_ = static_cast<uint16_t>((addr_scratch_ & 0xFF00U) | fetch_data_);
-      addr_ = (addr_ + 1U) & 0x00FFFFFFU;
+      // Pointer fetches stay inside the current bank — an overflow at $xxFFFF
+      // wraps to $xx0000, not $(xx+1)0000. Bank 0 pointers (DP/abs-indirect)
+      // would otherwise leak into bank 1 at end-of-bank.
+      addr_ = (addr_ & 0x00FF0000U) | ((addr_ + 1U) & 0x0000FFFFU);
       return;
     }
 
     case MicroInternalOp::kStashIndirectHigh: {
       const uint32_t high = static_cast<uint32_t>(fetch_data_) << 8U;
       addr_scratch_ = static_cast<uint16_t>((addr_scratch_ & 0x00FFU) | high);
-      addr_ = (addr_ + 1U) & 0x00FFFFFFU;
+      addr_ = (addr_ & 0x00FF0000U) | ((addr_ + 1U) & 0x0000FFFFU);
       return;
     }
 

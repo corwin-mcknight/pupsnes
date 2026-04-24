@@ -7,6 +7,7 @@ set(PUPSNES_LIB_SOURCES
   src/pupsnes/5a22/cpu_mmio.cpp
   src/pupsnes/5a22/cpu_opcodes.cpp
   src/pupsnes/5a22/micro_op_strings.cpp
+  src/pupsnes/apu_stub.cpp
   src/pupsnes/cartridge.cpp
   src/pupsnes/scheduler.cpp
   src/pupsnes/snes.cpp
@@ -292,6 +293,7 @@ set(PUPSNES_HEADERS
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/5a22/cpu_mmio.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/5a22/cpu_regs.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/5a22/micro_op_strings.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/apu_stub.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/bus_event.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/cartridge.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/debugger_contract.h

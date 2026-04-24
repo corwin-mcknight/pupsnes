@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <memory>
 
+#include "pupsnes/hw/apu_stub.h"
 #include "pupsnes/hw/scheduler.h"
 #include "pupsnes/hw/signal_event.h"
 #include "pupsnes/hw/snes.h"
@@ -241,8 +242,10 @@ MmioReadResult Ppu::ReadRegister(uint32_t offset, TimeMasterT current_time) {
 
   const uint16_t reg = static_cast<uint16_t>(offset & 0xFFFFU);
   if (reg < sppu::regs::kBase || reg >= sppu::regs::kEnd) {
-    // $2140-$21FF: APU / WRAM port range, open-bus until the APU device
-    // takes ownership.
+    if (reg >= ApuStub::kPortBase && reg < ApuStub::kPortEnd && snes_ != nullptr && snes_->apu_stub != nullptr) {
+      return snes_->apu_stub->ReadRegister(reg, current_time);
+    }
+    // $2180-$21FF WRAM ports still open-bus until that device lands.
     return {0x00U, 0x00U};
   }
 
@@ -309,8 +312,10 @@ MmioReadResult Ppu::ReadRegister(uint32_t offset, TimeMasterT current_time) {
 void Ppu::WriteRegister(uint32_t offset, uint8_t data, TimeMasterT current_time) {
   const uint16_t reg = static_cast<uint16_t>(offset & 0xFFFFU);
   if (reg < sppu::regs::kBase || reg >= sppu::regs::kEnd) {
-    // Out-of-range writes within the PPU page are dropped. APU / WRAM-port
-    // writes land here until those devices claim the tail of page $21.
+    if (reg >= ApuStub::kPortBase && reg < ApuStub::kPortEnd && snes_ != nullptr && snes_->apu_stub != nullptr) {
+      snes_->apu_stub->WriteRegister(reg, data, current_time);
+    }
+    // Writes to $2180-$21FF drop until WRAM-port device lands.
     return;
   }
   // Mirror the written byte into the shadow immediately so the debugger can

@@ -43,9 +43,9 @@ void Cartridge::MapLoRom(SystemBus& bus) {
     MapLoRomBankRange(bus, GetDeviceId(), static_cast<uint8_t>(bank), rom_data, rom_size, 8);
   }
 
-  // Fast-bank range ($80-$FD) starts in slow mode; MEMSEL will remap to 6
+  // Fast-bank range ($80-$FF) starts in slow mode; MEMSEL will remap to 6
   // master cycles once the ROM's init code sets $420D bit 0.
-  for (uint16_t bank = 0x80; bank <= 0xFD; ++bank) {
+  for (uint16_t bank = 0x80; bank <= 0xFF; ++bank) {
     MapLoRomBankRange(bus, GetDeviceId(), static_cast<uint8_t>(bank), rom_data, rom_size, 8);
   }
 
@@ -62,7 +62,7 @@ void Cartridge::OnMemSelChanged(SystemBus& bus, bool fast) {
   const std::size_t rom_size = rom_.size();
   const uint8_t access_speed = fast ? 6U : 8U;
 
-  for (uint16_t bank = 0x80; bank <= 0xFD; ++bank) {
+  for (uint16_t bank = 0x80; bank <= 0xFF; ++bank) {
     MapLoRomBankRange(bus, GetDeviceId(), static_cast<uint8_t>(bank), rom_data, rom_size, access_speed);
   }
 }

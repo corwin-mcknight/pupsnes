@@ -5,6 +5,7 @@
 
 #include "pupsnes/hw/5a22/cpu.h"
 #include "pupsnes/hw/5a22/cpu_mmio.h"
+#include "pupsnes/hw/apu_stub.h"
 #include "pupsnes/hw/cartridge.h"
 #include "pupsnes/hw/device.h"
 #include "pupsnes/hw/scheduler.h"
@@ -29,6 +30,7 @@ pupsnes::SNES::SNES()
       system_bus(std::make_unique<SystemBus>(this)),
       wram(std::make_unique<WRAM>(this)),
       cpu_mmio(std::make_unique<CpuMmio>(this)),
+      apu_stub(std::make_unique<ApuStub>(this)),
       ppu(std::make_unique<Ppu>(this)) {
   wram->MapSystemBus(*system_bus);
   cpu_mmio->MapSystemBus(*system_bus);
@@ -58,6 +60,7 @@ void pupsnes::SNES::Reset() {
     }
   }
   cpu_mmio->Reset();
+  apu_stub->Reset();
   // Reset the PPU before the CPU: the CPU's reset vector fetch may pass
   // through page $21 (cartridge DBs), and the PPU needs its shadow / decoded
   // fields cleared before any bus traffic arrives.
@@ -85,6 +88,9 @@ const pupsnes::CpuMmio& pupsnes::SNES::GetCpuMmio() const { return *cpu_mmio; }
 
 pupsnes::Ppu& pupsnes::SNES::GetPpu() { return *ppu; }
 const pupsnes::Ppu& pupsnes::SNES::GetPpu() const { return *ppu; }
+
+pupsnes::ApuStub& pupsnes::SNES::GetApuStub() { return *apu_stub; }
+const pupsnes::ApuStub& pupsnes::SNES::GetApuStub() const { return *apu_stub; }
 
 pupsnes::DeviceIdT pupsnes::SNES::RegisterDevice(Device* device) {
   auto id = static_cast<DeviceIdT>(devices_.size());

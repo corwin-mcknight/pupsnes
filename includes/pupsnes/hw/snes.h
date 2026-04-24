@@ -8,6 +8,7 @@
 #include "pupsnes/types.h"
 
 namespace pupsnes {
+class ApuStub;
 class CPU;
 class Cartridge;
 class CpuMmio;
@@ -34,6 +35,9 @@ class SNES {
   std::unique_ptr<SystemBus> system_bus;
   std::unique_ptr<WRAM> wram;
   std::unique_ptr<CpuMmio> cpu_mmio;
+  // Throwaway fake-APU — declared before the PPU so PPU can delegate page-$21
+  // APU-port accesses to it. Replace when the real SPC700 core lands.
+  std::unique_ptr<ApuStub> apu_stub;
   // The PPU is declared last so it registers after every other Device and
   // gets the highest DeviceIdT. This keeps existing test expectations about
   // device-ID assignment for CPU / cartridge / WRAM / CpuMmio stable.
@@ -65,6 +69,8 @@ class SNES {
   [[nodiscard]] const CpuMmio& GetCpuMmio() const;
   [[nodiscard]] Ppu& GetPpu();
   [[nodiscard]] const Ppu& GetPpu() const;
+  [[nodiscard]] ApuStub& GetApuStub();
+  [[nodiscard]] const ApuStub& GetApuStub() const;
 
   // Register a frontend-side callback invoked by the PPU at end-of-frame.
   // Copying the std::function here is intentional: callers typically set it
