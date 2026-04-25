@@ -22,8 +22,11 @@ set(PUPSNES_DEBUGGER_CORE_SOURCES
   src/debugger/bus_event_log.cpp
   src/debugger/disasm.cpp
   src/debugger/error_log.cpp
+  src/debugger/fan_out_trace_sink.cpp
+  src/debugger/file_trace_sink.cpp
   src/debugger/microop_trace.cpp
   src/debugger/run_control.cpp
+  src/debugger/sha1.cpp
   src/debugger/trace.cpp
 )
 
@@ -49,6 +52,7 @@ set(PUPSNES_DEBUGGER_SOURCES
   src/debugger/panels/scheduler_panel.cpp
   src/debugger/panels/stack_panel.cpp
   src/debugger/panels/trace_panel.cpp
+  src/debugger/panels/trace_record_panel.cpp
   src/debugger/time_format.cpp
   src/debugger/third_party/imgui_glfw_backend.cpp
   src/debugger/third_party/imgui_opengl3_backend.cpp
@@ -90,6 +94,10 @@ set(PUPSNES_TEST_SOURCES
   src/tests/ppu_tests.cpp
   src/tests/nmi_tests.cpp
   src/tests/apu_stub_tests.cpp
+  src/tests/fan_out_trace_sink_tests.cpp
+  src/tests/file_trace_sink_tests.cpp
+  src/tests/sha1_tests.cpp
+  src/tests/trace_record_integration_tests.cpp
   src/tests/trace_runner_tests.cpp
   src/tests/trace_diff_tests.cpp
 )
@@ -320,8 +328,11 @@ set(PUPSNES_HEADERS
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/debugger/bus_event_log.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/debugger/disasm.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/debugger/error_log.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/debugger/fan_out_trace_sink.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/debugger/file_trace_sink.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/debugger/microop_trace.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/debugger/run_control.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/debugger/sha1.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/debugger/trace.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/debugger/trace_diff.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/tools/trace_runner.h

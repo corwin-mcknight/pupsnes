@@ -21,6 +21,8 @@
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
 #include "panels/panels.h"
+#include "pupsnes/debugger/file_trace_sink.h"
+#include "pupsnes/debugger/sha1.h"
 #include "pupsnes/hw/cartridge.h"
 #include "pupsnes/hw/sppu/ppu.h"
 #include "pupsnes/rom_format.h"
@@ -33,7 +35,8 @@ DebuggerApp::DebuggerApp()
     : trace_log_(512),
       bus_event_log_(2048),
       error_log_(2048),
-      run_control_(snes_, breakpoints_, trace_log_, error_log_) {
+      run_control_(snes_, breakpoints_, fan_out_trace_sink_, error_log_) {
+  fan_out_trace_sink_.Attach(&trace_log_);
   snes_.GetSystemBus().SetEventSink(&bus_event_log_);
 }
 
@@ -70,6 +73,7 @@ SnesAddrT DebuggerApp::GetCurrentPc() const {
 
 bool DebuggerApp::LoadRomFromPath(const std::string& path) {
   namespace fs = std::filesystem;
+  StopTraceRecording();
 
   std::ifstream stream(path, std::ios::binary);
   if (!stream.good()) {
@@ -87,6 +91,11 @@ bool DebuggerApp::LoadRomFromPath(const std::string& path) {
   // ROM image. Strip it before the size validation so a headered LoROM is
   // accepted and mapped as its raw payload.
   StripSmcCopierHeader(rom);
+  {
+    Sha1 hasher;
+    hasher.Update(rom.data(), rom.size());
+    rom_sha1_ = hasher.Finalize();
+  }
   if (rom.empty() || (rom.size() % Cartridge::kLoROMWindowSize) != 0U) {
     error_log_.Push({
         .master_time = snes_.GetMasterTime(),
@@ -134,6 +143,7 @@ void DebuggerApp::ResetMachine() {
   if (!loaded_rom_) {
     return;
   }
+  StopTraceRecording();
   snes_.Reset();
   trace_log_.Clear();
   bus_event_log_.Clear();
@@ -164,6 +174,49 @@ void DebuggerApp::PushHostError(std::string message, ErrorSeverity severity) {
       .source = ErrorSource::kHost,
       .message = std::move(message),
   });
+}
+
+bool DebuggerApp::StartTraceRecording(const std::string& path, bool reset_rom) {
+  if (!loaded_rom_) {
+    trace_last_error_ = "cannot start trace: no ROM loaded";
+    return false;
+  }
+  StopTraceRecording();
+
+  if (reset_rom) {
+    ResetMachine();
+  }
+
+  auto sink = std::make_unique<FileTraceSink>(snes_, path, rom_sha1_);
+  if (sink->HasError()) {
+    trace_last_error_ = sink->Error();
+    PushHostError("trace record: " + sink->Error(), ErrorSeverity::kError);
+    return false;
+  }
+
+  fan_out_trace_sink_.Attach(sink.get());
+  file_trace_sink_ = std::move(sink);
+  trace_recording_path_ = path;
+  trace_last_error_.clear();
+  return true;
+}
+
+void DebuggerApp::StopTraceRecording() {
+  if (file_trace_sink_ == nullptr) return;
+  fan_out_trace_sink_.Detach(file_trace_sink_.get());
+  file_trace_sink_->Flush();
+  file_trace_sink_.reset();
+  trace_recording_path_.clear();
+}
+
+void DebuggerApp::FlushTraceRecording() {
+  if (file_trace_sink_) {
+    file_trace_sink_->Flush();
+  }
+}
+
+uint64_t DebuggerApp::TraceRecordedLines() const {
+  return file_trace_sink_ ? file_trace_sink_->LineCount() : 0U;
 }
 
 bool DebuggerApp::InitWindow() {
@@ -332,6 +385,13 @@ void DebuggerApp::TickEmulation() {
   } catch (const std::exception& ex) {
     fatal_error_ = ex.what();
   }
+
+  if (file_trace_sink_ != nullptr && file_trace_sink_->HasError()) {
+    const std::string err = file_trace_sink_->Error();
+    trace_last_error_ = err;
+    PushHostError("trace record: " + err, ErrorSeverity::kError);
+    StopTraceRecording();
+  }
 }
 
 void DebuggerApp::RenderMenuBar() {
@@ -416,6 +476,7 @@ void DebuggerApp::RenderMenuBar() {
       ImGui::MenuItem("Stack", nullptr, &ui_state_.show_stack_panel);
       ImGui::MenuItem("PPU", nullptr, &ui_state_.show_ppu_panel);
       ImGui::MenuItem("Trace", nullptr, &ui_state_.show_trace_panel);
+      ImGui::MenuItem("Trace Record", nullptr, &ui_state_.show_trace_record_panel);
       ImGui::MenuItem("Micro-op Trace", nullptr, &ui_state_.show_microop_trace_panel);
       ImGui::MenuItem("Scheduler", nullptr, &ui_state_.show_scheduler_panel);
       ImGui::MenuItem("Errors", nullptr, &ui_state_.show_errors_panel);
@@ -680,6 +741,12 @@ void DebuggerApp::LoadAppConfig() {
       ui_state_.show_ppu_panel = value != "0";
     } else if (key == "show_trace_panel") {
       ui_state_.show_trace_panel = value != "0";
+    } else if (key == "show_trace_record_panel") {
+      ui_state_.show_trace_record_panel = value != "0";
+    } else if (key == "trace_record_path") {
+      ui_state_.trace_record_path = value;
+    } else if (key == "trace_record_reset_on_start") {
+      ui_state_.trace_record_reset_on_start = value != "0";
     } else if (key == "show_microop_trace_panel") {
       ui_state_.show_microop_trace_panel = value != "0";
     } else if (key == "show_scheduler_panel") {
@@ -712,6 +779,9 @@ void DebuggerApp::SaveAppConfig() {
   stream << "show_stack_panel=" << (ui_state_.show_stack_panel ? 1 : 0) << "\n";
   stream << "show_ppu_panel=" << (ui_state_.show_ppu_panel ? 1 : 0) << "\n";
   stream << "show_trace_panel=" << (ui_state_.show_trace_panel ? 1 : 0) << "\n";
+  stream << "show_trace_record_panel=" << (ui_state_.show_trace_record_panel ? 1 : 0) << "\n";
+  stream << "trace_record_path=" << ui_state_.trace_record_path << "\n";
+  stream << "trace_record_reset_on_start=" << (ui_state_.trace_record_reset_on_start ? 1 : 0) << "\n";
   stream << "show_microop_trace_panel=" << (ui_state_.show_microop_trace_panel ? 1 : 0) << "\n";
   stream << "show_scheduler_panel=" << (ui_state_.show_scheduler_panel ? 1 : 0) << "\n";
   stream << "show_errors_panel=" << (ui_state_.show_errors_panel ? 1 : 0) << "\n";
@@ -749,6 +819,7 @@ void DebuggerApp::Render() {
   RenderStackPanel(*this);
   RenderPpuPanel(*this);
   RenderTracePanel(*this);
+  RenderTraceRecordPanel(*this);
   RenderMicroOpTracePanel(*this);
   RenderSchedulerPanel(*this);
   RenderErrorsPanel(*this);

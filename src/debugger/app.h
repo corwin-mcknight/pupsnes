@@ -3,6 +3,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -13,8 +14,11 @@ struct GLFWwindow;
 #include "pupsnes/debugger/breakpoints.h"
 #include "pupsnes/debugger/bus_event_log.h"
 #include "pupsnes/debugger/error_log.h"
+#include "pupsnes/debugger/fan_out_trace_sink.h"
+#include "pupsnes/debugger/file_trace_sink.h"
 #include "pupsnes/debugger/microop_trace.h"
 #include "pupsnes/debugger/run_control.h"
+#include "pupsnes/debugger/sha1.h"
 #include "pupsnes/debugger/trace.h"
 #include "pupsnes/hw/snes.h"
 #include "time_format.h"
@@ -76,6 +80,9 @@ struct UiState {
   bool show_stack_panel = true;
   bool show_ppu_panel = true;
   bool show_trace_panel = true;
+  bool show_trace_record_panel = true;
+  std::string trace_record_path = "pupsnes-trace.log";
+  bool trace_record_reset_on_start = true;
   bool show_microop_trace_panel = true;
   bool show_scheduler_panel = true;
   bool show_errors_panel = true;
@@ -121,6 +128,14 @@ class DebuggerApp {
   void JumpToAddress(SnesAddrT address);
   void PushHostError(std::string message, ErrorSeverity severity = ErrorSeverity::kError);
 
+  bool StartTraceRecording(const std::string& path, bool reset_rom);
+  void StopTraceRecording();
+  void FlushTraceRecording();
+  [[nodiscard]] bool IsTraceRecording() const { return file_trace_sink_ != nullptr; }
+  [[nodiscard]] uint64_t TraceRecordedLines() const;
+  [[nodiscard]] const std::string& TraceRecordingPath() const { return trace_recording_path_; }
+  [[nodiscard]] const std::string& TraceLastError() const { return trace_last_error_; }
+
  private:
   bool InitWindow();
   void ShutdownWindow();
@@ -150,10 +165,15 @@ class DebuggerApp {
   SNES snes_;
   BreakpointSet breakpoints_;
   TraceLog trace_log_;
+  FanOutTraceSink fan_out_trace_sink_;
   BusEventLog bus_event_log_;
   MicroOpTrace microop_trace_;
   ErrorLog error_log_;
   RunControl run_control_;
+  Sha1Digest rom_sha1_{};
+  std::unique_ptr<FileTraceSink> file_trace_sink_;
+  std::string trace_recording_path_;
+  std::string trace_last_error_;
   UiState ui_state_;
 };
 

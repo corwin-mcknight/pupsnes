@@ -4,6 +4,7 @@
 
 #include "pupsnes/debugger/breakpoints.h"
 #include "pupsnes/debugger/error_log.h"
+#include "pupsnes/debugger/fan_out_trace_sink.h"
 #include "pupsnes/debugger/run_control.h"
 #include "pupsnes/debugger/trace.h"
 #include "pupsnes/hw/cartridge.h"
@@ -21,12 +22,14 @@ struct DebuggerFixture {
   std::array<uint8_t, Cartridge::kLoROMWindowSize> rom{};
   BreakpointSet breakpoints;
   TraceLog trace;
+  FanOutTraceSink fan_out;
   ErrorLog errors;
 
   DebuggerFixture() : trace(32), errors(32) {
     rom.fill(0xEA);
     rom[0x7FFC] = 0x00;
     rom[0x7FFD] = 0x80;
+    fan_out.Attach(&trace);
   }
 
   void SetBytes(std::initializer_list<uint8_t> bytes) {
@@ -39,7 +42,7 @@ struct DebuggerFixture {
   RunControl BuildRunControl() {
     snes.LoadLoRom(rom);
     snes.Reset();
-    return RunControl(snes, breakpoints, trace, errors);
+    return RunControl(snes, breakpoints, fan_out, errors);
   }
 };
 

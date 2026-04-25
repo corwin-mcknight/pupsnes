@@ -32,7 +32,7 @@ enum class StepGranularity : uint8_t {
 
 class RunControl {
  public:
-  RunControl(SNES& snes, BreakpointSet& breakpoints, TraceLog& trace_log, ErrorLog& error_log);
+  RunControl(SNES& snes, BreakpointSet& breakpoints, TraceSink& trace_sink, ErrorLog& error_log);
 
   void ResetMachineState();
   void Pause();
@@ -59,7 +59,7 @@ class RunControl {
 
   SNES& snes_;
   BreakpointSet& breakpoints_;
-  TraceLog& trace_log_;
+  TraceSink& trace_sink_;
   ErrorLog& error_log_;
   RunState state_ = RunState::kPaused;
   PauseReason pause_reason_ = PauseReason::kUser;

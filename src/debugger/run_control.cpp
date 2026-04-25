@@ -15,15 +15,15 @@ SnesAddrT ComposePcAddress(const CPU::Regs& regs) {
 
 }  // namespace
 
-RunControl::RunControl(SNES& snes, BreakpointSet& breakpoints, TraceLog& trace_log, ErrorLog& error_log)
-    : snes_(snes), breakpoints_(breakpoints), trace_log_(trace_log), error_log_(error_log) {
+RunControl::RunControl(SNES& snes, BreakpointSet& breakpoints, TraceSink& trace_sink, ErrorLog& error_log)
+    : snes_(snes), breakpoints_(breakpoints), trace_sink_(trace_sink), error_log_(error_log) {
   ResetMachineState();
 }
 
 void RunControl::InstallDebuggerContract() {
   DebuggerContract contract;
   contract.breakpoints = &breakpoints_;
-  contract.trace_sink = &trace_log_;
+  contract.trace_sink = &trace_sink_;
   contract.step_target = 0;
   contract.suppressed_breakpoint_pc = std::nullopt;
   contract.step_granularity = DebuggerContract::StepGranularity::kInstruction;

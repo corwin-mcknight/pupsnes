@@ -11,6 +11,7 @@ void RenderMemoryPanel(DebuggerApp& app);
 void RenderStackPanel(DebuggerApp& app);
 void RenderPpuPanel(DebuggerApp& app);
 void RenderTracePanel(DebuggerApp& app);
+void RenderTraceRecordPanel(DebuggerApp& app);
 void RenderMicroOpTracePanel(DebuggerApp& app);
 void RenderSchedulerPanel(DebuggerApp& app);
 void RenderErrorsPanel(DebuggerApp& app);
