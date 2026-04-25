@@ -27,6 +27,10 @@ set(PUPSNES_DEBUGGER_CORE_SOURCES
   src/debugger/trace.cpp
 )
 
+set(PUPSNES_TRACE_RUNNER_SOURCES
+  src/tools/trace_runner.cpp
+)
+
 set(PUPSNES_DEBUGGER_SOURCES
   src/debugger/app.cpp
   src/debugger/main.cpp
@@ -82,6 +86,7 @@ set(PUPSNES_TEST_SOURCES
   src/tests/ppu_tests.cpp
   src/tests/nmi_tests.cpp
   src/tests/apu_stub_tests.cpp
+  src/tests/trace_runner_tests.cpp
 )
 
 set(PUPSNES_PROFILE "PRODUCTION" CACHE STRING "Build profile: DEBUG, CI, or PRODUCTION")
@@ -105,6 +110,17 @@ target_compile_features(pupsnes_debugger_core PUBLIC cxx_std_20)
 target_include_directories(pupsnes_debugger_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/includes)
 target_include_directories(pupsnes_debugger_core PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(pupsnes_debugger_core PUBLIC pupsnes)
+
+add_library(pupsnes_trace_runner STATIC ${PUPSNES_TRACE_RUNNER_SOURCES})
+target_compile_features(pupsnes_trace_runner PUBLIC cxx_std_20)
+target_include_directories(pupsnes_trace_runner PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/includes)
+target_include_directories(pupsnes_trace_runner PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(pupsnes_trace_runner PUBLIC pupsnes pupsnes_debugger_core)
+
+add_executable(pupsnes_trace_cli src/tools/trace_runner_main.cpp)
+target_compile_features(pupsnes_trace_cli PRIVATE cxx_std_20)
+target_link_libraries(pupsnes_trace_cli PRIVATE pupsnes_trace_runner)
+set_target_properties(pupsnes_trace_cli PROPERTIES OUTPUT_NAME pupsnes-trace)
 
 # Treat third-party (Conan) include dirs as SYSTEM so clang-tidy / warnings
 # don't report issues inside vendor headers or macro expansions from them.
@@ -199,6 +215,8 @@ endfunction()
 pupsnes_apply_warnings(pupsnes)
 pupsnes_apply_warnings(pupsnes_debugger_core)
 pupsnes_apply_warnings(pupsnes_debugger)
+pupsnes_apply_warnings(pupsnes_trace_runner)
+pupsnes_apply_warnings(pupsnes_trace_cli)
 
 include(CTest)
 if(BUILD_TESTING)
@@ -259,7 +277,7 @@ if(BUILD_TESTING)
   target_compile_features(pupsnes_tests PRIVATE cxx_std_20)
   target_include_directories(pupsnes_tests PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/includes)
   target_include_directories(pupsnes_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-  target_link_libraries(pupsnes_tests PRIVATE pupsnes pupsnes_debugger_core Catch2::Catch2WithMain)
+  target_link_libraries(pupsnes_tests PRIVATE pupsnes pupsnes_debugger_core pupsnes_trace_runner Catch2::Catch2WithMain)
   target_compile_definitions(pupsnes_tests PRIVATE
     "PUPSNES_TEST_ROM_DIR=\"${PUPSNES_TEST_ROM_DIR}\""
     "PUPSNES_TEST_ROM_METADATA_DIR=\"${PUPSNES_TEST_ROM_METADATA_DIR}\""
@@ -288,6 +306,7 @@ set(PUPSNES_HEADERS
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/debugger/microop_trace.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/debugger/run_control.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/debugger/trace.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/tools/trace_runner.h
   ${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/app.h
   ${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/panels/panels.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/5a22/cpu.h
