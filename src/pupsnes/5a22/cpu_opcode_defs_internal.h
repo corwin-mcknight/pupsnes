@@ -18,35 +18,23 @@ namespace micro_op_params {
 inline constexpr uint8_t PackTransfer(Reg src, Reg dst) {
   return static_cast<uint8_t>(static_cast<uint8_t>(src) | (static_cast<uint8_t>(dst) << 4U));
 }
-inline constexpr Reg UnpackTransferSrc(uint8_t params) {
-  return static_cast<Reg>(params & 0x0FU);
-}
-inline constexpr Reg UnpackTransferDst(uint8_t params) {
-  return static_cast<Reg>((params >> 4U) & 0x0FU);
-}
+inline constexpr Reg UnpackTransferSrc(uint8_t params) { return static_cast<Reg>(params & 0x0FU); }
+inline constexpr Reg UnpackTransferDst(uint8_t params) { return static_cast<Reg>((params >> 4U) & 0x0FU); }
 
 // Inc/dec registers (kIncDecReg): bit 0 = decrement, bits [4:1] = Reg (A/X/Y only).
 inline constexpr uint8_t PackIncDec(Reg reg, bool decrement) {
   return static_cast<uint8_t>((decrement ? 1U : 0U) | (static_cast<uint32_t>(reg) << 1U));
 }
-inline constexpr Reg UnpackIncDecReg(uint8_t params) {
-  return static_cast<Reg>((params >> 1U) & 0x0FU);
-}
-inline constexpr bool UnpackIncDecDecrement(uint8_t params) {
-  return (params & 0x01U) != 0U;
-}
+inline constexpr Reg UnpackIncDecReg(uint8_t params) { return static_cast<Reg>((params >> 1U) & 0x0FU); }
+inline constexpr bool UnpackIncDecDecrement(uint8_t params) { return (params & 0x01U) != 0U; }
 
 // Flag set/clear (kSetFlag): bit 0 = value (1 = set, 0 = clear), bits [4:1] = Flag.
 // Only C, D, I, V are used by flag-op opcodes; other Flag values are unused.
 inline constexpr uint8_t PackSetFlag(Flag flag, bool value) {
   return static_cast<uint8_t>((value ? 1U : 0U) | (static_cast<uint32_t>(flag) << 1U));
 }
-inline constexpr Flag UnpackSetFlagFlag(uint8_t params) {
-  return static_cast<Flag>((params >> 1U) & 0x0FU);
-}
-inline constexpr bool UnpackSetFlagValue(uint8_t params) {
-  return (params & 0x01U) != 0U;
-}
+inline constexpr Flag UnpackSetFlagFlag(uint8_t params) { return static_cast<Flag>((params >> 1U) & 0x0FU); }
+inline constexpr bool UnpackSetFlagValue(uint8_t params) { return (params & 0x01U) != 0U; }
 
 // Branch-condition setter (kSetBranchTakenCond): bits [3:0] = BranchCond
 // (kAlways, kZ/kNotZ, kC/kNotC, kN/kNotN, kV/kNotV). Dispatch lives in
@@ -54,9 +42,7 @@ inline constexpr bool UnpackSetFlagValue(uint8_t params) {
 inline constexpr uint8_t PackBranchCond(BranchCond cond) {
   return static_cast<uint8_t>(static_cast<uint32_t>(cond) & 0x0FU);
 }
-inline constexpr BranchCond UnpackBranchCond(uint8_t params) {
-  return static_cast<BranchCond>(params & 0x0FU);
-}
+inline constexpr BranchCond UnpackBranchCond(uint8_t params) { return static_cast<BranchCond>(params & 0x0FU); }
 
 // Register load from fetch_data_ (kLoadReg): bits [3:0] = Reg (A/X/Y only),
 // bits [5:4] = ByteSel (kLow = 0, kHigh = 1), bit 6 = update_nz, bit 7 =
@@ -67,33 +53,19 @@ inline constexpr BranchCond UnpackBranchCond(uint8_t params) {
 // and is used by multi-byte reads from an effective address to set up the
 // next byte's bus cycle.
 inline constexpr uint8_t PackLoadReg(Reg reg, ByteSel byte_sel, bool update_nz, bool post_inc_addr = false) {
-  return static_cast<uint8_t>((static_cast<uint32_t>(reg) & 0x0FU) |
-                              ((static_cast<uint32_t>(byte_sel) & 0x03U) << 4U) |
-                              ((update_nz ? 1U : 0U) << 6U) |
-                              ((post_inc_addr ? 1U : 0U) << 7U));
+  return static_cast<uint8_t>((static_cast<uint32_t>(reg) & 0x0FU) | ((static_cast<uint32_t>(byte_sel) & 0x03U) << 4U) |
+                              ((update_nz ? 1U : 0U) << 6U) | ((post_inc_addr ? 1U : 0U) << 7U));
 }
-inline constexpr Reg UnpackLoadRegReg(uint8_t params) {
-  return static_cast<Reg>(params & 0x0FU);
-}
-inline constexpr ByteSel UnpackLoadRegByteSel(uint8_t params) {
-  return static_cast<ByteSel>((params >> 4U) & 0x03U);
-}
-inline constexpr bool UnpackLoadRegNz(uint8_t params) {
-  return (params & 0x40U) != 0U;
-}
-inline constexpr bool UnpackLoadRegPostIncAddr(uint8_t params) {
-  return (params & 0x80U) != 0U;
-}
+inline constexpr Reg UnpackLoadRegReg(uint8_t params) { return static_cast<Reg>(params & 0x0FU); }
+inline constexpr ByteSel UnpackLoadRegByteSel(uint8_t params) { return static_cast<ByteSel>((params >> 4U) & 0x03U); }
+inline constexpr bool UnpackLoadRegNz(uint8_t params) { return (params & 0x40U) != 0U; }
+inline constexpr bool UnpackLoadRegPostIncAddr(uint8_t params) { return (params & 0x80U) != 0U; }
 
 // Push bus action (kPushStack): bits [3:0] = PushSrc (15 variants — A8/AHigh,
 // X8/XHigh, Y8/YHigh, Pcl/Pch/Pbr, Dbr, P, DpLow/DpHigh, AddrLow/AddrHigh).
 // Dispatch lives in the kPushStack case in PerformBusAction in cpu.cpp.
-inline constexpr uint8_t PackPushStack(PushSrc src) {
-  return static_cast<uint8_t>(static_cast<uint32_t>(src) & 0x0FU);
-}
-inline constexpr PushSrc UnpackPushStack(uint8_t params) {
-  return static_cast<PushSrc>(params & 0x0FU);
-}
+inline constexpr uint8_t PackPushStack(PushSrc src) { return static_cast<uint8_t>(static_cast<uint32_t>(src) & 0x0FU); }
+inline constexpr PushSrc UnpackPushStack(uint8_t params) { return static_cast<PushSrc>(params & 0x0FU); }
 
 // Write bus action (kWriteRegByte): bits [2:0] = WriteSrc (kFetchData/kA/kX/
 // kY/kZero), bit 3 = ByteSel (0 = kLow, 1 = kHigh). For the generic fetch_data
@@ -102,15 +74,10 @@ inline constexpr PushSrc UnpackPushStack(uint8_t params) {
 // kWriteRegByte case in PerformBusAction in cpu.cpp. Bit 4 is reserved for
 // kModifyAddr's decrement flag (shared-slot encoding); keep it clear here.
 inline constexpr uint8_t PackWriteAddr(WriteSrc src, ByteSel byte_sel) {
-  return static_cast<uint8_t>((static_cast<uint32_t>(src) & 0x07U)
-                              | ((static_cast<uint32_t>(byte_sel) & 0x01U) << 3U));
+  return static_cast<uint8_t>((static_cast<uint32_t>(src) & 0x07U) | ((static_cast<uint32_t>(byte_sel) & 0x01U) << 3U));
 }
-inline constexpr WriteSrc UnpackWriteAddrSrc(uint8_t params) {
-  return static_cast<WriteSrc>(params & 0x07U);
-}
-inline constexpr ByteSel UnpackWriteAddrByteSel(uint8_t params) {
-  return static_cast<ByteSel>((params >> 3U) & 0x01U);
-}
+inline constexpr WriteSrc UnpackWriteAddrSrc(uint8_t params) { return static_cast<WriteSrc>(params & 0x07U); }
+inline constexpr ByteSel UnpackWriteAddrByteSel(uint8_t params) { return static_cast<ByteSel>((params >> 3U) & 0x01U); }
 
 // ALU immediate (kAlu8Imm / kAlu16Imm): bits [3:0] = AluOp (10 variants — Adc,
 // Sbc, And, Ora, Eor, Cmp, Cpx, Cpy, Bit, BitMem). Bit 4 (kAlu16Imm only) = low byte
@@ -124,12 +91,8 @@ inline constexpr ByteSel UnpackWriteAddrByteSel(uint8_t params) {
 inline constexpr uint8_t PackAluOp(AluOp op, bool low_from_scratch = false) {
   return static_cast<uint8_t>((static_cast<uint32_t>(op) & 0x0FU) | (low_from_scratch ? 0x10U : 0x00U));
 }
-inline constexpr AluOp UnpackAluOp(uint8_t params) {
-  return static_cast<AluOp>(params & 0x0FU);
-}
-inline constexpr bool UnpackAluLowFromScratch(uint8_t params) {
-  return (params & 0x10U) != 0U;
-}
+inline constexpr AluOp UnpackAluOp(uint8_t params) { return static_cast<AluOp>(params & 0x0FU); }
+inline constexpr bool UnpackAluLowFromScratch(uint8_t params) { return (params & 0x10U) != 0U; }
 
 // Set addr byte from fetch (kSetAddrByteFromFetch): bits [1:0] = ByteSel
 // (kLow/kHigh/kBank), bits [3:2] = BankSrc. BankSrc is only meaningful with
@@ -152,15 +115,9 @@ inline constexpr uint8_t PackSetAddrByte(ByteSel byte_sel, BankSrc bank_src) {
 inline constexpr uint8_t PackSetAddrByte(ByteSel byte_sel, bool from_dbr) {
   return PackSetAddrByte(byte_sel, from_dbr ? BankSrc::kDbr : BankSrc::kLeave);
 }
-inline constexpr ByteSel UnpackSetAddrByteSel(uint8_t params) {
-  return static_cast<ByteSel>(params & 0x03U);
-}
-inline constexpr BankSrc UnpackSetAddrBankSrc(uint8_t params) {
-  return static_cast<BankSrc>((params >> 2U) & 0x03U);
-}
-inline constexpr bool UnpackSetAddrFromDbr(uint8_t params) {
-  return UnpackSetAddrBankSrc(params) == BankSrc::kDbr;
-}
+inline constexpr ByteSel UnpackSetAddrByteSel(uint8_t params) { return static_cast<ByteSel>(params & 0x03U); }
+inline constexpr BankSrc UnpackSetAddrBankSrc(uint8_t params) { return static_cast<BankSrc>((params >> 2U) & 0x03U); }
+inline constexpr bool UnpackSetAddrFromDbr(uint8_t params) { return UnpackSetAddrBankSrc(params) == BankSrc::kDbr; }
 
 // Modify addr (kModifyAddr): bit 4 = decrement flag (0 = +1, 1 = -1). Encoded
 // so the default (bit 4 = 0) is increment, which is also what results when
@@ -168,12 +125,8 @@ inline constexpr bool UnpackSetAddrFromDbr(uint8_t params) {
 // the same slot: WriteRegByte's packing occupies bits [3:0], leaving bit 4
 // at 0 so the address advances after the write. No ModifyAddr decrement call
 // site exists today; the plan reserves the encoding for future use.
-inline constexpr uint8_t PackModifyAddr(bool increment) {
-  return static_cast<uint8_t>(increment ? 0U : (1U << 4U));
-}
-inline constexpr bool UnpackModifyAddrIncrement(uint8_t params) {
-  return (params & 0x10U) == 0U;
-}
+inline constexpr uint8_t PackModifyAddr(bool increment) { return static_cast<uint8_t>(increment ? 0U : (1U << 4U)); }
+inline constexpr bool UnpackModifyAddrIncrement(uint8_t params) { return (params & 0x10U) == 0U; }
 
 // Modify SP (kModifySp): bit 5 = increment flag (0 = -1, 1 = +1). Encoded so
 // the default (bit 5 = 0) is decrement, which is what results when kModifySp
@@ -181,54 +134,28 @@ inline constexpr bool UnpackModifyAddrIncrement(uint8_t params) {
 // PushStack's PushSrc packing occupies bits [3:0], leaving bit 5 at 0 so SP
 // decrements after the push. Standalone kModifySp increment slots must set
 // bit 5.
-inline constexpr uint8_t PackModifySp(bool increment) {
-  return static_cast<uint8_t>(increment ? (1U << 5U) : 0U);
-}
-inline constexpr bool UnpackModifySpIncrement(uint8_t params) {
-  return (params & 0x20U) != 0U;
-}
+inline constexpr uint8_t PackModifySp(bool increment) { return static_cast<uint8_t>(increment ? (1U << 5U) : 0U); }
+inline constexpr bool UnpackModifySpIncrement(uint8_t params) { return (params & 0x20U) != 0U; }
 
 // Modify PC (kModifyPc): bit 4 = decrement flag (0 = +1, 1 = -1). No sharing
 // constraint today — kModifyPc always appears with bus_action = kNone — so
 // the default encoding could be either polarity. We mirror kModifyAddr
 // (default = increment) for consistency.
-inline constexpr uint8_t PackModifyPc(bool increment) {
-  return static_cast<uint8_t>(increment ? 0U : (1U << 4U));
-}
-inline constexpr bool UnpackModifyPcIncrement(uint8_t params) {
-  return (params & 0x10U) == 0U;
-}
+inline constexpr uint8_t PackModifyPc(bool increment) { return static_cast<uint8_t>(increment ? 0U : (1U << 4U)); }
+inline constexpr bool UnpackModifyPcIncrement(uint8_t params) { return (params & 0x10U) == 0U; }
 
 // Branch relative (kBranchRelative): bit 0 = wide (1 = 16-bit displacement
 // from addr_, 0 = signed 8-bit from fetch_data_).
-inline constexpr uint8_t PackBranchRelative(bool wide) {
-  return static_cast<uint8_t>(wide ? 1U : 0U);
-}
-inline constexpr bool UnpackBranchRelativeWide(uint8_t params) {
-  return (params & 0x01U) != 0U;
-}
-
-// Set PC from addr (kSetPcFromAddr): bit 0 = with_pbr. When 1, also sets
-// PBR = addr_[23:16] (used by RTL/JML via addr-stashed path).
-inline constexpr uint8_t PackSetPcFromAddr(bool with_pbr) {
-  return static_cast<uint8_t>(with_pbr ? 1U : 0U);
-}
-inline constexpr bool UnpackSetPcWithPbr(uint8_t params) {
-  return (params & 0x01U) != 0U;
-}
+inline constexpr uint8_t PackBranchRelative(bool wide) { return static_cast<uint8_t>(wide ? 1U : 0U); }
+inline constexpr bool UnpackBranchRelativeWide(uint8_t params) { return (params & 0x01U) != 0U; }
 
 // Fused kLoadAddrByteAndSetPc: bits [1:0] = ByteSel, bit [2] = with_pbr.
 // Used for JMP abs (kHigh, false) and JML (kBank, true).
 inline constexpr uint8_t PackLoadAddrByteAndSetPc(ByteSel byte_sel, bool with_pbr) {
-  return static_cast<uint8_t>((static_cast<uint32_t>(byte_sel) & 0x03U) |
-                              ((with_pbr ? 1U : 0U) << 2U));
+  return static_cast<uint8_t>((static_cast<uint32_t>(byte_sel) & 0x03U) | ((with_pbr ? 1U : 0U) << 2U));
 }
-inline constexpr ByteSel UnpackLoadAddrByteAndSetPcSel(uint8_t params) {
-  return static_cast<ByteSel>(params & 0x03U);
-}
-inline constexpr bool UnpackLoadAddrByteAndSetPcWithPbr(uint8_t params) {
-  return (params & 0x04U) != 0U;
-}
+inline constexpr ByteSel UnpackLoadAddrByteAndSetPcSel(uint8_t params) { return static_cast<ByteSel>(params & 0x03U); }
+inline constexpr bool UnpackLoadAddrByteAndSetPcWithPbr(uint8_t params) { return (params & 0x04U) != 0U; }
 
 // Add index to addr (kAddIndexToAddr): bits [3:0] = Reg (kX or kY), bit [4] =
 // bank_wrap. When bank_wrap is 1 (default), addr_ is masked to 16 bits after
@@ -238,12 +165,8 @@ inline constexpr bool UnpackLoadAddrByteAndSetPcWithPbr(uint8_t params) {
 inline constexpr uint8_t PackAddIndex(Reg reg, bool bank_wrap = true) {
   return static_cast<uint8_t>((static_cast<uint32_t>(reg) & 0x0FU) | (bank_wrap ? 0x10U : 0x00U));
 }
-inline constexpr Reg UnpackAddIndex(uint8_t params) {
-  return static_cast<Reg>(params & 0x0FU);
-}
-inline constexpr bool UnpackAddIndexBankWrap(uint8_t params) {
-  return (params & 0x10U) != 0U;
-}
+inline constexpr Reg UnpackAddIndex(uint8_t params) { return static_cast<Reg>(params & 0x0FU); }
+inline constexpr bool UnpackAddIndexBankWrap(uint8_t params) { return (params & 0x10U) != 0U; }
 
 // Form addr from scratch (kFormAddrFromScratchBank): bit 0 = with_y_add. When
 // set, after assembling addr_ = bank:(scratch high:low), Y is added with
@@ -252,36 +175,24 @@ inline constexpr bool UnpackAddIndexBankWrap(uint8_t params) {
 inline constexpr uint8_t PackFormAddrFromScratchBank(bool with_y_add = false) {
   return static_cast<uint8_t>(with_y_add ? 0x01U : 0x00U);
 }
-inline constexpr bool UnpackFormAddrFromScratchBankWithYAdd(uint8_t params) {
-  return (params & 0x01U) != 0U;
-}
+inline constexpr bool UnpackFormAddrFromScratchBankWithYAdd(uint8_t params) { return (params & 0x01U) != 0U; }
 
 // Mask status (kMaskStatus): bit 0 = or_bits (1 = SEP/OR, 0 = REP/AND-NOT).
 // Both paths preserve E-mode forcing of M/X back to 1.
-inline constexpr uint8_t PackMaskStatus(bool or_bits) {
-  return static_cast<uint8_t>(or_bits ? 1U : 0U);
-}
-inline constexpr bool UnpackMaskStatusOr(uint8_t params) {
-  return (params & 0x01U) != 0U;
-}
+inline constexpr uint8_t PackMaskStatus(bool or_bits) { return static_cast<uint8_t>(or_bits ? 1U : 0U); }
+inline constexpr bool UnpackMaskStatusOr(uint8_t params) { return (params & 0x01U) != 0U; }
 
 // Memory RMW (kRmwMem): bits [2:0] = RmwOp (kAsl/kLsr/kRol/kRor/kInc/kDec).
 // Width follows regs_.P.M at runtime — the op dispatches 8-bit vs 16-bit
 // dynamically rather than through a packed width bit. See kRmwMem dispatch in
 // ExecuteInternalOp in cpu.cpp.
-inline constexpr uint8_t PackRmw(RmwOp op) {
-  return static_cast<uint8_t>(static_cast<uint32_t>(op) & 0x07U);
-}
-inline constexpr RmwOp UnpackRmwOp(uint8_t params) {
-  return static_cast<RmwOp>(params & 0x07U);
-}
+inline constexpr uint8_t PackRmw(RmwOp op) { return static_cast<uint8_t>(static_cast<uint32_t>(op) & 0x07U); }
+inline constexpr RmwOp UnpackRmwOp(uint8_t params) { return static_cast<RmwOp>(params & 0x07U); }
 
 // Halt CPU (kHaltCpu): bit 0 = is_stp (1 = STP, 0 = WAI). The two map to
 // HaltState::kStp / HaltState::kWai; STP is only cleared by Reset while WAI
 // wakes on any interrupt pin assertion.
-inline constexpr uint8_t PackHaltCpu(bool is_stp) {
-  return static_cast<uint8_t>(is_stp ? 1U : 0U);
-}
+inline constexpr uint8_t PackHaltCpu(bool is_stp) { return static_cast<uint8_t>(is_stp ? 1U : 0U); }
 
 // Interrupt vector selection (kSetInterruptVector): bits [2:0] carry the
 // InterruptKind enum. BRK=0, COP=1, NMI=2, IRQ=3, ABORT=4.
@@ -352,17 +263,14 @@ constexpr TimingRuleExpr Condition(TimingCondition condition) {
 constexpr TimingRuleNode ShiftTimingRuleNode(const TimingRuleNode& node, uint8_t offset) {
   TimingRuleNode shifted = node;
   switch (node.op) {
-    case TimingRuleOp::kNot:
-      shifted.lhs = static_cast<uint8_t>(node.lhs + offset);
-      break;
+    case TimingRuleOp::kNot: shifted.lhs = static_cast<uint8_t>(node.lhs + offset); break;
     case TimingRuleOp::kAllOf:
     case TimingRuleOp::kAnyOf:
       shifted.lhs = static_cast<uint8_t>(node.lhs + offset);
       shifted.rhs = static_cast<uint8_t>(node.rhs + offset);
       break;
     case TimingRuleOp::kAlways:
-    case TimingRuleOp::kCondition:
-      break;
+    case TimingRuleOp::kCondition: break;
   }
   return shifted;
 }
@@ -430,11 +338,7 @@ constexpr CycleSlotSpec WriteRegByte(WriteSrc src, ByteSel byte_sel,
                                      MicroInternalOp internal_op = MicroInternalOp::kNone,
                                      TimingRuleExpr rule = Always(), std::string_view label = {}) {
   return CycleSlotSpec{
-      MicroBusAction::kWriteRegByte,
-      internal_op,
-      rule,
-      label,
-      micro_op_params::PackWriteAddr(src, byte_sel),
+      MicroBusAction::kWriteRegByte, internal_op, rule, label, micro_op_params::PackWriteAddr(src, byte_sel),
   };
 }
 
@@ -445,11 +349,7 @@ constexpr CycleSlotSpec WriteRegByte(WriteSrc src, ByteSel byte_sel,
 constexpr CycleSlotSpec PushReg(PushSrc src, MicroInternalOp internal_op = MicroInternalOp::kNone,
                                 TimingRuleExpr rule = Always(), std::string_view label = {}) {
   return CycleSlotSpec{
-      MicroBusAction::kPushStack,
-      internal_op,
-      rule,
-      label,
-      micro_op_params::PackPushStack(src),
+      MicroBusAction::kPushStack, internal_op, rule, label, micro_op_params::PackPushStack(src),
   };
 }
 
@@ -463,17 +363,18 @@ constexpr CycleSlotSpec Internal(MicroInternalOp internal_op = MicroInternalOp::
   return CycleSlotSpec{MicroBusAction::kNone, internal_op, rule, label};
 }
 
+// Shorthand for the common idle-cycle slot: kNone bus action, kNone internal op,
+// always-fires, "internal" label. Appears 27× across the opcode definitions.
+constexpr CycleSlotSpec Idle(std::string_view label = "internal") {
+  return CycleSlotSpec{MicroBusAction::kNone, MicroInternalOp::kNone, Always(), label};
+}
+
 // Parameterized register-to-register transfer. Packs (src, dst) into
 // CycleSlotSpec::params for the unified kTransferReg internal op. Width and
 // flag semantics of each concrete pair live in the kTransferReg case in ExecuteInternalOp in cpu.cpp.
-constexpr CycleSlotSpec TransferReg(Reg src, Reg dst, TimingRuleExpr rule = Always(),
-                                    std::string_view label = {}) {
+constexpr CycleSlotSpec TransferReg(Reg src, Reg dst, TimingRuleExpr rule = Always(), std::string_view label = {}) {
   return CycleSlotSpec{
-      MicroBusAction::kNone,
-      MicroInternalOp::kTransferReg,
-      rule,
-      label,
-      micro_op_params::PackTransfer(src, dst),
+      MicroBusAction::kNone, MicroInternalOp::kTransferReg, rule, label, micro_op_params::PackTransfer(src, dst),
   };
 }
 
@@ -483,11 +384,7 @@ constexpr CycleSlotSpec TransferReg(Reg src, Reg dst, TimingRuleExpr rule = Alwa
 constexpr CycleSlotSpec IncDecReg(Reg reg, bool decrement, TimingRuleExpr rule = Always(),
                                   std::string_view label = {}) {
   return CycleSlotSpec{
-      MicroBusAction::kNone,
-      MicroInternalOp::kIncDecReg,
-      rule,
-      label,
-      micro_op_params::PackIncDec(reg, decrement),
+      MicroBusAction::kNone, MicroInternalOp::kIncDecReg, rule, label, micro_op_params::PackIncDec(reg, decrement),
   };
 }
 
@@ -495,14 +392,9 @@ constexpr CycleSlotSpec IncDecReg(Reg reg, bool decrement, TimingRuleExpr rule =
 // for the unified kSetFlag internal op. Dispatch lives in the kSetFlag case in ExecuteInternalOp in
 // cpu.cpp. Only C, D, I, V are emitted by real opcodes (CLC/SEC/CLI/SEI/CLV/
 // CLD/SED).
-constexpr CycleSlotSpec SetFlag(Flag flag, bool value, TimingRuleExpr rule = Always(),
-                                std::string_view label = {}) {
+constexpr CycleSlotSpec SetFlag(Flag flag, bool value, TimingRuleExpr rule = Always(), std::string_view label = {}) {
   return CycleSlotSpec{
-      MicroBusAction::kNone,
-      MicroInternalOp::kSetFlag,
-      rule,
-      label,
-      micro_op_params::PackSetFlag(flag, value),
+      MicroBusAction::kNone, MicroInternalOp::kSetFlag, rule, label, micro_op_params::PackSetFlag(flag, value),
   };
 }
 
@@ -511,8 +403,7 @@ constexpr CycleSlotSpec SetFlag(Flag flag, bool value, TimingRuleExpr rule = Alw
 // kLoadReg internal op. Dispatch lives in the kLoadReg case in ExecuteInternalOp in cpu.cpp. Used by
 // LDA/LDX/LDY immediate and any other opcode that completes a register via a
 // PC-side fetch.
-constexpr CycleSlotSpec LoadRegFromFetch(Reg reg, ByteSel byte_sel, bool update_nz,
-                                         TimingRuleExpr rule = Always(),
+constexpr CycleSlotSpec LoadRegFromFetch(Reg reg, ByteSel byte_sel, bool update_nz, TimingRuleExpr rule = Always(),
                                          std::string_view label = {}) {
   return CycleSlotSpec{
       MicroBusAction::kFetchPc,
@@ -526,8 +417,7 @@ constexpr CycleSlotSpec LoadRegFromFetch(Reg reg, ByteSel byte_sel, bool update_
 // Parameterized load of a register byte from a pre-incremented stack pull
 // (kPreIncPullStack bus action). Same param encoding as LoadRegFromFetch;
 // used by PLA/PLX/PLY.
-constexpr CycleSlotSpec PullPreIncLoadReg(Reg reg, ByteSel byte_sel, bool update_nz,
-                                          TimingRuleExpr rule = Always(),
+constexpr CycleSlotSpec PullPreIncLoadReg(Reg reg, ByteSel byte_sel, bool update_nz, TimingRuleExpr rule = Always(),
                                           std::string_view label = {}) {
   return CycleSlotSpec{
       MicroBusAction::kPreIncPullStack,
@@ -542,14 +432,9 @@ constexpr CycleSlotSpec PullPreIncLoadReg(Reg reg, ByteSel byte_sel, bool update
 // the unified kAlu8Imm internal op; packs AluOp into CycleSlotSpec::params for
 // the kAlu8Imm case in ExecuteInternalOp in cpu.cpp. Used by ADC/SBC/AND/ORA/EOR/CMP/CPX/CPY/BIT
 // immediate when the controlling flag (M for A, X for X/Y-compares) is 1.
-constexpr CycleSlotSpec AluImm8(AluOp op, TimingRuleExpr rule = Always(),
-                                std::string_view label = {}) {
+constexpr CycleSlotSpec AluImm8(AluOp op, TimingRuleExpr rule = Always(), std::string_view label = {}) {
   return CycleSlotSpec{
-      MicroBusAction::kFetchPc,
-      MicroInternalOp::kAlu8Imm,
-      rule,
-      label,
-      micro_op_params::PackAluOp(op),
+      MicroBusAction::kFetchPc, MicroInternalOp::kAlu8Imm, rule, label, micro_op_params::PackAluOp(op),
   };
 }
 
@@ -557,14 +442,9 @@ constexpr CycleSlotSpec AluImm8(AluOp op, TimingRuleExpr rule = Always(),
 // the unified kAlu16Imm internal op; packs AluOp into CycleSlotSpec::params for
 // the kAlu16Imm case in ExecuteInternalOp in cpu.cpp. Consumes addr_[7:0] as the operand low byte
 // (stashed by a prior kSetAddrLowFromFetch) and fetch_data_ as the high byte.
-constexpr CycleSlotSpec AluImm16(AluOp op, TimingRuleExpr rule = Always(),
-                                 std::string_view label = {}) {
+constexpr CycleSlotSpec AluImm16(AluOp op, TimingRuleExpr rule = Always(), std::string_view label = {}) {
   return CycleSlotSpec{
-      MicroBusAction::kFetchPc,
-      MicroInternalOp::kAlu16Imm,
-      rule,
-      label,
-      micro_op_params::PackAluOp(op),
+      MicroBusAction::kFetchPc, MicroInternalOp::kAlu16Imm, rule, label, micro_op_params::PackAluOp(op),
   };
 }
 
@@ -573,8 +453,8 @@ constexpr CycleSlotSpec AluImm16(AluOp op, TimingRuleExpr rule = Always(),
 // meaningful only when byte_sel == kHigh and triggers the old
 // kSetAddrHighFromFetchAndBankFromDbr behavior (high byte from fetch + bank
 // from DBR).
-constexpr CycleSlotSpec SetAddrByte(ByteSel byte_sel, bool from_dbr = false,
-                                    TimingRuleExpr rule = Always(), std::string_view label = {}) {
+constexpr CycleSlotSpec SetAddrByte(ByteSel byte_sel, bool from_dbr = false, TimingRuleExpr rule = Always(),
+                                    std::string_view label = {}) {
   return CycleSlotSpec{
       MicroBusAction::kNone,
       MicroInternalOp::kSetAddrByteFromFetch,
@@ -585,66 +465,33 @@ constexpr CycleSlotSpec SetAddrByte(ByteSel byte_sel, bool from_dbr = false,
 }
 
 // Parameterized kModifyAddr. Defaults to increment; decrement is reserved.
-constexpr CycleSlotSpec ModifyAddr(bool increment = true, TimingRuleExpr rule = Always(),
-                                   std::string_view label = {}) {
+constexpr CycleSlotSpec ModifyAddr(bool increment = true, TimingRuleExpr rule = Always(), std::string_view label = {}) {
   return CycleSlotSpec{
-      MicroBusAction::kNone,
-      MicroInternalOp::kModifyAddr,
-      rule,
-      label,
-      micro_op_params::PackModifyAddr(increment),
+      MicroBusAction::kNone, MicroInternalOp::kModifyAddr, rule, label, micro_op_params::PackModifyAddr(increment),
   };
 }
 
 // Parameterized kModifySp. increment = true for pull-path SP advance,
 // false for push-path SP retreat.
-constexpr CycleSlotSpec ModifySp(bool increment, TimingRuleExpr rule = Always(),
-                                 std::string_view label = {}) {
+constexpr CycleSlotSpec ModifySp(bool increment, TimingRuleExpr rule = Always(), std::string_view label = {}) {
   return CycleSlotSpec{
-      MicroBusAction::kNone,
-      MicroInternalOp::kModifySp,
-      rule,
-      label,
-      micro_op_params::PackModifySp(increment),
+      MicroBusAction::kNone, MicroInternalOp::kModifySp, rule, label, micro_op_params::PackModifySp(increment),
   };
 }
 
 // Parameterized kModifyPc. Defaults to increment.
-constexpr CycleSlotSpec ModifyPc(bool increment = true, TimingRuleExpr rule = Always(),
-                                 std::string_view label = {}) {
+constexpr CycleSlotSpec ModifyPc(bool increment = true, TimingRuleExpr rule = Always(), std::string_view label = {}) {
   return CycleSlotSpec{
-      MicroBusAction::kNone,
-      MicroInternalOp::kModifyPc,
-      rule,
-      label,
-      micro_op_params::PackModifyPc(increment),
+      MicroBusAction::kNone, MicroInternalOp::kModifyPc, rule, label, micro_op_params::PackModifyPc(increment),
   };
 }
 
 // Parameterized branch-relative apply. wide = true selects the 16-bit
 // displacement stashed in addr_[15:0] (BRL); wide = false applies the signed
 // 8-bit displacement in fetch_data_ and tracks branch_page_crossed.
-constexpr CycleSlotSpec BranchRelative(bool wide, TimingRuleExpr rule = Always(),
-                                       std::string_view label = {}) {
+constexpr CycleSlotSpec BranchRelative(bool wide, TimingRuleExpr rule = Always(), std::string_view label = {}) {
   return CycleSlotSpec{
-      MicroBusAction::kNone,
-      MicroInternalOp::kBranchRelative,
-      rule,
-      label,
-      micro_op_params::PackBranchRelative(wide),
-  };
-}
-
-// Parameterized kSetPcFromAddr. with_pbr = true also copies addr_[23:16] into
-// PBR (used by RTL and the addr-stashed jump-long path).
-constexpr CycleSlotSpec SetPcFromAddr(bool with_pbr = false, TimingRuleExpr rule = Always(),
-                                      std::string_view label = {}) {
-  return CycleSlotSpec{
-      MicroBusAction::kNone,
-      MicroInternalOp::kSetPcFromAddr,
-      rule,
-      label,
-      micro_op_params::PackSetPcFromAddr(with_pbr),
+      MicroBusAction::kNone, MicroInternalOp::kBranchRelative, rule, label, micro_op_params::PackBranchRelative(wide),
   };
 }
 
@@ -652,8 +499,7 @@ constexpr CycleSlotSpec SetPcFromAddr(bool with_pbr = false, TimingRuleExpr rule
 // JMP absolute (byte_sel = kHigh, with_pbr = false) and JML absolute long
 // (byte_sel = kBank, with_pbr = true). Emits a kFetchPc bus action paired
 // with the kLoadAddrByteAndSetPc internal op.
-constexpr CycleSlotSpec LoadAddrByteAndSetPc(ByteSel byte_sel, bool with_pbr,
-                                             TimingRuleExpr rule = Always(),
+constexpr CycleSlotSpec LoadAddrByteAndSetPc(ByteSel byte_sel, bool with_pbr, TimingRuleExpr rule = Always(),
                                              std::string_view label = {}) {
   return CycleSlotSpec{
       MicroBusAction::kFetchPc,
@@ -666,14 +512,9 @@ constexpr CycleSlotSpec LoadAddrByteAndSetPc(ByteSel byte_sel, bool with_pbr,
 
 // Parameterized REP/SEP (kMaskStatus). or_bits = true for SEP (P |= fetch),
 // false for REP (P &= ~fetch). Both paths preserve E-mode forcing of M/X.
-constexpr CycleSlotSpec MaskStatus(bool or_bits, TimingRuleExpr rule = Always(),
-                                   std::string_view label = {}) {
+constexpr CycleSlotSpec MaskStatus(bool or_bits, TimingRuleExpr rule = Always(), std::string_view label = {}) {
   return CycleSlotSpec{
-      MicroBusAction::kNone,
-      MicroInternalOp::kMaskStatus,
-      rule,
-      label,
-      micro_op_params::PackMaskStatus(or_bits),
+      MicroBusAction::kNone, MicroInternalOp::kMaskStatus, rule, label, micro_op_params::PackMaskStatus(or_bits),
   };
 }
 
@@ -683,8 +524,7 @@ constexpr CycleSlotSpec MaskStatus(bool or_bits, TimingRuleExpr rule = Always(),
 // BranchCond into CycleSlotSpec::params for the unified kSetBranchTakenCond
 // internal op. Used by every conditional branch opcode via BranchSequence;
 // BRL has its own long-form sequence.
-constexpr CycleSlotSpec FetchPcBranchTest(BranchCond cond,
-                                          std::string_view label = "fetch displacement") {
+constexpr CycleSlotSpec FetchPcBranchTest(BranchCond cond, std::string_view label = "fetch displacement") {
   return CycleSlotSpec{
       MicroBusAction::kFetchPc,
       MicroInternalOp::kSetBranchTakenCond,
@@ -757,6 +597,17 @@ constexpr auto ConcatArrays(const std::array<T, N>& lhs, const std::array<T, M>&
   return out;
 }
 
+// Variadic flatten over std::array. Folds left so that a single call
+// `ConcatAll(a, b, c, d, ...)` replaces a tree of nested ConcatArrays.
+template <typename A>
+constexpr auto ConcatAll(const A& a) {
+  return a;
+}
+template <typename A, typename B, typename... Rest>
+constexpr auto ConcatAll(const A& a, const B& b, const Rest&... rest) {
+  return ConcatAll(ConcatArrays(a, b), rest...);
+}
+
 constexpr bool ValidateTimingRule(const TimingRuleExpr& rule) {
   if (rule.node_count == 0) {
     return true;
@@ -769,8 +620,7 @@ constexpr bool ValidateTimingRule(const TimingRuleExpr& rule) {
     const TimingRuleNode& node = rule.nodes[i];
     switch (node.op) {
       case TimingRuleOp::kAlways:
-      case TimingRuleOp::kCondition:
-        break;
+      case TimingRuleOp::kCondition: break;
       case TimingRuleOp::kNot:
         if (node.lhs >= i) {
           return false;
@@ -822,21 +672,11 @@ constexpr bool EvaluateRuleForBits(const TimingRuleExpr& rule, uint32_t bits) {
   for (uint8_t i = 0; i < rule.node_count; ++i) {
     const TimingRuleNode& node = rule.nodes[i];
     switch (node.op) {
-      case TimingRuleOp::kAlways:
-        values[i] = true;
-        break;
-      case TimingRuleOp::kCondition:
-        values[i] = ((bits >> static_cast<uint8_t>(node.condition)) & 1U) != 0U;
-        break;
-      case TimingRuleOp::kNot:
-        values[i] = !values[node.lhs];
-        break;
-      case TimingRuleOp::kAllOf:
-        values[i] = values[node.lhs] && values[node.rhs];
-        break;
-      case TimingRuleOp::kAnyOf:
-        values[i] = values[node.lhs] || values[node.rhs];
-        break;
+      case TimingRuleOp::kAlways: values[i] = true; break;
+      case TimingRuleOp::kCondition: values[i] = ((bits >> static_cast<uint8_t>(node.condition)) & 1U) != 0U; break;
+      case TimingRuleOp::kNot: values[i] = !values[node.lhs]; break;
+      case TimingRuleOp::kAllOf: values[i] = values[node.lhs] && values[node.rhs]; break;
+      case TimingRuleOp::kAnyOf: values[i] = values[node.lhs] || values[node.rhs]; break;
     }
   }
   return values[rule.root_index];

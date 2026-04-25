@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <vector>
 
+#include "pupsnes/debugger/ring_buffer.h"
 #include "pupsnes/hw/debugger_contract.h"
 
 namespace pupsnes::debugger {
@@ -11,24 +12,18 @@ namespace pupsnes::debugger {
 // the shorter name.
 using pupsnes::TraceEntry;
 
-// Fixed-capacity ring over std::vector. Push is amortized O(1) with no
-// per-call allocation — the backing storage is sized once at construction,
-// slots are overwritten in place, and a monotonic write counter drives the
-// head-tail math.
 class TraceLog : public TraceSink {
  public:
-  explicit TraceLog(std::size_t capacity = 256);
+  explicit TraceLog(std::size_t capacity = 256) : ring_(capacity) {}
 
-  void Push(const TraceEntry& entry);
+  void Push(const TraceEntry& entry) { ring_.Push(entry); }
   void Record(const TraceEntry& entry) override { Push(entry); }
-  void Clear();
-  [[nodiscard]] std::vector<TraceEntry> Snapshot() const;
-  [[nodiscard]] std::size_t Size() const;
+  void Clear() { ring_.Clear(); }
+  [[nodiscard]] std::vector<TraceEntry> Snapshot() const { return ring_.Snapshot(); }
+  [[nodiscard]] std::size_t Size() const { return ring_.Size(); }
 
  private:
-  std::vector<TraceEntry> ring_;
-  std::size_t capacity_ = 0;
-  std::size_t write_count_ = 0;  // Total pushes; size = min(write_count_, capacity_).
+  RingBuffer<TraceEntry> ring_;
 };
 
 }  // namespace pupsnes::debugger

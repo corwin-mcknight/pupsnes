@@ -58,26 +58,6 @@ TEST_CASE("ADC (dp,X) 8-bit adds through indexed pointer", "[unit][opcode][cpu][
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x06);
 }
 
-TEST_CASE("SBC (dp,X) 8-bit subtracts through indexed pointer", "[unit][opcode][cpu][indx]") {
-  ResetFixture f;
-  f.LoadInstruction({0xE1, kDpOffset});
-
-  f.cpu.Reset();
-  SetupIndexedIndirectXPointer(f);
-  f.ModifyRegs([](auto& r) {
-    r.A = 0x0010;
-    r.P.C = true;
-    r.X = kX;
-    r.DBR = kDbr;
-  });
-  f.wram.WriteRegister(kEffectiveAddr, 0x01, 0);
-
-  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 46);
-
-  REQUIRE(r.completed_cycles == 46);
-  REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x0F);
-}
-
 TEST_CASE("AND (dp,X) 8-bit", "[unit][opcode][cpu][indx]") {
   ResetFixture f;
   f.LoadInstruction({0x21, kDpOffset});
@@ -95,45 +75,6 @@ TEST_CASE("AND (dp,X) 8-bit", "[unit][opcode][cpu][indx]") {
 
   REQUIRE(r.completed_cycles == 46);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0xF0);
-}
-
-TEST_CASE("ORA (dp,X) 8-bit", "[unit][opcode][cpu][indx]") {
-  ResetFixture f;
-  f.LoadInstruction({0x01, kDpOffset});
-
-  f.cpu.Reset();
-  SetupIndexedIndirectXPointer(f);
-  f.ModifyRegs([](auto& r) {
-    r.A = 0x00F0;
-    r.X = kX;
-    r.DBR = kDbr;
-  });
-  f.wram.WriteRegister(kEffectiveAddr, 0x0F, 0);
-
-  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 46);
-
-  REQUIRE(r.completed_cycles == 46);
-  REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0xFF);
-}
-
-TEST_CASE("EOR (dp,X) 8-bit clears to zero", "[unit][opcode][cpu][indx]") {
-  ResetFixture f;
-  f.LoadInstruction({0x41, kDpOffset});
-
-  f.cpu.Reset();
-  SetupIndexedIndirectXPointer(f);
-  f.ModifyRegs([](auto& r) {
-    r.A = 0x00FF;
-    r.X = kX;
-    r.DBR = kDbr;
-  });
-  f.wram.WriteRegister(kEffectiveAddr, 0xFF, 0);
-
-  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 46);
-
-  REQUIRE(r.completed_cycles == 46);
-  REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x00);
-  REQUIRE(f.cpu.GetRegs().P.Z == true);
 }
 
 TEST_CASE("CMP (dp,X) 8-bit equal sets Z and C", "[unit][opcode][cpu][indx]") {

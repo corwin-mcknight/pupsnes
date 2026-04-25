@@ -803,13 +803,6 @@ void CPU::ExecuteInternalOp(MicroInternalOp op, [[maybe_unused]] uint8_t params)
       return;
     }
 
-    case MicroInternalOp::kSetPcFromAddr:
-      regs_.PC = static_cast<uint16_t>(addr_ & 0xFFFFU);
-      if (mp::UnpackSetPcWithPbr(params)) {
-        regs_.PBR = static_cast<uint8_t>((addr_ >> 16U) & 0xFFU);
-      }
-      return;
-
     case MicroInternalOp::kLoadAddrByteAndSetPc: {
       const ByteSel sel = mp::UnpackLoadAddrByteAndSetPcSel(params);
       const unsigned shift = (sel == ByteSel::kLow) ? 0U : (sel == ByteSel::kHigh) ? 8U : 16U;

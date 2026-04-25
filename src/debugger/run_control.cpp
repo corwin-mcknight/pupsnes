@@ -26,7 +26,7 @@ void RunControl::InstallDebuggerContract() {
   contract.trace_sink = &trace_sink_;
   contract.step_target = 0;
   contract.suppressed_breakpoint_pc = std::nullopt;
-  contract.step_granularity = DebuggerContract::StepGranularity::kInstruction;
+  contract.step_granularity = StepGranularity::kInstruction;
   snes_.GetCpu().SetDebuggerContract(contract);
 }
 
@@ -75,9 +75,7 @@ void RunControl::RequestStepOne(StepGranularity granularity) {
   SuppressBreakpointAtCurrentPc();
   auto& c = snes_.GetCpu().MutableDebuggerContract();
   c.step_target = 1;
-  c.step_granularity = granularity == StepGranularity::kMicroOp
-                           ? DebuggerContract::StepGranularity::kMicroOp
-                           : DebuggerContract::StepGranularity::kInstruction;
+  c.step_granularity = granularity;
   state_ = RunState::kStepOne;
 }
 
@@ -90,9 +88,7 @@ void RunControl::RequestStepN(uint64_t count, StepGranularity granularity) {
   SuppressBreakpointAtCurrentPc();
   auto& c = snes_.GetCpu().MutableDebuggerContract();
   c.step_target = count;
-  c.step_granularity = granularity == StepGranularity::kMicroOp
-                           ? DebuggerContract::StepGranularity::kMicroOp
-                           : DebuggerContract::StepGranularity::kInstruction;
+  c.step_granularity = granularity;
   state_ = RunState::kStepN;
 }
 
@@ -100,7 +96,7 @@ void RunControl::RequestRunUntilBreak() {
   SuppressBreakpointAtCurrentPc();
   auto& c = snes_.GetCpu().MutableDebuggerContract();
   c.step_target = 0;
-  c.step_granularity = DebuggerContract::StepGranularity::kInstruction;
+  c.step_granularity = StepGranularity::kInstruction;
   state_ = RunState::kRunUntilBreak;
   DetachMicroOpRecorderForFreeRun();
 }
@@ -141,17 +137,10 @@ bool RunControl::HandlePostTickState(const TickResult& result) {
   }
 
   switch (result.reason) {
-    case TickStopReason::kBreakpoint:
-      PauseForBreakpoint();
-      return false;
-    case TickStopReason::kRetiredStepTarget:
-      Pause();
-      return false;
-    case TickStopReason::kFault:
-      PauseForError();
-      return false;
-    case TickStopReason::kReachedTarget:
-      return true;
+    case TickStopReason::kBreakpoint: PauseForBreakpoint(); return false;
+    case TickStopReason::kRetiredStepTarget: Pause(); return false;
+    case TickStopReason::kFault: PauseForError(); return false;
+    case TickStopReason::kReachedTarget: return true;
   }
 
   return true;
@@ -168,8 +157,7 @@ void RunControl::TickFrame(std::chrono::steady_clock::duration wall_clock_budget
   const TimeMasterT start_master_time = snes_.GetMasterTime();
 
   while (state_ != RunState::kPaused && std::chrono::steady_clock::now() < deadline) {
-    if (master_cycles_budget.has_value() &&
-        (snes_.GetMasterTime() - start_master_time) >= *master_cycles_budget) {
+    if (master_cycles_budget.has_value() && (snes_.GetMasterTime() - start_master_time) >= *master_cycles_budget) {
       break;
     }
 

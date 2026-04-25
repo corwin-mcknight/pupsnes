@@ -1,7 +1,7 @@
 #include <array>
 #include <catch2/catch_test_macros.hpp>
 
-#include "pupsnes/5a22/opcode_metadata.h"
+#include "pupsnes/hw/5a22/opcode_metadata.h"
 #include "pupsnes/debugger/disasm.h"
 #include "pupsnes/hw/cartridge.h"
 #include "pupsnes/hw/snes.h"

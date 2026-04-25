@@ -1,6 +1,10 @@
+#include <array>
+#include <string_view>
+#include <utility>
+
 #include "addressing_fragments.h"
 #include "cpu_opcode_defs_internal.h"
-#include "pupsnes/5a22/opcode_metadata.h"
+#include "pupsnes/hw/5a22/opcode_metadata.h"
 
 namespace pupsnes::opcode_defs_internal {
 namespace {
@@ -102,7 +106,7 @@ constexpr CycleFragment StoreIndexY() {
 
 constexpr CycleFragment PushAccumulator() {
   return Fragment()
-      .Then(Internal(MicroInternalOp::kNone, Always(), "internal"))
+      .Then(Idle())
       .Then(PushReg(PushSrc::kAHigh, MicroInternalOp::kModifySp, Condition(TimingCondition::kAccumulator16),
                     "push A high"))
       .Then(PushReg(PushSrc::kA8, MicroInternalOp::kModifySp, Always(), "push A low"))
@@ -110,15 +114,12 @@ constexpr CycleFragment PushAccumulator() {
 }
 
 constexpr CycleFragment PushDataBank() {
-  return Fragment()
-      .Then(Internal(MicroInternalOp::kNone, Always(), "internal"))
-      .Then(PushReg(PushSrc::kDbr, MicroInternalOp::kModifySp, Always(), "push DBR"))
-      .Build();
+  return Fragment().Then(Idle()).Then(PushReg(PushSrc::kDbr, MicroInternalOp::kModifySp, Always(), "push DBR")).Build();
 }
 
 constexpr CycleFragment PullDataBank() {
   return Fragment()
-      .Then(Internal(MicroInternalOp::kNone, Always(), "internal"))
+      .Then(Idle())
       .Then(ModifySp(true, Always(), "increment SP"))
       .Then(CycleSlotSpec{MicroBusAction::kPullStack, MicroInternalOp::kLoadReg, Always(), "pull DBR",
                           micro_op_params::PackLoadReg(Reg::kDbr, ByteSel::kLow, true)})
@@ -156,7 +157,7 @@ constexpr CycleSlotSpec PushRegSlot(PushSrc src, TimingRuleExpr rule, std::strin
 
 constexpr CycleFragment PushIndexX() {
   return Fragment()
-      .Then(Internal(MicroInternalOp::kNone, Always(), "internal"))
+      .Then(Idle())
       .Then(PushRegSlot(PushSrc::kXHigh, Condition(TimingCondition::kIndex16), "push X high"))
       .Then(PushRegSlot(PushSrc::kX8, Always(), "push X low"))
       .Build();
@@ -164,33 +165,27 @@ constexpr CycleFragment PushIndexX() {
 
 constexpr CycleFragment PushIndexY() {
   return Fragment()
-      .Then(Internal(MicroInternalOp::kNone, Always(), "internal"))
+      .Then(Idle())
       .Then(PushRegSlot(PushSrc::kYHigh, Condition(TimingCondition::kIndex16), "push Y high"))
       .Then(PushRegSlot(PushSrc::kY8, Always(), "push Y low"))
       .Build();
 }
 
 constexpr CycleFragment PushStatus() {
-  return Fragment()
-      .Then(Internal(MicroInternalOp::kNone, Always(), "internal"))
-      .Then(PushRegSlot(PushSrc::kP, Always(), "push P"))
-      .Build();
+  return Fragment().Then(Idle()).Then(PushRegSlot(PushSrc::kP, Always(), "push P")).Build();
 }
 
 constexpr CycleFragment PushDirectPage() {
   // PHD: 4 cycles. Always 16-bit.
   return Fragment()
-      .Then(Internal(MicroInternalOp::kNone, Always(), "internal"))
+      .Then(Idle())
       .Then(PushRegSlot(PushSrc::kDpHigh, Always(), "push DP high"))
       .Then(PushRegSlot(PushSrc::kDpLow, Always(), "push DP low"))
       .Build();
 }
 
 constexpr CycleFragment PushProgramBank() {
-  return Fragment()
-      .Then(Internal(MicroInternalOp::kNone, Always(), "internal"))
-      .Then(PushRegSlot(PushSrc::kPbr, Always(), "push PBR"))
-      .Build();
+  return Fragment().Then(Idle()).Then(PushRegSlot(PushSrc::kPbr, Always(), "push PBR")).Build();
 }
 
 constexpr CycleFragment PushEffectiveAbsolute() {
@@ -230,8 +225,8 @@ constexpr CycleFragment PushEffectiveIndirectTail() {
 
 constexpr CycleFragment PullAccumulator() {
   return Fragment()
-      .Then(Internal(MicroInternalOp::kNone, Always(), "internal"))
-      .Then(Internal(MicroInternalOp::kNone, Always(), "internal"))
+      .Then(Idle())
+      .Then(Idle())
       .Then(PullPreIncLoadReg(Reg::kA, ByteSel::kLow, true, Not(Condition(TimingCondition::kAccumulator16)),
                               "pull A (8-bit)"))
       .Then(PullPreIncLoadReg(Reg::kA, ByteSel::kLow, false, Condition(TimingCondition::kAccumulator16), "pull A low"))
@@ -241,8 +236,8 @@ constexpr CycleFragment PullAccumulator() {
 
 constexpr CycleFragment PullIndexX() {
   return Fragment()
-      .Then(Internal(MicroInternalOp::kNone, Always(), "internal"))
-      .Then(Internal(MicroInternalOp::kNone, Always(), "internal"))
+      .Then(Idle())
+      .Then(Idle())
       .Then(
           PullPreIncLoadReg(Reg::kX, ByteSel::kLow, true, Not(Condition(TimingCondition::kIndex16)), "pull X (8-bit)"))
       .Then(PullPreIncLoadReg(Reg::kX, ByteSel::kLow, false, Condition(TimingCondition::kIndex16), "pull X low"))
@@ -252,8 +247,8 @@ constexpr CycleFragment PullIndexX() {
 
 constexpr CycleFragment PullIndexY() {
   return Fragment()
-      .Then(Internal(MicroInternalOp::kNone, Always(), "internal"))
-      .Then(Internal(MicroInternalOp::kNone, Always(), "internal"))
+      .Then(Idle())
+      .Then(Idle())
       .Then(
           PullPreIncLoadReg(Reg::kY, ByteSel::kLow, true, Not(Condition(TimingCondition::kIndex16)), "pull Y (8-bit)"))
       .Then(PullPreIncLoadReg(Reg::kY, ByteSel::kLow, false, Condition(TimingCondition::kIndex16), "pull Y low"))
@@ -263,8 +258,8 @@ constexpr CycleFragment PullIndexY() {
 
 constexpr CycleFragment PullStatus() {
   return Fragment()
-      .Then(Internal(MicroInternalOp::kNone, Always(), "internal"))
-      .Then(Internal(MicroInternalOp::kNone, Always(), "internal"))
+      .Then(Idle())
+      .Then(Idle())
       .Then(PullPreIncLoadReg(Reg::kP, ByteSel::kLow, false, Always(), "pull P"))
       .Build();
 }
@@ -272,8 +267,8 @@ constexpr CycleFragment PullStatus() {
 constexpr CycleFragment PullDirectPage() {
   // PLD: 5 cycles, always 16-bit.
   return Fragment()
-      .Then(Internal(MicroInternalOp::kNone, Always(), "internal"))
-      .Then(Internal(MicroInternalOp::kNone, Always(), "internal"))
+      .Then(Idle())
+      .Then(Idle())
       .Then(PullPreIncLoadReg(Reg::kDp, ByteSel::kLow, false, Always(), "pull DP low"))
       .Then(PullPreIncLoadReg(Reg::kDp, ByteSel::kHigh, true, Always(), "pull DP high"))
       .Build();
@@ -525,7 +520,7 @@ constexpr CycleFragment JsrAbsolute() {
   // T6: fetch target high, set PC.
   return Fragment()
       .Then(FetchAddrByte(ByteSel::kLow, false, Always(), "fetch target low"))
-      .Then(Internal(MicroInternalOp::kNone, Always(), "internal"))
+      .Then(Idle())
       .Then(PushRegSlot(PushSrc::kPch, Always(), "push PCH"))
       .Then(PushRegSlot(PushSrc::kPcl, Always(), "push PCL"))
       .Then(LoadAddrByteAndSetPc(ByteSel::kHigh, false, Always(), "fetch target high, set PC"))
@@ -546,7 +541,7 @@ constexpr CycleFragment JsrAbsoluteLong() {
       .Then(FetchAddrByte(ByteSel::kLow, false, Always(), "fetch target low"))
       .Then(FetchAddrByte(ByteSel::kHigh, false, Always(), "fetch target high"))
       .Then(PushRegSlot(PushSrc::kPbr, Always(), "push PBR"))
-      .Then(Internal(MicroInternalOp::kNone, Always(), "internal"))
+      .Then(Idle())
       .Then(PushRegSlot(PushSrc::kPch, Always(), "push PCH"))
       .Then(PushRegSlot(PushSrc::kPcl, Always(), "push PCL"))
       .Then(LoadAddrByteAndSetPc(ByteSel::kBank, true, Always(), "fetch bank, set PC+PBR"))
@@ -568,8 +563,8 @@ constexpr CycleSlotSpec PullPreIncLoadPcByte(Reg reg, std::string_view label) {
 constexpr CycleFragment Rts() {
   // RTS: 6 cycles total. Pull PCL, pull PCH, PC += 1.
   return Fragment()
-      .Then(Internal(MicroInternalOp::kNone, Always(), "internal"))
-      .Then(Internal(MicroInternalOp::kNone, Always(), "internal"))
+      .Then(Idle())
+      .Then(Idle())
       .Then(PullPreIncLoadPcByte(Reg::kPcl, "pull PCL"))
       .Then(PullPreIncLoadPcByte(Reg::kPch, "pull PCH"))
       .Then(ModifyPc(true, Always(), "increment PC"))
@@ -579,7 +574,7 @@ constexpr CycleFragment Rts() {
 constexpr CycleFragment Rtl() {
   // RTL: 6 cycles total. Pull PCL, pull PCH, increment PC, pull PBR.
   return Fragment()
-      .Then(Internal(MicroInternalOp::kNone, Always(), "internal"))
+      .Then(Idle())
       .Then(PullPreIncLoadPcByte(Reg::kPcl, "pull PCL"))
       .Then(PullPreIncLoadPcByte(Reg::kPch, "pull PCH"))
       .Then(ModifyPc(true, Always(), "increment PC"))
@@ -619,8 +614,8 @@ constexpr CycleFragment ReturnFromInterrupt() {
   // in both modes; pull PBR only in native. PC is not incremented after the
   // pull (unlike RTS/RTL). Bruce Clark §6.3.2.
   return Fragment()
-      .Then(Internal(MicroInternalOp::kNone, Always(), "internal"))
-      .Then(Internal(MicroInternalOp::kNone, Always(), "internal"))
+      .Then(Idle())
+      .Then(Idle())
       .Then(PullPreIncLoadReg(Reg::kP, ByteSel::kLow, false, Always(), "pull P"))
       .Then(PullPreIncLoadPcByte(Reg::kPcl, "pull PCL"))
       .Then(PullPreIncLoadPcByte(Reg::kPch, "pull PCH"))
@@ -833,12 +828,12 @@ constexpr auto MakeJumpSpecs() {
       // STP stops until reset; WAI waits for an interrupt. Without an interrupt
       // model the two share behavior — both halt until Reset() clears halted_.
       Opcode(0xDB, "STP", "implied")
-          .Then(Internal(MicroInternalOp::kNone, Always(), "internal"))
+          .Then(Idle())
           .Then(CycleSlotSpec{MicroBusAction::kNone, MicroInternalOp::kHaltCpu, Always(), "halt (STP)",
                               micro_op_params::PackHaltCpu(/*is_stp=*/true)})
           .Build(),
       Opcode(0xCB, "WAI", "implied")
-          .Then(Internal(MicroInternalOp::kNone, Always(), "internal"))
+          .Then(Idle())
           .Then(CycleSlotSpec{MicroBusAction::kNone, MicroInternalOp::kHaltCpu, Always(), "halt (WAI)",
                               micro_op_params::PackHaltCpu(/*is_stp=*/false)})
           .Build(),
@@ -1466,25 +1461,12 @@ constexpr auto MakeLongXSpecs() {
   };
 }
 
-constexpr auto kExplicitOpcodeSpecs = ConcatArrays(
-    ConcatArrays(
-        ConcatArrays(
-            ConcatArrays(
-                ConcatArrays(ConcatArrays(MakeMiscSpecs(), MakeLoadSpecs()),
-                             ConcatArrays(MakeStoreSpecs(), MakeBranchSpecs())),
-                ConcatArrays(ConcatArrays(ConcatArrays(ConcatArrays(ConcatArrays(MakeStackSpecs(), MakeIncDecSpecs()),
-                                                                    MakeFlagSpecs()),
-                                                       MakeTransferSpecs()),
-                                          MakeJumpSpecs()),
-                             ConcatArrays(MakeAluSpecs(), MakeShiftSpecs()))),
-            ConcatArrays(MakeAluAbsSpecs(), MakeBitDpxSpec())),
-        ConcatArrays(MakeAluDpxSpecs(), MakeAluSrSpecs())),
-    ConcatArrays(
-        ConcatArrays(ConcatArrays(MakeLongXSpecs(), MakeAluAbsXSpecs()), MakeAluIndirectDpSpecs()),
-        ConcatArrays(ConcatArrays(MakeAluAbsYSpecs(), MakeBitMiscSpecs()),
-                     ConcatArrays(ConcatArrays(MakeAluIndirectDpYSpecs(), MakeAluIndirectLongDpYSpecs()),
-                                  ConcatArrays(ConcatArrays(MakeAluIndexedIndirectXSpecs(), MakeAluSrIndyYSpecs()),
-                                               MakeRmwMemSpecs())))));
+constexpr auto kExplicitOpcodeSpecs = ConcatAll(
+    MakeMiscSpecs(), MakeLoadSpecs(), MakeStoreSpecs(), MakeBranchSpecs(), MakeStackSpecs(), MakeIncDecSpecs(),
+    MakeFlagSpecs(), MakeTransferSpecs(), MakeJumpSpecs(), MakeAluSpecs(), MakeShiftSpecs(), MakeAluAbsSpecs(),
+    MakeBitDpxSpec(), MakeAluDpxSpecs(), MakeAluSrSpecs(), MakeLongXSpecs(), MakeAluAbsXSpecs(),
+    MakeAluIndirectDpSpecs(), MakeAluAbsYSpecs(), MakeBitMiscSpecs(), MakeAluIndirectDpYSpecs(),
+    MakeAluIndirectLongDpYSpecs(), MakeAluIndexedIndirectXSpecs(), MakeAluSrIndyYSpecs(), MakeRmwMemSpecs());
 
 static_assert(ValidateOpcodeSpecs(kExplicitOpcodeSpecs), "Opcode specification validation failed");
 
@@ -1546,82 +1528,38 @@ namespace pupsnes {
 namespace {
 
 constexpr OpcodeAddressingMode MapAddressingMode(std::string_view mode) {
-  if (mode == "implied") {
-    return OpcodeAddressingMode::kImplied;
+  using M = OpcodeAddressingMode;
+  constexpr std::array<std::pair<std::string_view, M>, 25> kTable{{
+      {"implied", M::kImplied},
+      {"immediate", M::kImmediateAccumulator},
+      {"immediate index", M::kImmediateIndex},
+      {"absolute", M::kAbsolute},
+      {"absolute long", M::kAbsoluteLong},
+      {"relative", M::kRelative8},
+      {"immediate byte", M::kImmediateByte},
+      {"relative long", M::kRelative16},
+      {"direct page", M::kDirectPage},
+      {"direct page indexed X", M::kDirectPageIndexedX},
+      {"direct page indexed Y", M::kDirectPageIndexedY},
+      {"stack relative", M::kStackRelative},
+      {"absolute indexed X", M::kAbsoluteIndexedX},
+      {"absolute indexed Y", M::kAbsoluteIndexedY},
+      {"direct indirect", M::kDirectIndirect},
+      {"direct indirect long", M::kDirectIndirectLong},
+      {"absolute long indexed X", M::kAbsoluteLongIndexedX},
+      {"direct indirect indexed Y", M::kDirectIndirectIndexedY},
+      {"direct indirect long indexed Y", M::kDirectIndirectLongIndexedY},
+      {"direct indexed indirect X", M::kDirectIndexedIndirectX},
+      {"absolute indirect", M::kAbsoluteIndirect},
+      {"absolute indirect long", M::kAbsoluteIndirectLong},
+      {"absolute indexed indirect X", M::kAbsoluteIndexedIndirectX},
+      {"stack relative indirect indexed Y", M::kStackRelativeIndirectIndexedY},
+      {"src,dest", M::kBlockMove},
+  }};
+  for (const auto& row : kTable) {
+    if (row.first == mode) return row.second;
   }
-  if (mode == "immediate") {
-    return OpcodeAddressingMode::kImmediateAccumulator;
-  }
-  if (mode == "immediate index") {
-    return OpcodeAddressingMode::kImmediateIndex;
-  }
-  if (mode == "absolute") {
-    return OpcodeAddressingMode::kAbsolute;
-  }
-  if (mode == "absolute long") {
-    return OpcodeAddressingMode::kAbsoluteLong;
-  }
-  if (mode == "relative") {
-    return OpcodeAddressingMode::kRelative8;
-  }
-  if (mode == "immediate byte") {
-    return OpcodeAddressingMode::kImmediateByte;
-  }
-  if (mode == "relative long") {
-    return OpcodeAddressingMode::kRelative16;
-  }
-  if (mode == "direct page") {
-    return OpcodeAddressingMode::kDirectPage;
-  }
-  if (mode == "direct page indexed X") {
-    return OpcodeAddressingMode::kDirectPageIndexedX;
-  }
-  if (mode == "direct page indexed Y") {
-    return OpcodeAddressingMode::kDirectPageIndexedY;
-  }
-  if (mode == "stack relative") {
-    return OpcodeAddressingMode::kStackRelative;
-  }
-  if (mode == "absolute indexed X") {
-    return OpcodeAddressingMode::kAbsoluteIndexedX;
-  }
-  if (mode == "absolute indexed Y") {
-    return OpcodeAddressingMode::kAbsoluteIndexedY;
-  }
-  if (mode == "direct indirect") {
-    return OpcodeAddressingMode::kDirectIndirect;
-  }
-  if (mode == "direct indirect long") {
-    return OpcodeAddressingMode::kDirectIndirectLong;
-  }
-  if (mode == "absolute long indexed X") {
-    return OpcodeAddressingMode::kAbsoluteLongIndexedX;
-  }
-  if (mode == "direct indirect indexed Y") {
-    return OpcodeAddressingMode::kDirectIndirectIndexedY;
-  }
-  if (mode == "direct indirect long indexed Y") {
-    return OpcodeAddressingMode::kDirectIndirectLongIndexedY;
-  }
-  if (mode == "direct indexed indirect X") {
-    return OpcodeAddressingMode::kDirectIndexedIndirectX;
-  }
-  if (mode == "absolute indirect") {
-    return OpcodeAddressingMode::kAbsoluteIndirect;
-  }
-  if (mode == "absolute indirect long") {
-    return OpcodeAddressingMode::kAbsoluteIndirectLong;
-  }
-  if (mode == "absolute indexed indirect X") {
-    return OpcodeAddressingMode::kAbsoluteIndexedIndirectX;
-  }
-  if (mode == "stack relative indirect indexed Y") {
-    return OpcodeAddressingMode::kStackRelativeIndirectIndexedY;
-  }
-  if (mode == "src,dest") {
-    return OpcodeAddressingMode::kBlockMove;
-  }
-  return OpcodeAddressingMode::kUnknown;
+  return M::kUnknown;
 }
 
 constexpr OpcodeMetadataView LowerPublicMetadata(const opcode_defs_internal::OpcodeMetadata& metadata) {
@@ -1697,35 +1635,4 @@ uint8_t ComputeInstructionLength(const OpcodeMetadataView& metadata, const CpuFl
   return length;
 }
 
-std::string_view GetAddressingModeName(OpcodeAddressingMode mode) {
-  switch (mode) {
-    case OpcodeAddressingMode::kUnknown: return "unknown";
-    case OpcodeAddressingMode::kImplied: return "implied";
-    case OpcodeAddressingMode::kImmediateAccumulator: return "immediate";
-    case OpcodeAddressingMode::kImmediateIndex: return "immediate index";
-    case OpcodeAddressingMode::kAbsolute: return "absolute";
-    case OpcodeAddressingMode::kAbsoluteLong: return "absolute long";
-    case OpcodeAddressingMode::kRelative8: return "relative";
-    case OpcodeAddressingMode::kImmediateByte: return "immediate byte";
-    case OpcodeAddressingMode::kRelative16: return "relative long";
-    case OpcodeAddressingMode::kDirectPage: return "direct page";
-    case OpcodeAddressingMode::kDirectPageIndexedX: return "direct page indexed X";
-    case OpcodeAddressingMode::kDirectPageIndexedY: return "direct page indexed Y";
-    case OpcodeAddressingMode::kStackRelative: return "stack relative";
-    case OpcodeAddressingMode::kAbsoluteIndexedX: return "absolute indexed X";
-    case OpcodeAddressingMode::kAbsoluteIndexedY: return "absolute indexed Y";
-    case OpcodeAddressingMode::kDirectIndirect: return "direct indirect";
-    case OpcodeAddressingMode::kDirectIndirectLong: return "direct indirect long";
-    case OpcodeAddressingMode::kAbsoluteLongIndexedX: return "absolute long indexed X";
-    case OpcodeAddressingMode::kDirectIndirectIndexedY: return "direct indirect indexed Y";
-    case OpcodeAddressingMode::kDirectIndirectLongIndexedY: return "direct indirect long indexed Y";
-    case OpcodeAddressingMode::kDirectIndexedIndirectX: return "direct indexed indirect X";
-    case OpcodeAddressingMode::kAbsoluteIndirect: return "absolute indirect";
-    case OpcodeAddressingMode::kAbsoluteIndirectLong: return "absolute indirect long";
-    case OpcodeAddressingMode::kAbsoluteIndexedIndirectX: return "absolute indexed indirect X";
-    case OpcodeAddressingMode::kStackRelativeIndirectIndexedY: return "stack relative indirect indexed Y";
-    case OpcodeAddressingMode::kBlockMove: return "src,dest";
-  }
-  return "unknown";
-}
 }  // namespace pupsnes

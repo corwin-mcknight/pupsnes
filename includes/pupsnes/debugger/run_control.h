@@ -7,6 +7,7 @@
 #include "pupsnes/debugger/breakpoints.h"
 #include "pupsnes/debugger/error_log.h"
 #include "pupsnes/debugger/trace.h"
+#include "pupsnes/hw/debugger_contract.h"
 #include "pupsnes/hw/device.h"
 #include "pupsnes/hw/snes.h"
 
@@ -25,10 +26,7 @@ enum class PauseReason : uint8_t {
   kError = 2,
 };
 
-enum class StepGranularity : uint8_t {
-  kInstruction = 0,
-  kMicroOp = 1,
-};
+using StepGranularity = DebuggerContract::StepGranularity;
 
 class RunControl {
  public:

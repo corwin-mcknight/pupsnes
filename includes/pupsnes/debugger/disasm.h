@@ -4,7 +4,7 @@
 #include <cstddef>
 #include <string>
 
-#include "pupsnes/5a22/opcode_metadata.h"
+#include "pupsnes/hw/5a22/opcode_metadata.h"
 #include "pupsnes/hw/snes.h"
 
 namespace pupsnes::debugger {

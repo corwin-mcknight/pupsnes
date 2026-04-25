@@ -47,7 +47,6 @@ std::string_view ToString(MicroInternalOp op) {
     case MicroInternalOp::kMoveAdjust: return "MoveAdjust";
     case MicroInternalOp::kMoveLoopCheck: return "MoveLoopCheck";
     case MicroInternalOp::kTransferReg: return "TransferReg";
-    case MicroInternalOp::kSetPcFromAddr: return "SetPcFromAddr";
     case MicroInternalOp::kLoadAddrByteAndSetPc: return "LoadAddrByteAndSetPc";
     case MicroInternalOp::kAlu8Imm: return "Alu8Imm";
     case MicroInternalOp::kAlu16Imm: return "Alu16Imm";

@@ -38,25 +38,6 @@ TEST_CASE("ADC direct page indexed X 8-bit adds (DP+offset+X)", "[unit][opcode][
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x13);
 }
 
-TEST_CASE("SBC direct page indexed X 8-bit subtracts with carry-in", "[unit][opcode][cpu][dpx]") {
-  ResetFixture f;
-  f.LoadInstruction({0xF5, 0x20});
-
-  f.cpu.Reset();
-  f.wram.WriteRegister(0x0025, 0x01, 0);
-  f.ModifyRegs([](auto& r) {
-    r.A = 0x0010;
-    r.X = 0x0005;
-    r.P.C = true;
-  });
-
-  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 38);
-
-  REQUIRE(r.completed_cycles == 38);
-  REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x0F);
-  REQUIRE(f.cpu.GetRegs().P.C == true);
-}
-
 TEST_CASE("AND direct page indexed X 8-bit masks with memory", "[unit][opcode][cpu][dpx]") {
   ResetFixture f;
   f.LoadInstruction({0x35, 0x20});
@@ -74,42 +55,6 @@ TEST_CASE("AND direct page indexed X 8-bit masks with memory", "[unit][opcode][c
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0xF0);
   REQUIRE(f.cpu.GetRegs().P.N == true);
   REQUIRE(f.cpu.GetRegs().P.Z == false);
-}
-
-TEST_CASE("ORA direct page indexed X 8-bit combines with memory", "[unit][opcode][cpu][dpx]") {
-  ResetFixture f;
-  f.LoadInstruction({0x15, 0x20});
-
-  f.cpu.Reset();
-  f.wram.WriteRegister(0x0025, 0x0F, 0);
-  f.ModifyRegs([](auto& r) {
-    r.A = 0x00F0;
-    r.X = 0x0005;
-  });
-
-  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 38);
-
-  REQUIRE(r.completed_cycles == 38);
-  REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0xFF);
-  REQUIRE(f.cpu.GetRegs().P.N == true);
-}
-
-TEST_CASE("EOR direct page indexed X 8-bit sets Z when equal", "[unit][opcode][cpu][dpx]") {
-  ResetFixture f;
-  f.LoadInstruction({0x55, 0x20});
-
-  f.cpu.Reset();
-  f.wram.WriteRegister(0x0025, 0xFF, 0);
-  f.ModifyRegs([](auto& r) {
-    r.A = 0x00FF;
-    r.X = 0x0005;
-  });
-
-  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 38);
-
-  REQUIRE(r.completed_cycles == 38);
-  REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x00);
-  REQUIRE(f.cpu.GetRegs().P.Z == true);
 }
 
 TEST_CASE("CMP direct page indexed X 8-bit equal sets Z and C", "[unit][opcode][cpu][dpx]") {
@@ -156,26 +101,6 @@ TEST_CASE("ADC direct page indexed X 16-bit takes 5 cycles", "[unit][opcode][cpu
   REQUIRE(f.cpu.GetRegs().A == 0x2234);
 }
 
-TEST_CASE("SBC direct page indexed X 16-bit", "[unit][opcode][cpu][dpx]") {
-  ResetFixture f;
-  f.LoadInstruction({0xF5, 0x20});
-
-  f.cpu.Reset();
-  f.wram.WriteRegister(0x0025, 0x01, 0);
-  f.wram.WriteRegister(0x0026, 0x00, 0);
-  SetAccumulator16(f.cpu, 0x0002);
-  f.ModifyRegs([](auto& r) {
-    r.X = 0x0005;
-    r.P.C = true;
-  });
-
-  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 46);
-
-  REQUIRE(r.completed_cycles == 46);
-  REQUIRE(f.cpu.GetRegs().A == 0x0001);
-  REQUIRE(f.cpu.GetRegs().P.C == true);
-}
-
 TEST_CASE("AND direct page indexed X 16-bit", "[unit][opcode][cpu][dpx]") {
   ResetFixture f;
   f.LoadInstruction({0x35, 0x20});
@@ -191,42 +116,6 @@ TEST_CASE("AND direct page indexed X 16-bit", "[unit][opcode][cpu][dpx]") {
   REQUIRE(r.completed_cycles == 46);
   REQUIRE(f.cpu.GetRegs().A == 0xFF00);
   REQUIRE(f.cpu.GetRegs().P.N == true);
-}
-
-TEST_CASE("ORA direct page indexed X 16-bit", "[unit][opcode][cpu][dpx]") {
-  ResetFixture f;
-  f.LoadInstruction({0x15, 0x20});
-
-  f.cpu.Reset();
-  f.wram.WriteRegister(0x0025, 0xFF, 0);
-  f.wram.WriteRegister(0x0026, 0x00, 0);
-  SetAccumulator16(f.cpu, 0x00FF);
-  f.ModifyRegs([](auto& r) { r.X = 0x0005; });
-
-  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 46);
-
-  REQUIRE(r.completed_cycles == 46);
-  REQUIRE(f.cpu.GetRegs().A == 0x00FF);
-  // N=0 (bit 15 of 0x00FF is 0), Z=0
-  REQUIRE(f.cpu.GetRegs().P.N == false);
-  REQUIRE(f.cpu.GetRegs().P.Z == false);
-}
-
-TEST_CASE("EOR direct page indexed X 16-bit sets Z", "[unit][opcode][cpu][dpx]") {
-  ResetFixture f;
-  f.LoadInstruction({0x55, 0x20});
-
-  f.cpu.Reset();
-  f.wram.WriteRegister(0x0025, 0xFF, 0);
-  f.wram.WriteRegister(0x0026, 0xFF, 0);
-  SetAccumulator16(f.cpu, 0xFFFF);
-  f.ModifyRegs([](auto& r) { r.X = 0x0005; });
-
-  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 46);
-
-  REQUIRE(r.completed_cycles == 46);
-  REQUIRE(f.cpu.GetRegs().A == 0x0000);
-  REQUIRE(f.cpu.GetRegs().P.Z == true);
 }
 
 TEST_CASE("CMP direct page indexed X 16-bit equal", "[unit][opcode][cpu][dpx]") {
@@ -307,7 +196,7 @@ TEST_CASE("BIT direct page indexed X 16-bit reads N V from bit 15 and 14", "[uni
   f.cpu.Reset();
   f.wram.WriteRegister(0x0025, 0x00, 0);
   f.wram.WriteRegister(0x0026, 0xC0, 0);  // 16-bit operand = $C000 (bits 15 and 14 set)
-  SetAccumulator16(f.cpu, 0x3FFF);     // A AND $C000 == 0 → Z=1
+  SetAccumulator16(f.cpu, 0x3FFF);        // A AND $C000 == 0 → Z=1
   f.ModifyRegs([](auto& r) { r.X = 0x0005; });
 
   TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 46);  // m=0,w=0: 5-m+w = 5

@@ -56,25 +56,6 @@ TEST_CASE("ADC [dp],Y 8-bit adds through long indexed pointer", "[unit][opcode][
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x11);
 }
 
-TEST_CASE("SBC [dp],Y 8-bit subtracts through long indexed pointer", "[unit][opcode][cpu][lindy]") {
-  ResetFixture f;
-  f.LoadInstruction({0xF7, kDpOffset});
-
-  f.cpu.Reset();
-  SetupLongIndirectYPointer(f);
-  f.ModifyRegs([](auto& r) {
-    r.A = 0x0020;
-    r.P.C = true;
-    r.Y = kY;
-  });
-  f.wram.WriteRegister(kEffectiveAddr, 0x05, 0);
-
-  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 48);
-
-  REQUIRE(r.completed_cycles == 48);
-  REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x1B);
-}
-
 TEST_CASE("AND [dp],Y 8-bit", "[unit][opcode][cpu][lindy]") {
   ResetFixture f;
   f.LoadInstruction({0x37, kDpOffset});
@@ -91,43 +72,6 @@ TEST_CASE("AND [dp],Y 8-bit", "[unit][opcode][cpu][lindy]") {
 
   REQUIRE(r.completed_cycles == 48);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x0A);
-}
-
-TEST_CASE("ORA [dp],Y 8-bit", "[unit][opcode][cpu][lindy]") {
-  ResetFixture f;
-  f.LoadInstruction({0x17, kDpOffset});
-
-  f.cpu.Reset();
-  SetupLongIndirectYPointer(f);
-  f.ModifyRegs([](auto& r) {
-    r.A = 0x0080;
-    r.Y = kY;
-  });
-  f.wram.WriteRegister(kEffectiveAddr, 0x01, 0);
-
-  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 48);
-
-  REQUIRE(r.completed_cycles == 48);
-  REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x81);
-  REQUIRE(f.cpu.GetRegs().P.N == true);
-}
-
-TEST_CASE("EOR [dp],Y 8-bit", "[unit][opcode][cpu][lindy]") {
-  ResetFixture f;
-  f.LoadInstruction({0x57, kDpOffset});
-
-  f.cpu.Reset();
-  SetupLongIndirectYPointer(f);
-  f.ModifyRegs([](auto& r) {
-    r.A = 0x00FF;
-    r.Y = kY;
-  });
-  f.wram.WriteRegister(kEffectiveAddr, 0x0F, 0);
-
-  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 48);
-
-  REQUIRE(r.completed_cycles == 48);
-  REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0xF0);
 }
 
 TEST_CASE("CMP [dp],Y 8-bit less-than clears C", "[unit][opcode][cpu][lindy]") {

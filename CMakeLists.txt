@@ -19,7 +19,6 @@ set(PUPSNES_LIB_SOURCES
 
 set(PUPSNES_DEBUGGER_CORE_SOURCES
   src/debugger/breakpoints.cpp
-  src/debugger/bus_event_log.cpp
   src/debugger/disasm.cpp
   src/debugger/error_log.cpp
   src/debugger/fan_out_trace_sink.cpp
@@ -27,7 +26,6 @@ set(PUPSNES_DEBUGGER_CORE_SOURCES
   src/debugger/microop_trace.cpp
   src/debugger/run_control.cpp
   src/debugger/sha1.cpp
-  src/debugger/trace.cpp
 )
 
 set(PUPSNES_TRACE_RUNNER_SOURCES
@@ -323,7 +321,6 @@ set(PUPSNES_HEADERS
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/types.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/mem.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/rom_format.h
-  ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/5a22/opcode_metadata.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/debugger/breakpoints.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/debugger/bus_event_log.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/debugger/disasm.h
@@ -331,6 +328,7 @@ set(PUPSNES_HEADERS
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/debugger/fan_out_trace_sink.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/debugger/file_trace_sink.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/debugger/microop_trace.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/debugger/ring_buffer.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/debugger/run_control.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/debugger/sha1.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/debugger/trace.h
@@ -342,6 +340,7 @@ set(PUPSNES_HEADERS
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/5a22/cpu_mmio.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/5a22/cpu_regs.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/5a22/micro_op_strings.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/5a22/opcode_metadata.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/apu_stub.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/bus_event.h
   ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/cartridge.h

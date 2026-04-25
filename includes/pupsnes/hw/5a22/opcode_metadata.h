@@ -54,6 +54,5 @@ struct OpcodeMetadataView {
 [[nodiscard]] const std::array<OpcodeMetadataView, 256>& GetOpcodeMetadataTable();
 [[nodiscard]] const OpcodeMetadataView& GetOpcodeMetadata(uint8_t opcode);
 [[nodiscard]] uint8_t ComputeInstructionLength(const OpcodeMetadataView& metadata, const CpuFlags& flags);
-[[nodiscard]] std::string_view GetAddressingModeName(OpcodeAddressingMode mode);
 
 }  // namespace pupsnes

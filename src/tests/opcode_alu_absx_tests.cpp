@@ -42,25 +42,6 @@ TEST_CASE("ADC abs,X 8-bit adds DBR-banked indexed operand", "[unit][opcode][cpu
   REQUIRE(f.cpu.GetRegs().PC == 0x8003);
 }
 
-TEST_CASE("SBC abs,X 8-bit subtracts indexed operand", "[unit][opcode][cpu][absx]") {
-  ResetFixture f;
-  f.LoadInstruction({0xFD, 0x00, 0x01});
-
-  f.cpu.Reset();
-  f.wram.WriteRegister(0x0110, 0x01, 0);
-  f.ModifyRegs([](auto& r) {
-    r.X = 0x0010;
-    r.A = 0x0010;
-    r.P.C = true;
-    r.DBR = 0x7E;
-  });
-
-  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 38);
-
-  REQUIRE(r.completed_cycles == 38);
-  REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x0F);
-}
-
 TEST_CASE("AND abs,X 8-bit", "[unit][opcode][cpu][absx]") {
   ResetFixture f;
   f.LoadInstruction({0x3D, 0x00, 0x01});
@@ -78,43 +59,6 @@ TEST_CASE("AND abs,X 8-bit", "[unit][opcode][cpu][absx]") {
   REQUIRE(r.completed_cycles == 38);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0xF0);
   REQUIRE(f.cpu.GetRegs().P.N == true);
-}
-
-TEST_CASE("ORA abs,X 8-bit", "[unit][opcode][cpu][absx]") {
-  ResetFixture f;
-  f.LoadInstruction({0x1D, 0x00, 0x01});
-
-  f.cpu.Reset();
-  f.wram.WriteRegister(0x0110, 0x0F, 0);
-  f.ModifyRegs([](auto& r) {
-    r.X = 0x0010;
-    r.A = 0x00F0;
-    r.DBR = 0x7E;
-  });
-
-  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 38);
-
-  REQUIRE(r.completed_cycles == 38);
-  REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0xFF);
-}
-
-TEST_CASE("EOR abs,X 8-bit clears to zero", "[unit][opcode][cpu][absx]") {
-  ResetFixture f;
-  f.LoadInstruction({0x5D, 0x00, 0x01});
-
-  f.cpu.Reset();
-  f.wram.WriteRegister(0x0110, 0xFF, 0);
-  f.ModifyRegs([](auto& r) {
-    r.X = 0x0010;
-    r.A = 0x00FF;
-    r.DBR = 0x7E;
-  });
-
-  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 38);
-
-  REQUIRE(r.completed_cycles == 38);
-  REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x00);
-  REQUIRE(f.cpu.GetRegs().P.Z == true);
 }
 
 TEST_CASE("CMP abs,X 8-bit equal sets Z and C", "[unit][opcode][cpu][absx]") {

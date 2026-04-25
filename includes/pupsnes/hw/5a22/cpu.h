@@ -154,8 +154,6 @@ enum class MicroInternalOp : uint8_t {
                               // complete and PC (already past the instruction) is unchanged.
   kTransferReg,               // dst = src; width/flag semantics per (src,dst) pair; params
                               // packs src in [3:0] and dst in [7:4] (see micro_op_params::PackTransfer)
-  kSetPcFromAddr,             // PC = addr_[15:0]. Params bit 0 = with_pbr: when 1, also set
-                              // PBR = addr_[23:16].
   kLoadAddrByteAndSetPc,      // Fused "set addr byte from fetch + set PC from addr". Params
                               // bits [1:0] = ByteSel (kHigh for JMP abs; kBank for JML),
                               // bit [2] = with_pbr (1 for JML: also set PBR from addr).

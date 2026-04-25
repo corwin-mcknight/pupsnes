@@ -1,6 +1,6 @@
 #include "pupsnes/debugger/microop_trace.h"
 
-#include "pupsnes/5a22/opcode_metadata.h"
+#include "pupsnes/hw/5a22/opcode_metadata.h"
 
 namespace pupsnes::debugger {
 
@@ -28,26 +28,8 @@ void MicroOpTrace::OnInstructionEnd(uint64_t retired_seq) {
   }
   current_->retired_seq = retired_seq;
   current_->completed = true;
-  ring_[head_] = *current_;
-  head_ = (head_ + 1) % kCapacity;
-  if (size_ < kCapacity) {
-    ++size_;
-  }
+  retired_.Push(*current_);
   current_.reset();
-}
-
-const InstructionTrace* MicroOpTrace::RetiredAt(std::size_t index) const {
-  if (index >= size_) {
-    return nullptr;
-  }
-  const std::size_t start = (head_ + kCapacity - size_) % kCapacity;
-  return &ring_[(start + index) % kCapacity];
-}
-
-void MicroOpTrace::Clear() {
-  current_.reset();
-  head_ = 0;
-  size_ = 0;
 }
 
 }  // namespace pupsnes::debugger
