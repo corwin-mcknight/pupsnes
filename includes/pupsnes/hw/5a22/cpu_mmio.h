@@ -53,6 +53,16 @@ class CpuMmio : public Device {
   static constexpr uint8_t kHvbJoyAutoJoypadMask = 0x01U;
   static constexpr uint8_t kHvbJoyDrivenMask = kHvbJoyVblankMask | kHvbJoyHblankMask | kHvbJoyAutoJoypadMask;
 
+  // JOYSER0/JOYSER1 ($4016/$4017) — legacy serial joypad-read ports. The
+  // controller-state stub returns $00 (no buttons held) so games' polling
+  // code reads stable zero instead of open-bus garbage. Auto-joypad result
+  // registers $4218-$421F (JOY1L .. JOY4H) similarly read $00 until the
+  // controller model lands.
+  static constexpr uint32_t kJoySer0Offset = 0x4016U;
+  static constexpr uint32_t kJoySer1Offset = 0x4017U;
+  static constexpr uint32_t kAutoJoyResultFirst = 0x4218U;
+  static constexpr uint32_t kAutoJoyResultLast = 0x421FU;
+
   explicit CpuMmio(SNES* snes);
   ~CpuMmio() override = default;
 

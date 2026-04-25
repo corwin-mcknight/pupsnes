@@ -1779,6 +1779,84 @@ TEST_CASE("SEP in native mode sets the specified P bits", "[cpu][opcode]") {
   REQUIRE(out.X == false);
 }
 
+TEST_CASE("SEP #$10 in native mode zeroes X.H and Y.H when X-flag transitions 0->1",
+          "[cpu][opcode]") {
+  // 65C816: setting the X (index) flag forces the high byte of X and Y to $00,
+  // matching real-hardware behaviour (Bruce Clark §6.13). Without this, 16-bit
+  // index values leak through into 8-bit mode and corrupt subsequent reads.
+  TestFixture f;
+  f.LoadAt(0, {0xE2, 0x10});  // SEP #$10
+  auto regs = f.cpu.GetRegs();
+  regs.P.E = false;
+  regs.P.M = false;
+  regs.P.X = false;  // 16-bit index
+  regs.X = 0x1234;
+  regs.Y = 0x5678;
+  f.cpu.SetRegs(regs);
+
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 30);
+
+  REQUIRE(r.completed_cycles == 30);
+  const auto out = f.cpu.GetRegs();
+  REQUIRE(out.P.X == true);
+  REQUIRE(out.X == 0x0034);
+  REQUIRE(out.Y == 0x0078);
+}
+
+TEST_CASE("SEP #$30 in native mode zeroes X.H and Y.H but preserves AH",
+          "[cpu][opcode]") {
+  // SEP #$30 sets both M and X. The accumulator's hidden high byte (B) must be
+  // preserved; only the index registers truncate.
+  TestFixture f;
+  f.LoadAt(0, {0xE2, 0x30});
+  auto regs = f.cpu.GetRegs();
+  regs.P.E = false;
+  regs.P.M = false;
+  regs.P.X = false;
+  regs.A = 0xBBAA;
+  regs.X = 0xFFFD;
+  regs.Y = 0x01FD;
+  f.cpu.SetRegs(regs);
+
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 30);
+
+  REQUIRE(r.completed_cycles == 30);
+  const auto out = f.cpu.GetRegs();
+  REQUIRE(out.P.M == true);
+  REQUIRE(out.P.X == true);
+  REQUIRE(out.A == 0xBBAA);  // B accumulator preserved
+  REQUIRE(out.X == 0x00FD);
+  REQUIRE(out.Y == 0x00FD);
+}
+
+TEST_CASE("PLP that sets X-flag in native mode zeroes X.H and Y.H",
+          "[cpu][opcode]") {
+  // PHP pushes P with X=0; we manually push a status byte with X=1, then PLP.
+  // PLA path uses kLoadReg for Reg::kP, which must apply the same forcing as
+  // SEP/REP/XCE.
+  TestFixture f;
+  // PLP only — we'll seed the stack ourselves.
+  f.LoadAt(0, {0x28});
+  auto regs = f.cpu.GetRegs();
+  regs.P.E = false;
+  regs.P.M = false;
+  regs.P.X = false;
+  regs.X = 0xDEAD;
+  regs.Y = 0xBEEF;
+  regs.SP = 0x01FE;
+  f.cpu.SetRegs(regs);
+  // Stack top byte ($01FF) becomes the pulled P. X bit is 0x10.
+  f.snes.GetWram().WriteRegister(0x01FF, 0x10, 0);
+
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 40);
+
+  REQUIRE(r.completed_cycles == 40);
+  const auto out = f.cpu.GetRegs();
+  REQUIRE(out.P.X == true);
+  REQUIRE(out.X == 0x00AD);
+  REQUIRE(out.Y == 0x00EF);
+}
+
 TEST_CASE("TAX in emulation mode copies A low byte to X low and sets N/Z", "[cpu][opcode]") {
   TestFixture f;
   f.LoadAt(0, {0xAA});

@@ -77,16 +77,20 @@ namespace {
   }
 }
 
-// When e=1 the m and x flags are forced to 1, XH/YH forced to $00, and the
-// stack is forced onto page 1 (SH = $01). Called after any op that can
-// change P or e.
+// When e=1 the m and x flags are forced to 1, and the stack is forced onto
+// page 1 (SH = $01). Independently, whenever the x flag is set — by E=1, by
+// SEP/PLP/RTI in native mode, or by XCE entering emulation — X.H and Y.H are
+// forced to $00 (Bruce Clark §6.13). Called after any op that can change P or
+// e.
 [[gnu::always_inline]] inline void ApplyEmulationForcing(CpuRegs& regs) {
   if (regs.P.E) {
     regs.P.M = true;
     regs.P.X = true;
+    regs.SP = static_cast<uint16_t>(0x0100U | (regs.SP & 0x00FFU));
+  }
+  if (regs.P.X) {
     regs.X &= 0x00FFU;
     regs.Y &= 0x00FFU;
-    regs.SP = static_cast<uint16_t>(0x0100U | (regs.SP & 0x00FFU));
   }
 }
 
@@ -494,6 +498,7 @@ void CPU::ExecuteInternalOp(MicroInternalOp op, [[maybe_unused]] uint8_t params)
       }
       if (reg == Reg::kP) {
         regs_.P.FromByte(fetch, regs_.P.E);
+        ApplyEmulationForcing(regs_);
         return;
       }
       if (reg == Reg::kDbr) {

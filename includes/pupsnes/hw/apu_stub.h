@@ -59,6 +59,16 @@ class ApuStub : public Device {
   // The IPL's inner wait loop (`CMP $F4,#$CC`) breaks when the CPU writes
   // $CC to port 0 — that same value is what we use to leave signature mode.
   static constexpr uint8_t kUploadKickByte = 0xCCU;
+  // Master cycles after reset before the IPL signature ($AA/$BB) becomes
+  // visible on ports 0/1. Real hardware needs the SPC700 IPL ROM to be ready
+  // before the CPU's signature-wait loop can exit; a too-short delay lets the
+  // loop satisfy on the first read. SMW does ~35k master cycles of setup
+  // (memory clears) before reaching its `CMP $2140` loop, so the delay must
+  // extend past that point to be observable. 65k master cycles ≈ 3 ms at
+  // 21.477 MHz, comfortably past SMW's loop entry while still well under one
+  // frame, and large enough that less-init-heavy games still loop a few
+  // times.
+  static constexpr TimeMasterT kSignatureDelayMaster = 65536;
   // Consecutive port reads without an intervening port write that we tolerate
   // before concluding the CPU is spinning on a signature-wait loop. A 16-bit
   // `CMP $2140` is 2 bus reads; at this threshold a stuck loop bounces back

@@ -10,7 +10,11 @@ namespace pupsnes {
 
 namespace {
 
-constexpr uint8_t kFirstMmioPage = 0x42U;
+// Pages $40-$43 cover both the legacy joypad serial ports ($4016/$4017 on
+// page $40) and the standard 5A22 MMIO block ($4200-$43FF). Mapping the whole
+// span keeps stray reads in this region from falling through to "unmapped" on
+// the bus log even though most addresses inside $40-$41 are unimplemented.
+constexpr uint8_t kFirstMmioPage = 0x40U;
 constexpr uint8_t kLastMmioPage = 0x43U;
 
 void MapMmioBank(SystemBus& bus, DeviceIdT device_id, uint8_t bank) {
@@ -76,7 +80,13 @@ MmioReadResult CpuMmio::ReadRegister(uint32_t offset, TimeMasterT current_time) 
     // Auto-joypad busy bit stays 0 until the joypad auto-read controller lands.
     return {value, kHvbJoyDrivenMask};
   }
-  // Stub: other CPU MMIO registers (NMITIMEN, RDNMI, joypad, HDMA) are not yet
+  if (reg == kJoySer0Offset || reg == kJoySer1Offset ||
+      (reg >= kAutoJoyResultFirst && reg <= kAutoJoyResultLast)) {
+    // No controller model yet — return stable $00 with the full byte driven so
+    // joypad polling reads "no buttons" rather than open-bus garbage.
+    return {0x00U, 0xFFU};
+  }
+  // Stub: other CPU MMIO registers (NMITIMEN, RDNMI, HDMA) are not yet
   // modeled. Return pure open-bus (mask=0) so the bus merges in the last data
   // value instead of a hard zero.
   return {0x00U, 0x00U};

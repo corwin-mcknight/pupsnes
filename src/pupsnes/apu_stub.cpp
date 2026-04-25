@@ -17,17 +17,25 @@ void ApuStub::ArmSignature() {
 
 void ApuStub::Reset() { ArmSignature(); }
 
-MmioReadResult ApuStub::ReadRegister(uint32_t offset, TimeMasterT /*current_time*/) {
+MmioReadResult ApuStub::ReadRegister(uint32_t offset, TimeMasterT current_time) {
   const std::size_t port = offset & 0x3U;
-  if (signature_consumed_) {
-    ++read_streak_;
-    if (read_streak_ >= kStallReadThreshold) {
-      // Stuck read streak — almost certainly the CPU spinning on a
-      // signature-wait loop after an upload-block executed. Re-arm $AA/$BB so
-      // the loop's next iteration unblocks. Real hardware achieves this via
-      // the uploaded SPC program writing $AA/$BB back to $F4/$F5 itself.
-      ArmSignature();
+  if (!signature_consumed_) {
+    if (current_time < kSignatureDelayMaster) {
+      // SPC700 IPL ROM hasn't finished its post-reset boot — ports read $00.
+      return {0x00U, 0xFFU};
     }
+    return {ports_[port], 0xFFU};
+  }
+  ++read_streak_;
+  if (read_streak_ >= kStallReadThreshold) {
+    // Stuck read streak — almost certainly the CPU spinning on a
+    // signature-wait loop after an upload-block executed. Re-arm $AA/$BB so
+    // the loop's next iteration unblocks. Real hardware achieves this via
+    // the uploaded SPC program writing $AA/$BB back to $F4/$F5 itself. No
+    // boot-delay re-application here: the SPC has been running for a long
+    // time, so the next read should see the signature immediately.
+    ArmSignature();
+    return {ports_[port], 0xFFU};
   }
   return {ports_[port], 0xFFU};
 }
