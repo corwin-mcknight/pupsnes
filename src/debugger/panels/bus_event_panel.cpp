@@ -31,13 +31,8 @@ KindInfo KindDisplay(BusEventKind kind) {
 }  // namespace
 
 void RenderBusEventPanel(DebuggerApp& app) {
-  if (!app.GetUiState().show_bus_panel) {
-    return;
-  }
-  if (!ImGui::Begin("Bus", &app.GetUiState().show_bus_panel)) {
-    ImGui::End();
-    return;
-  }
+  ScopedPanel panel("Bus", app.GetUiState().show_bus_panel);
+  if (!panel) return;
   BusEventLog& log = app.GetBusEventLog();
   if (ImGui::SmallButton("Clear")) {
     log.Clear();
@@ -87,8 +82,6 @@ void RenderBusEventPanel(DebuggerApp& app) {
     }
     ImGui::EndTable();
   }
-
-  ImGui::End();
 }
 
 }  // namespace pupsnes::debugger

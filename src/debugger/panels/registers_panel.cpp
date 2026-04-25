@@ -6,6 +6,7 @@
 #include "debugger/app.h"
 #include "debugger/time_format.h"
 #include "imgui.h"
+#include "panel_utils.h"
 #include "panels.h"
 
 namespace pupsnes::debugger {
@@ -77,16 +78,10 @@ const char* ModeString(const CpuFlags& p) {
 }  // namespace
 
 void RenderRegistersPanel(DebuggerApp& app) {
-  if (!app.GetUiState().show_registers_panel) {
-    return;
-  }
-  if (!ImGui::Begin("Registers", &app.GetUiState().show_registers_panel)) {
-    ImGui::End();
-    return;
-  }
+  ScopedPanel panel("Registers", app.GetUiState().show_registers_panel);
+  if (!panel) return;
   if (!app.HasLoadedRom()) {
     ImGui::TextUnformatted("Load a ROM to inspect CPU state.");
-    ImGui::End();
     return;
   }
 
@@ -98,68 +93,31 @@ void RenderRegistersPanel(DebuggerApp& app) {
 
   RegisterHistory& hist = app.GetUiState().register_history;
   const float dt = ImGui::GetIO().DeltaTime;
+  const bool retired_changed = hist.valid && retired != hist.retired;
 
-  auto bump = [](float& h, bool changed) {
-    if (changed) {
-      h = 1.0F;
-    }
+  auto track = [&](float& hi, auto& prev, auto current) {
+    if (retired_changed && current != prev) hi = 1.0F;
+    Decay(hi, dt);
+    prev = current;
   };
 
-  if (hist.valid && retired != hist.retired) {
-    bump(hist.hi_A, regs.A != hist.A);
-    bump(hist.hi_X, regs.X != hist.X);
-    bump(hist.hi_Y, regs.Y != hist.Y);
-    bump(hist.hi_SP, regs.SP != hist.SP);
-    bump(hist.hi_DP, regs.DP != hist.DP);
-    bump(hist.hi_PC, regs.PC != hist.PC);
-    bump(hist.hi_PBR, regs.PBR != hist.PBR);
-    bump(hist.hi_DBR, regs.DBR != hist.DBR);
-    bump(hist.hi_N, regs.P.N != hist.N);
-    bump(hist.hi_V, regs.P.V != hist.V);
-    bump(hist.hi_M, regs.P.M != hist.M);
-    bump(hist.hi_Xf, regs.P.X != hist.Xf);
-    bump(hist.hi_D, regs.P.D != hist.D);
-    bump(hist.hi_I, regs.P.I != hist.I);
-    bump(hist.hi_Z, regs.P.Z != hist.Z);
-    bump(hist.hi_C, regs.P.C != hist.C);
-    bump(hist.hi_E, regs.P.E != hist.E);
-  }
-
-  Decay(hist.hi_A, dt);
-  Decay(hist.hi_X, dt);
-  Decay(hist.hi_Y, dt);
-  Decay(hist.hi_SP, dt);
-  Decay(hist.hi_DP, dt);
-  Decay(hist.hi_PC, dt);
-  Decay(hist.hi_PBR, dt);
-  Decay(hist.hi_DBR, dt);
-  Decay(hist.hi_N, dt);
-  Decay(hist.hi_V, dt);
-  Decay(hist.hi_M, dt);
-  Decay(hist.hi_Xf, dt);
-  Decay(hist.hi_D, dt);
-  Decay(hist.hi_I, dt);
-  Decay(hist.hi_Z, dt);
-  Decay(hist.hi_C, dt);
-  Decay(hist.hi_E, dt);
-
-  hist.A = regs.A;
-  hist.X = regs.X;
-  hist.Y = regs.Y;
-  hist.SP = regs.SP;
-  hist.DP = regs.DP;
-  hist.PC = regs.PC;
-  hist.PBR = regs.PBR;
-  hist.DBR = regs.DBR;
-  hist.N = regs.P.N;
-  hist.V = regs.P.V;
-  hist.M = regs.P.M;
-  hist.Xf = regs.P.X;
-  hist.D = regs.P.D;
-  hist.I = regs.P.I;
-  hist.Z = regs.P.Z;
-  hist.C = regs.P.C;
-  hist.E = regs.P.E;
+  track(hist.hi_A, hist.A, regs.A);
+  track(hist.hi_X, hist.X, regs.X);
+  track(hist.hi_Y, hist.Y, regs.Y);
+  track(hist.hi_SP, hist.SP, regs.SP);
+  track(hist.hi_DP, hist.DP, regs.DP);
+  track(hist.hi_PC, hist.PC, regs.PC);
+  track(hist.hi_PBR, hist.PBR, regs.PBR);
+  track(hist.hi_DBR, hist.DBR, regs.DBR);
+  track(hist.hi_N, hist.N, regs.P.N);
+  track(hist.hi_V, hist.V, regs.P.V);
+  track(hist.hi_M, hist.M, regs.P.M);
+  track(hist.hi_Xf, hist.Xf, regs.P.X);
+  track(hist.hi_D, hist.D, regs.P.D);
+  track(hist.hi_I, hist.I, regs.P.I);
+  track(hist.hi_Z, hist.Z, regs.P.Z);
+  track(hist.hi_C, hist.C, regs.P.C);
+  track(hist.hi_E, hist.E, regs.P.E);
   hist.retired = retired;
   hist.valid = true;
 
@@ -241,8 +199,6 @@ void RenderRegistersPanel(DebuggerApp& app) {
                        static_cast<unsigned>(fault->opcode_address >> 16),
                        static_cast<unsigned>(fault->opcode_address & 0xFFFFU));
   }
-
-  ImGui::End();
 }
 
 }  // namespace pupsnes::debugger

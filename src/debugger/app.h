@@ -142,9 +142,7 @@ class DebuggerApp {
   void TickEmulation();
   void Render();
   void RenderMenuBar();
-  void RenderLoadRomDialog();
   void RenderFatalModal();
-  void InitFileShortcuts();
   void LoadAppConfig();
   void SaveAppConfig();
   static std::string GetConfigPath();

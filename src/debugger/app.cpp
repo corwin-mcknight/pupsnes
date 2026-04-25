@@ -3,6 +3,7 @@
 #include <GLFW/glfw3.h>
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <chrono>
 #include <cmath>
@@ -47,7 +48,7 @@ int DebuggerApp::Run(const std::optional<std::string>& initial_rom_path) {
     return 1;
   }
 
-  InitFileShortcuts();
+  InitFileShortcuts(*this);
   LoadAppConfig();
 
   if (initial_rom_path.has_value()) {
@@ -215,9 +216,7 @@ void DebuggerApp::FlushTraceRecording() {
   }
 }
 
-uint64_t DebuggerApp::TraceRecordedLines() const {
-  return file_trace_sink_ ? file_trace_sink_->LineCount() : 0U;
-}
+uint64_t DebuggerApp::TraceRecordedLines() const { return file_trace_sink_ ? file_trace_sink_->LineCount() : 0U; }
 
 bool DebuggerApp::InitWindow() {
   current_app_ = this;
@@ -446,8 +445,8 @@ void DebuggerApp::RenderMenuBar() {
           float value;
         };
         static constexpr SpeedPreset kPresets[] = {
-            {"1%", 0.01F},  {"5%", 0.05F},    {"10%", 0.10F},   {"25%", 0.25F},
-            {"50%", 0.5F},  {"100%", 1.0F},   {"200%", 2.0F},   {"400%", 4.0F},
+            {"1%", 0.01F}, {"5%", 0.05F},  {"10%", 0.10F}, {"25%", 0.25F},
+            {"50%", 0.5F}, {"100%", 1.0F}, {"200%", 2.0F}, {"400%", 4.0F},
         };
         for (const SpeedPreset& p : kPresets) {
           const bool selected = std::fabs(ui_state_.speed_multiplier - p.value) < 1e-4F;
@@ -544,159 +543,6 @@ void DebuggerApp::RenderMenuBar() {
   }
 }
 
-void DebuggerApp::RenderLoadRomDialog() {
-  namespace fs = std::filesystem;
-
-  if (ui_state_.open_load_rom_dialog) {
-    ImGui::OpenPopup("Load ROM");
-    ui_state_.open_load_rom_dialog = false;
-  }
-
-  ImGui::SetNextWindowSize(ImVec2(760.0F, 460.0F), ImGuiCond_Appearing);
-  if (!ImGui::BeginPopupModal("Load ROM", nullptr, ImGuiWindowFlags_NoCollapse)) {
-    return;
-  }
-
-  // Sidebar: shortcuts.
-  if (ImGui::BeginChild("rom_shortcuts", ImVec2(180.0F, -ImGui::GetFrameHeightWithSpacing()),
-                        ImGuiChildFlags_Borders)) {
-    ImGui::TextDisabled("Shortcuts");
-    ImGui::Separator();
-    if (!ui_state_.last_rom_path.empty()) {
-      if (ImGui::Button("Last ROM", ImVec2(-1.0F, 0.0F))) {
-        if (LoadRomFromPath(ui_state_.last_rom_path)) {
-          ui_state_.load_rom_error.clear();
-          ImGui::CloseCurrentPopup();
-        } else {
-          ui_state_.load_rom_error = "Failed to load: " + ui_state_.last_rom_path;
-        }
-      }
-      ImGui::Separator();
-    }
-    for (const FileShortcut& sc : ui_state_.load_rom_shortcuts) {
-      if (ImGui::Button(sc.label.c_str(), ImVec2(-1.0F, 0.0F))) {
-        ui_state_.load_rom_dir = sc.path;
-        ui_state_.load_rom_error.clear();
-      }
-    }
-  }
-  ImGui::EndChild();
-
-  ImGui::SameLine();
-
-  // Main pane: path bar + entries list.
-  if (ImGui::BeginChild("rom_browser", ImVec2(0.0F, -ImGui::GetFrameHeightWithSpacing()))) {
-    std::error_code ec;
-    fs::path dir(ui_state_.load_rom_dir);
-    if (!fs::exists(dir, ec) || !fs::is_directory(dir, ec)) {
-      ImGui::TextColored(ImVec4(0.95F, 0.5F, 0.25F, 1.0F), "Directory not found: %s", ui_state_.load_rom_dir.c_str());
-    } else {
-      if (ImGui::Button("Up")) {
-        const fs::path parent = dir.parent_path();
-        if (!parent.empty() && parent != dir) {
-          ui_state_.load_rom_dir = parent.string();
-          dir = parent;
-        }
-      }
-      ImGui::SameLine();
-      ImGui::TextUnformatted(ui_state_.load_rom_dir.c_str());
-      ImGui::Separator();
-
-      std::vector<fs::path> subdirs;
-      std::vector<fs::path> files;
-      for (const auto& entry : fs::directory_iterator(dir, ec)) {
-        const bool is_dir = entry.is_directory(ec);
-        const bool is_file = entry.is_regular_file(ec);
-        if (is_dir) {
-          const std::string name = entry.path().filename().string();
-          if (!name.empty() && name.front() == '.') {
-            continue;
-          }
-          subdirs.push_back(entry.path());
-        } else if (is_file) {
-          std::string ext = entry.path().extension().string();
-          for (char& c : ext) {
-            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-          }
-          if (ext == ".sfc" || ext == ".smc") {
-            files.push_back(entry.path());
-          }
-        }
-      }
-      std::sort(subdirs.begin(), subdirs.end());
-      std::sort(files.begin(), files.end());
-
-      if (ImGui::BeginChild("rom_list", ImVec2(0.0F, 0.0F), ImGuiChildFlags_Borders)) {
-        if (subdirs.empty() && files.empty()) {
-          ImGui::TextDisabled("No subdirectories or .sfc/.smc files.");
-        }
-        for (const fs::path& sub : subdirs) {
-          const std::string label = "[DIR] " + sub.filename().string();
-          if (ImGui::Selectable(label.c_str(), false)) {
-            ui_state_.load_rom_dir = sub.string();
-          }
-        }
-        for (const fs::path& path : files) {
-          const std::string name = path.filename().string();
-          if (ImGui::Selectable(name.c_str(), false, ImGuiSelectableFlags_AllowDoubleClick)) {
-            if (LoadRomFromPath(path.string())) {
-              ui_state_.load_rom_error.clear();
-              ImGui::CloseCurrentPopup();
-            } else {
-              ui_state_.load_rom_error = "Failed to load: " + name;
-            }
-          }
-        }
-      }
-      ImGui::EndChild();
-    }
-  }
-  ImGui::EndChild();
-
-  if (!ui_state_.load_rom_error.empty()) {
-    ImGui::TextColored(ImVec4(0.95F, 0.25F, 0.25F, 1.0F), "%s", ui_state_.load_rom_error.c_str());
-  }
-
-  if (ImGui::Button("Cancel")) {
-    ImGui::CloseCurrentPopup();
-  }
-  ImGui::EndPopup();
-}
-
-void DebuggerApp::InitFileShortcuts() {
-  namespace fs = std::filesystem;
-  ui_state_.load_rom_shortcuts.clear();
-
-  std::error_code ec;
-  const fs::path cwd = fs::current_path(ec);
-
-  auto add_if_exists = [&](std::string label, const fs::path& candidate) {
-    std::error_code exists_ec;
-    if (!fs::exists(candidate, exists_ec) || !fs::is_directory(candidate, exists_ec)) {
-      return;
-    }
-    std::error_code canon_ec;
-    const fs::path resolved = fs::weakly_canonical(candidate, canon_ec);
-    const std::string path_str = canon_ec ? candidate.string() : resolved.string();
-    for (const FileShortcut& existing : ui_state_.load_rom_shortcuts) {
-      if (existing.path == path_str) {
-        return;
-      }
-    }
-    ui_state_.load_rom_shortcuts.push_back({std::move(label), path_str});
-  };
-
-  add_if_exists("ROMs", cwd / "roms");
-  add_if_exists("Test ROMs", cwd / "testroms");
-  add_if_exists("Built Test ROMs", cwd / "build" / "dev" / "test-roms");
-
-  const char* home = std::getenv("HOME");
-  if (home != nullptr && *home != '\0') {
-    const fs::path home_path(home);
-    add_if_exists("Home", home_path);
-  }
-}
-
 std::string DebuggerApp::GetConfigPath() {
   namespace fs = std::filesystem;
   const char* home = std::getenv("HOME");
@@ -705,6 +551,40 @@ std::string DebuggerApp::GetConfigPath() {
   }
   return (fs::current_path() / ".pupsnes_config.ini").string();
 }
+
+namespace {
+
+struct BoolField {
+  const char* key;
+  bool UiState::* member;
+};
+struct StringField {
+  const char* key;
+  std::string UiState::* member;
+};
+
+constexpr std::array<BoolField, 12> kBoolFields{{
+    {"show_registers_panel", &UiState::show_registers_panel},
+    {"show_disasm_panel", &UiState::show_disasm_panel},
+    {"show_memory_panel", &UiState::show_memory_panel},
+    {"show_stack_panel", &UiState::show_stack_panel},
+    {"show_ppu_panel", &UiState::show_ppu_panel},
+    {"show_trace_panel", &UiState::show_trace_panel},
+    {"show_trace_record_panel", &UiState::show_trace_record_panel},
+    {"trace_record_reset_on_start", &UiState::trace_record_reset_on_start},
+    {"show_microop_trace_panel", &UiState::show_microop_trace_panel},
+    {"show_scheduler_panel", &UiState::show_scheduler_panel},
+    {"show_errors_panel", &UiState::show_errors_panel},
+    {"show_bus_panel", &UiState::show_bus_panel},
+}};
+
+constexpr std::array<StringField, 3> kStringFields{{
+    {"last_rom_path", &UiState::last_rom_path},
+    {"last_rom_dir", &UiState::load_rom_dir},
+    {"trace_record_path", &UiState::trace_record_path},
+}};
+
+}  // namespace
 
 void DebuggerApp::LoadAppConfig() {
   const std::string path = GetConfigPath();
@@ -720,41 +600,31 @@ void DebuggerApp::LoadAppConfig() {
     }
     const std::string key = line.substr(0, eq);
     const std::string value = line.substr(eq + 1);
-    if (key == "last_rom_path") {
-      ui_state_.last_rom_path = value;
-    } else if (key == "last_rom_dir") {
-      ui_state_.load_rom_dir = value;
-    } else if (key == "time_display_mode") {
+
+    bool handled = false;
+    for (const auto& f : kBoolFields) {
+      if (key == f.key) {
+        ui_state_.*f.member = value != "0";
+        handled = true;
+        break;
+      }
+    }
+    if (!handled) {
+      for (const auto& f : kStringFields) {
+        if (key == f.key) {
+          ui_state_.*f.member = value;
+          handled = true;
+          break;
+        }
+      }
+    }
+    if (handled) continue;
+
+    if (key == "time_display_mode") {
       const int parsed = std::atoi(value.c_str());
       if (parsed >= 0 && parsed <= static_cast<int>(TimeDisplayMode::kPpu)) {
         ui_state_.time_display_mode = static_cast<TimeDisplayMode>(parsed);
       }
-    } else if (key == "show_registers_panel") {
-      ui_state_.show_registers_panel = value != "0";
-    } else if (key == "show_disasm_panel") {
-      ui_state_.show_disasm_panel = value != "0";
-    } else if (key == "show_memory_panel") {
-      ui_state_.show_memory_panel = value != "0";
-    } else if (key == "show_stack_panel") {
-      ui_state_.show_stack_panel = value != "0";
-    } else if (key == "show_ppu_panel") {
-      ui_state_.show_ppu_panel = value != "0";
-    } else if (key == "show_trace_panel") {
-      ui_state_.show_trace_panel = value != "0";
-    } else if (key == "show_trace_record_panel") {
-      ui_state_.show_trace_record_panel = value != "0";
-    } else if (key == "trace_record_path") {
-      ui_state_.trace_record_path = value;
-    } else if (key == "trace_record_reset_on_start") {
-      ui_state_.trace_record_reset_on_start = value != "0";
-    } else if (key == "show_microop_trace_panel") {
-      ui_state_.show_microop_trace_panel = value != "0";
-    } else if (key == "show_scheduler_panel") {
-      ui_state_.show_scheduler_panel = value != "0";
-    } else if (key == "show_errors_panel") {
-      ui_state_.show_errors_panel = value != "0";
-    } else if (key == "show_bus_panel") {
-      ui_state_.show_bus_panel = value != "0";
     } else if (key == "speed_multiplier") {
       const float parsed = std::strtof(value.c_str(), nullptr);
       if (parsed > 0.0F) {
@@ -770,22 +640,13 @@ void DebuggerApp::SaveAppConfig() {
   if (!stream.good()) {
     return;
   }
-  stream << "last_rom_path=" << ui_state_.last_rom_path << "\n";
-  stream << "last_rom_dir=" << ui_state_.load_rom_dir << "\n";
+  for (const auto& f : kStringFields) {
+    stream << f.key << "=" << ui_state_.*f.member << "\n";
+  }
   stream << "time_display_mode=" << static_cast<int>(ui_state_.time_display_mode) << "\n";
-  stream << "show_registers_panel=" << (ui_state_.show_registers_panel ? 1 : 0) << "\n";
-  stream << "show_disasm_panel=" << (ui_state_.show_disasm_panel ? 1 : 0) << "\n";
-  stream << "show_memory_panel=" << (ui_state_.show_memory_panel ? 1 : 0) << "\n";
-  stream << "show_stack_panel=" << (ui_state_.show_stack_panel ? 1 : 0) << "\n";
-  stream << "show_ppu_panel=" << (ui_state_.show_ppu_panel ? 1 : 0) << "\n";
-  stream << "show_trace_panel=" << (ui_state_.show_trace_panel ? 1 : 0) << "\n";
-  stream << "show_trace_record_panel=" << (ui_state_.show_trace_record_panel ? 1 : 0) << "\n";
-  stream << "trace_record_path=" << ui_state_.trace_record_path << "\n";
-  stream << "trace_record_reset_on_start=" << (ui_state_.trace_record_reset_on_start ? 1 : 0) << "\n";
-  stream << "show_microop_trace_panel=" << (ui_state_.show_microop_trace_panel ? 1 : 0) << "\n";
-  stream << "show_scheduler_panel=" << (ui_state_.show_scheduler_panel ? 1 : 0) << "\n";
-  stream << "show_errors_panel=" << (ui_state_.show_errors_panel ? 1 : 0) << "\n";
-  stream << "show_bus_panel=" << (ui_state_.show_bus_panel ? 1 : 0) << "\n";
+  for (const auto& f : kBoolFields) {
+    stream << f.key << "=" << (ui_state_.*f.member ? 1 : 0) << "\n";
+  }
   stream << "speed_multiplier=" << ui_state_.speed_multiplier << "\n";
 }
 
@@ -824,7 +685,7 @@ void DebuggerApp::Render() {
   RenderSchedulerPanel(*this);
   RenderErrorsPanel(*this);
   RenderBusEventPanel(*this);
-  RenderLoadRomDialog();
+  RenderLoadRomDialog(*this);
   RenderFatalModal();
 
   ImGui::Render();

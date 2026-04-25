@@ -1,5 +1,6 @@
 #include "time_format.h"
 
+#include <array>
 #include <cstdint>
 #include <format>
 #include <string>
@@ -62,6 +63,31 @@ std::string FormatPpu(TimeMasterT t) {
 
 }  // namespace
 
+namespace {
+
+struct ModeRow {
+  TimeDisplayMode mode;
+  const char* short_label;
+  const char* long_label;
+  std::string FormattedTimes::* member;
+};
+
+constexpr std::array<ModeRow, 4> kModes{{
+    {TimeDisplayMode::kAbsolute, "Abs", "Absolute cycles", &FormattedTimes::absolute},
+    {TimeDisplayMode::kOffsetFromNow, "Off", "Offset from now", &FormattedTimes::offset_from_now},
+    {TimeDisplayMode::kSinceStart, "Wall", "Since start", &FormattedTimes::since_start},
+    {TimeDisplayMode::kPpu, "PPU", "PPU (frame:line:dot)", &FormattedTimes::ppu},
+}};
+
+const ModeRow& Row(TimeDisplayMode mode) {
+  for (const auto& r : kModes) {
+    if (r.mode == mode) return r;
+  }
+  return kModes[0];
+}
+
+}  // namespace
+
 FormattedTimes FormatAllMasterTime(TimeMasterT t, TimeMasterT now) {
   return FormattedTimes{
       .absolute = FormatAbsolute(t),
@@ -71,35 +97,10 @@ FormattedTimes FormatAllMasterTime(TimeMasterT t, TimeMasterT now) {
   };
 }
 
-const std::string& SelectFormattedTime(const FormattedTimes& f, TimeDisplayMode mode) {
-  switch (mode) {
-    case TimeDisplayMode::kAbsolute: return f.absolute;
-    case TimeDisplayMode::kOffsetFromNow: return f.offset_from_now;
-    case TimeDisplayMode::kSinceStart: return f.since_start;
-    case TimeDisplayMode::kPpu: return f.ppu;
-  }
-  return f.absolute;
-}
+const std::string& SelectFormattedTime(const FormattedTimes& f, TimeDisplayMode mode) { return f.*Row(mode).member; }
 
-const char* TimeDisplayModeShortLabel(TimeDisplayMode mode) {
-  switch (mode) {
-    case TimeDisplayMode::kAbsolute: return "Abs";
-    case TimeDisplayMode::kOffsetFromNow: return "Off";
-    case TimeDisplayMode::kSinceStart: return "Wall";
-    case TimeDisplayMode::kPpu: return "PPU";
-  }
-  return "?";
-}
-
-const char* TimeDisplayModeLongLabel(TimeDisplayMode mode) {
-  switch (mode) {
-    case TimeDisplayMode::kAbsolute: return "Absolute cycles";
-    case TimeDisplayMode::kOffsetFromNow: return "Offset from now";
-    case TimeDisplayMode::kSinceStart: return "Since start";
-    case TimeDisplayMode::kPpu: return "PPU (frame:line:dot)";
-  }
-  return "?";
-}
+const char* TimeDisplayModeShortLabel(TimeDisplayMode mode) { return Row(mode).short_label; }
+const char* TimeDisplayModeLongLabel(TimeDisplayMode mode) { return Row(mode).long_label; }
 
 void TextMasterTime(TimeMasterT t, TimeMasterT now, TimeDisplayMode mode) {
   const FormattedTimes f = FormatAllMasterTime(t, now);

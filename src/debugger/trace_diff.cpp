@@ -1,6 +1,7 @@
 #include "pupsnes/debugger/trace_diff.h"
 
 #include <cctype>
+#include <format>
 #include <istream>
 #include <ostream>
 #include <utility>
@@ -9,10 +10,7 @@ namespace pupsnes::debugger::trace_diff {
 
 namespace {
 
-bool IsHexDigit(char c) {
-  return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'F') ||
-         (c >= 'a' && c <= 'f');
-}
+bool IsHexDigit(char c) { return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f'); }
 
 bool MatchFlagLetter(char observed, char expected_lower, bool& out_set) {
   const char expected_upper = static_cast<char>(expected_lower - 32);
@@ -27,8 +25,7 @@ bool MatchFlagLetter(char observed, char expected_lower, bool& out_set) {
   return false;
 }
 
-std::optional<std::pair<uint32_t, size_t>> ParseHexRun(std::string_view s,
-                                                      size_t max_digits) {
+std::optional<std::pair<uint32_t, size_t>> ParseHexRun(std::string_view s, size_t max_digits) {
   uint32_t value = 0;
   size_t i = 0;
   while (i < s.size() && i < max_digits && IsHexDigit(s[i])) {
@@ -48,15 +45,13 @@ std::optional<std::pair<uint32_t, size_t>> ParseHexRun(std::string_view s,
   return std::make_pair(value, i);
 }
 
-size_t FindNamedField(std::string_view line, std::string_view key,
-                      size_t search_from) {
+size_t FindNamedField(std::string_view line, std::string_view key, size_t search_from) {
   const auto pos = line.find(key, search_from);
   if (pos == std::string_view::npos) return std::string_view::npos;
   return pos + key.size();
 }
 
-bool ReadNamedHex(std::string_view line, std::string_view key,
-                  size_t max_digits, uint32_t& out_value,
+bool ReadNamedHex(std::string_view line, std::string_view key, size_t max_digits, uint32_t& out_value,
                   size_t* out_digits_seen = nullptr) {
   const size_t start = FindNamedField(line, key, 0);
   if (start == std::string_view::npos) return false;
@@ -68,9 +63,7 @@ bool ReadNamedHex(std::string_view line, std::string_view key,
 }
 
 bool AxyEqual(uint16_t a, uint16_t b, bool a_hi_valid, bool b_hi_valid) {
-  const uint16_t mask =
-      (a_hi_valid && b_hi_valid) ? static_cast<uint16_t>(0xFFFFU)
-                                 : static_cast<uint16_t>(0x00FFU);
+  const uint16_t mask = (a_hi_valid && b_hi_valid) ? static_cast<uint16_t>(0xFFFFU) : static_cast<uint16_t>(0x00FFU);
   return static_cast<uint16_t>(a & mask) == static_cast<uint16_t>(b & mask);
 }
 
@@ -227,10 +220,8 @@ uint32_t CompareStates(const CpuState& pup, const CpuState& mes) {
 
 namespace {
 
-bool NextPupsnesState(std::istream& pup, size_t& line_number, std::string& raw,
-                      CpuState& out_state,
-                      std::optional<PupsnesHeader>& out_header,
-                      std::string& out_error) {
+bool NextPupsnesState(std::istream& pup, size_t& line_number, std::string& raw, CpuState& out_state,
+                      std::optional<PupsnesHeader>& out_header, std::string& out_error) {
   std::string line;
   while (std::getline(pup, line)) {
     ++line_number;
@@ -244,8 +235,7 @@ bool NextPupsnesState(std::istream& pup, size_t& line_number, std::string& raw,
     }
     auto parsed = ParsePupsnesDataLine(line);
     if (!parsed) {
-      out_error = "pupsnes line " + std::to_string(line_number) +
-                  ": malformed data line";
+      out_error = "pupsnes line " + std::to_string(line_number) + ": malformed data line";
       return false;
     }
     raw = line;
@@ -255,21 +245,17 @@ bool NextPupsnesState(std::istream& pup, size_t& line_number, std::string& raw,
   return false;
 }
 
-bool NextMesenState(std::istream& mes, size_t& line_number,
-                    size_t& out_skipped, std::string& raw,
-                    CpuState& out_state, std::string& out_error) {
+bool NextMesenState(std::istream& mes, size_t& line_number, size_t& out_skipped, std::string& raw, CpuState& out_state,
+                    std::string& out_error) {
   std::string line;
   while (std::getline(mes, line)) {
     ++line_number;
     switch (ClassifyMesenLine(line)) {
-      case MesenLineKind::kSkipped:
-        ++out_skipped;
-        continue;
+      case MesenLineKind::kSkipped: ++out_skipped; continue;
       case MesenLineKind::kCpu: {
         auto parsed = ParseMesenCpuLine(line);
         if (!parsed) {
-          out_error = "mesen line " + std::to_string(line_number) +
-                      ": malformed CPU line";
+          out_error = "mesen line " + std::to_string(line_number) + ": malformed CPU line";
           return false;
         }
         raw = line;
@@ -292,21 +278,18 @@ void PushContext(std::vector<std::string>& recent, const std::string& raw) {
 
 }  // namespace
 
-DiffResult Diff(std::istream& pupsnes, std::istream& mesen,
-                const DiffOptions& options) {
+DiffResult Diff(std::istream& pupsnes, std::istream& mesen, const DiffOptions& options) {
   DiffResult r{};
   size_t pup_line = 0;
   size_t mes_line = 0;
 
   auto pup_next = [&](std::string& raw, CpuState& s) {
-    bool ok = NextPupsnesState(pupsnes, pup_line, raw, s, r.pupsnes_header,
-                               r.parse_error);
+    bool ok = NextPupsnesState(pupsnes, pup_line, raw, s, r.pupsnes_header, r.parse_error);
     if (ok) ++r.pupsnes_data_lines_seen;
     return ok;
   };
   auto mes_next = [&](std::string& raw, CpuState& s) {
-    bool ok = NextMesenState(mesen, mes_line, r.mesen_skipped_lines, raw, s,
-                             r.parse_error);
+    bool ok = NextMesenState(mesen, mes_line, r.mesen_skipped_lines, raw, s, r.parse_error);
     if (ok) ++r.mesen_cpu_lines_seen;
     return ok;
   };
@@ -424,98 +407,61 @@ DiffResult Diff(std::istream& pupsnes, std::istream& mesen,
 
 namespace {
 
-void FormatHex16(std::ostream& out, uint16_t v) {
-  static constexpr char kHex[] = "0123456789ABCDEF";
-  out << kHex[(v >> 12) & 0xF] << kHex[(v >> 8) & 0xF]
-      << kHex[(v >> 4) & 0xF] << kHex[v & 0xF];
+template <typename T>
+void PrintRegDiff(std::ostream& out, const char* name, T pup_v, T mes_v) {
+  // Width follows the type: uint8_t → 2 hex digits, uint16_t → 4.
+  constexpr int kWidth = sizeof(T) * 2;
+  out << "  " << name << " differs (pupsnes=" << std::format("{:0{}X}", static_cast<unsigned>(pup_v), kWidth)
+      << ", mesen=" << std::format("{:0{}X}", static_cast<unsigned>(mes_v), kWidth) << ")\n";
 }
 
-void FormatHex8(std::ostream& out, uint8_t v) {
-  static constexpr char kHex[] = "0123456789ABCDEF";
-  out << kHex[(v >> 4) & 0xF] << kHex[v & 0xF];
-}
-
-void PrintReg16Diff(std::ostream& out, const char* name, uint16_t pup_v,
-                    uint16_t mes_v) {
-  out << "  " << name << " differs (pupsnes=";
-  FormatHex16(out, pup_v);
-  out << ", mesen=";
-  FormatHex16(out, mes_v);
-  out << ")\n";
-}
-
-void PrintReg8Diff(std::ostream& out, const char* name, uint8_t pup_v,
-                   uint8_t mes_v) {
-  out << "  " << name << " differs (pupsnes=";
-  FormatHex8(out, pup_v);
-  out << ", mesen=";
-  FormatHex8(out, mes_v);
-  out << ")\n";
-}
-
-void PrintFlagDiff(std::ostream& out, const char* name, bool pup_v,
-                   bool mes_v) {
-  out << "  flag " << name << " differs (pupsnes=" << (pup_v ? "1" : "0")
-      << ", mesen=" << (mes_v ? "1" : "0") << ")\n";
+void PrintFlagDiff(std::ostream& out, const char* name, bool pup_v, bool mes_v) {
+  out << "  flag " << name << " differs (pupsnes=" << (pup_v ? "1" : "0") << ", mesen=" << (mes_v ? "1" : "0") << ")\n";
 }
 
 void PrintMismatch(std::ostream& out, const Mismatch& m) {
-  out << "MISMATCH at pair " << m.pair_index << " (pupsnes line "
-      << m.pupsnes_line_number << ", mesen line " << m.mesen_line_number
-      << ")\n";
+  out << "MISMATCH at pair " << m.pair_index << " (pupsnes line " << m.pupsnes_line_number << ", mesen line "
+      << m.mesen_line_number << ")\n";
   out << "  pupsnes: " << m.pupsnes_raw << "\n";
   out << "  mesen:   " << m.mesen_raw << "\n";
-  if ((m.fields & FieldBit::kPB) != 0U) {
-    PrintReg8Diff(out, "PB", m.pupsnes_state.pb, m.mesen_state.pb);
+
+  // Tables of (bit, name, getter) per width. A field gets printed iff its bit is set in m.fields.
+  struct Reg16Field {
+    uint32_t bit;
+    const char* name;
+    uint16_t CpuState::* getter;
+  };
+  static constexpr Reg16Field kReg16s[] = {
+      {FieldBit::kPC, "PC", &CpuState::pc}, {FieldBit::kA, "A", &CpuState::A}, {FieldBit::kX, "X", &CpuState::X},
+      {FieldBit::kY, "Y", &CpuState::Y},    {FieldBit::kS, "S", &CpuState::S}, {FieldBit::kD, "D", &CpuState::D},
+  };
+
+  struct FlagField {
+    uint32_t bit;
+    const char* name;
+    bool CpuFlags::* getter;
+  };
+  static constexpr FlagField kFlags[] = {
+      {FieldBit::kFlagN, "N", &CpuFlags::n}, {FieldBit::kFlagV, "V", &CpuFlags::v},
+      {FieldBit::kFlagM, "M", &CpuFlags::m}, {FieldBit::kFlagX, "X", &CpuFlags::x},
+      {FieldBit::kFlagD, "D", &CpuFlags::d}, {FieldBit::kFlagI, "I", &CpuFlags::i},
+      {FieldBit::kFlagZ, "Z", &CpuFlags::z}, {FieldBit::kFlagC, "C", &CpuFlags::c},
+  };
+
+  // Print PB before PC, DB after kY etc., to preserve the legacy field ordering.
+  if ((m.fields & FieldBit::kPB) != 0U) PrintRegDiff(out, "PB", m.pupsnes_state.pb, m.mesen_state.pb);
+  for (const auto& f : kReg16s) {
+    if ((m.fields & f.bit) != 0U) PrintRegDiff(out, f.name, m.pupsnes_state.*f.getter, m.mesen_state.*f.getter);
   }
-  if ((m.fields & FieldBit::kPC) != 0U) {
-    PrintReg16Diff(out, "PC", m.pupsnes_state.pc, m.mesen_state.pc);
+  if ((m.fields & FieldBit::kDB) != 0U) PrintRegDiff(out, "DB", m.pupsnes_state.DB, m.mesen_state.DB);
+  for (const auto& f : kFlags) {
+    if ((m.fields & f.bit) != 0U) {
+      PrintFlagDiff(out, f.name, m.pupsnes_state.flags.*f.getter, m.mesen_state.flags.*f.getter);
+    }
   }
-  if ((m.fields & FieldBit::kA) != 0U) {
-    PrintReg16Diff(out, "A", m.pupsnes_state.A, m.mesen_state.A);
-  }
-  if ((m.fields & FieldBit::kX) != 0U) {
-    PrintReg16Diff(out, "X", m.pupsnes_state.X, m.mesen_state.X);
-  }
-  if ((m.fields & FieldBit::kY) != 0U) {
-    PrintReg16Diff(out, "Y", m.pupsnes_state.Y, m.mesen_state.Y);
-  }
-  if ((m.fields & FieldBit::kS) != 0U) {
-    PrintReg16Diff(out, "S", m.pupsnes_state.S, m.mesen_state.S);
-  }
-  if ((m.fields & FieldBit::kD) != 0U) {
-    PrintReg16Diff(out, "D", m.pupsnes_state.D, m.mesen_state.D);
-  }
-  if ((m.fields & FieldBit::kDB) != 0U) {
-    PrintReg8Diff(out, "DB", m.pupsnes_state.DB, m.mesen_state.DB);
-  }
-  if ((m.fields & FieldBit::kFlagN) != 0U) {
-    PrintFlagDiff(out, "N", m.pupsnes_state.flags.n, m.mesen_state.flags.n);
-  }
-  if ((m.fields & FieldBit::kFlagV) != 0U) {
-    PrintFlagDiff(out, "V", m.pupsnes_state.flags.v, m.mesen_state.flags.v);
-  }
-  if ((m.fields & FieldBit::kFlagM) != 0U) {
-    PrintFlagDiff(out, "M", m.pupsnes_state.flags.m, m.mesen_state.flags.m);
-  }
-  if ((m.fields & FieldBit::kFlagX) != 0U) {
-    PrintFlagDiff(out, "X", m.pupsnes_state.flags.x, m.mesen_state.flags.x);
-  }
-  if ((m.fields & FieldBit::kFlagD) != 0U) {
-    PrintFlagDiff(out, "D", m.pupsnes_state.flags.d, m.mesen_state.flags.d);
-  }
-  if ((m.fields & FieldBit::kFlagI) != 0U) {
-    PrintFlagDiff(out, "I", m.pupsnes_state.flags.i, m.mesen_state.flags.i);
-  }
-  if ((m.fields & FieldBit::kFlagZ) != 0U) {
-    PrintFlagDiff(out, "Z", m.pupsnes_state.flags.z, m.mesen_state.flags.z);
-  }
-  if ((m.fields & FieldBit::kFlagC) != 0U) {
-    PrintFlagDiff(out, "C", m.pupsnes_state.flags.c, m.mesen_state.flags.c);
-  }
+
   if (!m.context_pupsnes.empty()) {
-    out << "Context (last " << m.context_pupsnes.size()
-        << " matching pupsnes lines):\n";
+    out << "Context (last " << m.context_pupsnes.size() << " matching pupsnes lines):\n";
     for (const auto& line : m.context_pupsnes) {
       out << "  " << line << "\n";
     }
@@ -526,8 +472,8 @@ const char* ExhaustedName(Exhausted e) {
   switch (e) {
     case Exhausted::kNeither: return "neither";
     case Exhausted::kPupsnes: return "pupsnes";
-    case Exhausted::kMesen:   return "mesen";
-    case Exhausted::kBoth:    return "both";
+    case Exhausted::kMesen: return "mesen";
+    case Exhausted::kBoth: return "both";
   }
   return "?";
 }
@@ -550,9 +496,7 @@ void FormatReport(const DiffResult& r, std::ostream& out) {
   }
 
   if (r.mismatches.empty()) {
-    out << "OK: " << r.pairs_matched
-        << " pairs matched; first exhausted side: " << ExhaustedName(r.exhausted)
-        << ".\n";
+    out << "OK: " << r.pairs_matched << " pairs matched; first exhausted side: " << ExhaustedName(r.exhausted) << ".\n";
     return;
   }
 
@@ -560,8 +504,8 @@ void FormatReport(const DiffResult& r, std::ostream& out) {
     PrintMismatch(out, m);
     out << "\n";
   }
-  out << "TOTAL: " << r.pairs_matched << " pairs matched before mismatch; "
-      << r.mismatches.size() << " mismatch(es) reported.\n";
+  out << "TOTAL: " << r.pairs_matched << " pairs matched before mismatch; " << r.mismatches.size()
+      << " mismatch(es) reported.\n";
 }
 
 }  // namespace pupsnes::debugger::trace_diff

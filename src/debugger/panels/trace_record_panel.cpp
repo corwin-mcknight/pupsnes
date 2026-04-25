@@ -4,19 +4,15 @@
 
 #include "debugger/app.h"
 #include "imgui.h"
+#include "panel_utils.h"
 #include "panels.h"
 
 namespace pupsnes::debugger {
 
 void RenderTraceRecordPanel(DebuggerApp& app) {
   UiState& ui = app.GetUiState();
-  if (!ui.show_trace_record_panel) {
-    return;
-  }
-  if (!ImGui::Begin("Trace Record", &ui.show_trace_record_panel)) {
-    ImGui::End();
-    return;
-  }
+  ScopedPanel panel("Trace Record", ui.show_trace_record_panel);
+  if (!panel) return;
 
   const bool recording = app.IsTraceRecording();
   if (recording) {
@@ -63,11 +59,8 @@ void RenderTraceRecordPanel(DebuggerApp& app) {
 
   if (!app.TraceLastError().empty()) {
     ImGui::Separator();
-    ImGui::TextColored(ImVec4(0.95F, 0.25F, 0.25F, 1.0F), "Error: %s",
-                       app.TraceLastError().c_str());
+    ImGui::TextColored(ImVec4(0.95F, 0.25F, 0.25F, 1.0F), "Error: %s", app.TraceLastError().c_str());
   }
-
-  ImGui::End();
 }
 
 }  // namespace pupsnes::debugger

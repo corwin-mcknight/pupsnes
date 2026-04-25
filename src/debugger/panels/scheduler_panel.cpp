@@ -3,6 +3,7 @@
 #include "debugger/app.h"
 #include "debugger/time_format.h"
 #include "imgui.h"
+#include "panel_utils.h"
 #include "panels.h"
 #include "pupsnes/hw/scheduler.h"
 #include "pupsnes/hw/signal_event.h"
@@ -13,24 +14,21 @@ namespace {
 
 const char* SignalKindName(SignalKind k) {
   switch (k) {
-    case SignalKind::kFrameEnd:          return "FrameEnd";
+    case SignalKind::kFrameEnd: return "FrameEnd";
     case SignalKind::kVblankNmiBoundary: return "VblankNmiBoundary";
-    case SignalKind::kHIrqMatch:         return "HIrqMatch";
+    case SignalKind::kHIrqMatch: return "HIrqMatch";
     case SignalKind::kApuSampleDeadline: return "ApuSampleDeadline";
-    case SignalKind::kDmaBurstComplete:  return "DmaBurstComplete";
-    case SignalKind::kHdmaFire:          return "HdmaFire";
-    default:                             return "?";
+    case SignalKind::kDmaBurstComplete: return "DmaBurstComplete";
+    case SignalKind::kHdmaFire: return "HdmaFire";
+    default: return "?";
   }
 }
 
 }  // namespace
 
 void RenderSchedulerPanel(DebuggerApp& app) {
-  if (!app.GetUiState().show_scheduler_panel) return;
-  if (!ImGui::Begin("Scheduler", &app.GetUiState().show_scheduler_panel)) {
-    ImGui::End();
-    return;
-  }
+  ScopedPanel panel("Scheduler", app.GetUiState().show_scheduler_panel);
+  if (!panel) return;
 
   const TimeMasterT now = app.GetSnes().GetMasterTime();
   const auto snapshot = app.GetSnes().GetScheduler().SnapshotSignalQueue();
@@ -46,20 +44,17 @@ void RenderSchedulerPanel(DebuggerApp& app) {
     ImGui::SameLine();
     ImGui::TextDisabled("|");
     ImGui::SameLine();
-    ImGui::Text("Next +%" PRId64,
-                static_cast<int64_t>(snapshot.front().master_time) - static_cast<int64_t>(now));
+    ImGui::Text("Next +%" PRId64, static_cast<int64_t>(snapshot.front().master_time) - static_cast<int64_t>(now));
   }
   ImGui::Separator();
 
   if (snapshot.empty()) {
     ImGui::TextDisabled("(queue empty)");
-    ImGui::End();
     return;
   }
 
-  constexpr ImGuiTableFlags kFlags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
-                                     ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingFixedFit |
-                                     ImGuiTableFlags_Resizable;
+  constexpr ImGuiTableFlags kFlags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY |
+                                     ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_Resizable;
   if (ImGui::BeginTable("scheduler_table", 3, kFlags)) {
     ImGui::TableSetupScrollFreeze(0, 1);
     ImGui::TableSetupColumn("Time");
@@ -85,7 +80,6 @@ void RenderSchedulerPanel(DebuggerApp& app) {
     }
     ImGui::EndTable();
   }
-  ImGui::End();
 }
 
 }  // namespace pupsnes::debugger

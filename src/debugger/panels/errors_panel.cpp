@@ -33,13 +33,8 @@ const char* SourceLabel(ErrorSource source) {
 
 void RenderErrorsPanel(DebuggerApp& app) {
   UiState& ui = app.GetUiState();
-  if (!ui.show_errors_panel) {
-    return;
-  }
-  if (!ImGui::Begin("Errors", &ui.show_errors_panel)) {
-    ImGui::End();
-    return;
-  }
+  ScopedPanel panel("Errors", ui.show_errors_panel);
+  if (!panel) return;
 
   const TimeMasterT now = app.GetSnes().GetMasterTime();
   ImGui::SetNextItemWidth(140.0F);
@@ -85,8 +80,6 @@ void RenderErrorsPanel(DebuggerApp& app) {
     }
     ImGui::EndTable();
   }
-
-  ImGui::End();
 }
 
 }  // namespace pupsnes::debugger

@@ -15,16 +15,10 @@ constexpr const char* kMemoryRegions[] = {"Bus", "WRAM", "ROM"};
 
 void RenderMemoryPanel(DebuggerApp& app) {
   UiState& ui = app.GetUiState();
-  if (!ui.show_memory_panel) {
-    return;
-  }
-  if (!ImGui::Begin("Memory", &ui.show_memory_panel)) {
-    ImGui::End();
-    return;
-  }
+  ScopedPanel panel("Memory", ui.show_memory_panel);
+  if (!panel) return;
   if (!app.HasLoadedRom()) {
     ImGui::TextUnformatted("Load a ROM to inspect memory.");
-    ImGui::End();
     return;
   }
 
@@ -78,8 +72,6 @@ void RenderMemoryPanel(DebuggerApp& app) {
       (void)app.WriteMemory(*ui.selected_memory_address, ui.memory_edit_value);
     }
   }
-
-  ImGui::End();
 }
 
 }  // namespace pupsnes::debugger

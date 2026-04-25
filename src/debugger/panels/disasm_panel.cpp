@@ -1,6 +1,7 @@
 #include "debugger/app.h"
 #include "debugger/ui_utils.h"
 #include "imgui.h"
+#include "panel_utils.h"
 #include "panels.h"
 #include "pupsnes/debugger/disasm.h"
 
@@ -8,16 +9,10 @@ namespace pupsnes::debugger {
 
 void RenderDisasmPanel(DebuggerApp& app) {
   UiState& ui = app.GetUiState();
-  if (!ui.show_disasm_panel) {
-    return;
-  }
-  if (!ImGui::Begin("Disassembly", &ui.show_disasm_panel)) {
-    ImGui::End();
-    return;
-  }
+  ScopedPanel panel("Disassembly", ui.show_disasm_panel);
+  if (!panel) return;
   if (!app.HasLoadedRom()) {
     ImGui::TextUnformatted("Load a ROM to inspect disassembly.");
-    ImGui::End();
     return;
   }
 
@@ -31,8 +26,7 @@ void RenderDisasmPanel(DebuggerApp& app) {
   ImGui::Separator();
   const SnesAddrT current_pc = app.GetCurrentPc();
   const ImVec4 current_color(0.96F, 0.82F, 0.28F, 1.0F);
-  const float bottom_y =
-      ImGui::GetCursorPosY() + ImGui::GetContentRegionAvail().y - ImGui::GetFrameHeightWithSpacing();
+  const float bottom_y = ImGui::GetCursorPosY() + ImGui::GetContentRegionAvail().y - ImGui::GetFrameHeightWithSpacing();
   for (int line_index = 0; line_index < 4096; ++line_index) {
     if (ImGui::GetCursorPosY() >= bottom_y) {
       break;
@@ -66,8 +60,6 @@ void RenderDisasmPanel(DebuggerApp& app) {
 
     address = (address + line.length) & 0x00FFFFFFU;
   }
-
-  ImGui::End();
 }
 
 }  // namespace pupsnes::debugger

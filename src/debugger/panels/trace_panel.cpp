@@ -11,13 +11,8 @@ namespace pupsnes::debugger {
 
 void RenderTracePanel(DebuggerApp& app) {
   UiState& ui = app.GetUiState();
-  if (!ui.show_trace_panel) {
-    return;
-  }
-  if (!ImGui::Begin("Trace", &ui.show_trace_panel)) {
-    ImGui::End();
-    return;
-  }
+  ScopedPanel panel("Trace", ui.show_trace_panel);
+  if (!panel) return;
   const auto snapshot = app.GetTraceLog().Snapshot();
   const bool grew = snapshot.size() != ui.trace_last_seen_size;
   ui.trace_last_seen_size = snapshot.size();
@@ -55,7 +50,6 @@ void RenderTracePanel(DebuggerApp& app) {
     }
     ImGui::EndTable();
   }
-  ImGui::End();
 }
 
 }  // namespace pupsnes::debugger

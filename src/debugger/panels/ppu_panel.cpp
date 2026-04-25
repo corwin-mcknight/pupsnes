@@ -1,11 +1,12 @@
+#include <OpenGL/gl3.h>
+
 #include <array>
 #include <cstddef>
 #include <cstdint>
 
-#include <OpenGL/gl3.h>
-
 #include "debugger/app.h"
 #include "imgui.h"
+#include "panel_utils.h"
 #include "panels.h"
 #include "pupsnes/hw/sppu/ppu.h"
 #include "pupsnes/hw/sppu/ppu_regs.h"
@@ -20,7 +21,7 @@ const char* VmainStepLabel(uint8_t vmain) {
     case 0x01U: return "+32";
     case 0x02U:
     case 0x03U: return "+128";
-    default:    return "?";
+    default: return "?";
   }
 }
 
@@ -92,8 +93,7 @@ void DrawRegisterTable(const Ppu& ppu) {
   const uint8_t vmain = ppu.GetShadow(sppu::regs::kVmain);
   TableRowText("VMAIN.step", VmainStepLabel(vmain));
   TableRowText("VMAIN.translate", VmainTranslateLabel(vmain));
-  TableRowText("VMAIN.inc-on",
-               (vmain & sppu::regs::kVmainIncrementOnHighMask) != 0U ? "$2119 (high)" : "$2118 (low)");
+  TableRowText("VMAIN.inc-on", (vmain & sppu::regs::kVmainIncrementOnHighMask) != 0U ? "$2119 (high)" : "$2118 (low)");
 
   ImGui::EndTable();
 }
@@ -128,9 +128,7 @@ std::array<uint32_t, kMaxLogicalPixels>& GetScratchBuffer() {
 // 5-to-8 bit expansion: replicate the high bits into the low bits so the
 // 5-bit value 31 maps to 255, not 248. Correct for colour fidelity in the
 // debug preview; the emulator frontend may use its own table later.
-constexpr uint32_t Expand5To8(uint32_t v5) {
-  return (v5 << 3U) | (v5 >> 2U);
-}
+constexpr uint32_t Expand5To8(uint32_t v5) { return (v5 << 3U) | (v5 >> 2U); }
 
 uint32_t Bgr555ToRgba8(uint16_t c) {
   const uint32_t r = Expand5To8(static_cast<uint32_t>(c) & 0x1FU);
@@ -187,13 +185,13 @@ void UploadFrameToTexture(const FrameBufferView& view, bool darkened = false) {
   }
 
   if (tex.width != view.width || tex.height != view.height) {
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, static_cast<GLsizei>(view.width),
-                 static_cast<GLsizei>(view.height), 0, GL_RGBA, GL_UNSIGNED_BYTE, scratch.data());
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, static_cast<GLsizei>(view.width), static_cast<GLsizei>(view.height), 0,
+                 GL_RGBA, GL_UNSIGNED_BYTE, scratch.data());
     tex.width = view.width;
     tex.height = view.height;
   } else {
-    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, static_cast<GLsizei>(view.width),
-                    static_cast<GLsizei>(view.height), GL_RGBA, GL_UNSIGNED_BYTE, scratch.data());
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, static_cast<GLsizei>(view.width), static_cast<GLsizei>(view.height),
+                    GL_RGBA, GL_UNSIGNED_BYTE, scratch.data());
   }
 
   glPixelStorei(GL_UNPACK_ALIGNMENT, previous_unpack_alignment);
@@ -256,13 +254,13 @@ void UploadBackOverlayToTexture(const Ppu& ppu) {
   }
 
   if (tex.width != view.width || tex.height != view.height) {
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, static_cast<GLsizei>(view.width),
-                 static_cast<GLsizei>(view.height), 0, GL_RGBA, GL_UNSIGNED_BYTE, scratch.data());
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, static_cast<GLsizei>(view.width), static_cast<GLsizei>(view.height), 0,
+                 GL_RGBA, GL_UNSIGNED_BYTE, scratch.data());
     tex.width = view.width;
     tex.height = view.height;
   } else {
-    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, static_cast<GLsizei>(view.width),
-                    static_cast<GLsizei>(view.height), GL_RGBA, GL_UNSIGNED_BYTE, scratch.data());
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, static_cast<GLsizei>(view.width), static_cast<GLsizei>(view.height),
+                    GL_RGBA, GL_UNSIGNED_BYTE, scratch.data());
   }
 
   glPixelStorei(GL_UNPACK_ALIGNMENT, previous_unpack_alignment);
@@ -299,9 +297,8 @@ void DrawFramebufferPreview(const Ppu& ppu, bool show_in_progress, const char* o
     UploadBackOverlayToTexture(ppu);
     const PreviewTexture& overlay = GetOverlayTexture();
     if (overlay.id != 0) {
-      ImGui::GetWindowDrawList()->AddImage(
-          static_cast<ImTextureID>(static_cast<intptr_t>(overlay.id)),
-          cursor, ImVec2(cursor.x + w, cursor.y + h));
+      ImGui::GetWindowDrawList()->AddImage(static_cast<ImTextureID>(static_cast<intptr_t>(overlay.id)), cursor,
+                                           ImVec2(cursor.x + w, cursor.y + h));
     }
   }
 
@@ -313,13 +310,8 @@ void DrawFramebufferPreview(const Ppu& ppu, bool show_in_progress, const char* o
 }  // namespace
 
 void RenderPpuPanel(DebuggerApp& app) {
-  if (!app.GetUiState().show_ppu_panel) {
-    return;
-  }
-  if (!ImGui::Begin("PPU", &app.GetUiState().show_ppu_panel)) {
-    ImGui::End();
-    return;
-  }
+  ScopedPanel panel("PPU", app.GetUiState().show_ppu_panel);
+  if (!panel) return;
 
   Ppu& ppu = app.GetSnes().GetPpu();
 
@@ -340,8 +332,6 @@ void RenderPpuPanel(DebuggerApp& app) {
                               : "  [slow-mo: in-progress frame overlay]";
     DrawFramebufferPreview(ppu, paused || slow_mo, note);
   }
-
-  ImGui::End();
 }
 
 }  // namespace pupsnes::debugger

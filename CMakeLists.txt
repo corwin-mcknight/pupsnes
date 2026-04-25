@@ -43,6 +43,7 @@ set(PUPSNES_DEBUGGER_SOURCES
   src/debugger/panels/controls_panel.cpp
   src/debugger/panels/disasm_panel.cpp
   src/debugger/panels/errors_panel.cpp
+  src/debugger/panels/load_rom_panel.cpp
   src/debugger/panels/memory_panel.cpp
   src/debugger/panels/microop_trace_panel.cpp
   src/debugger/panels/ppu_panel.cpp
@@ -103,10 +104,21 @@ set(PUPSNES_TEST_SOURCES
 set(PUPSNES_PROFILE "PRODUCTION" CACHE STRING "Build profile: DEBUG, CI, or PRODUCTION")
 set_property(CACHE PUPSNES_PROFILE PROPERTY STRINGS DEBUG CI PRODUCTION)
 
-add_library(pupsnes STATIC ${PUPSNES_LIB_SOURCES})
-target_compile_features(pupsnes PUBLIC cxx_std_20)
-target_include_directories(pupsnes PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/includes)
-target_include_directories(pupsnes PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+# Consolidates the static-lib boilerplate every pupsnes target shares:
+# cxx_std_20 PUBLIC, `includes/` exposed PUBLIC, `src/` private, optional PUBLIC
+# link deps. Keeps each library definition a single call.
+function(pupsnes_add_static_lib name)
+  cmake_parse_arguments(P "" "" "SOURCES;LINK_PUBLIC" ${ARGN})
+  add_library(${name} STATIC ${P_SOURCES})
+  target_compile_features(${name} PUBLIC cxx_std_20)
+  target_include_directories(${name} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/includes)
+  target_include_directories(${name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  if(P_LINK_PUBLIC)
+    target_link_libraries(${name} PUBLIC ${P_LINK_PUBLIC})
+  endif()
+endfunction()
+
+pupsnes_add_static_lib(pupsnes SOURCES ${PUPSNES_LIB_SOURCES})
 target_compile_definitions(pupsnes PUBLIC "PUPSNES_PROFILE_${PUPSNES_PROFILE}")
 # kOpcodeArtifacts (cpu_opcodes.cpp) is built at compile time over the full
 # spec table. Each new opcode increases the constexpr-evaluator step count.
@@ -116,27 +128,14 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   target_compile_options(pupsnes PRIVATE -fconstexpr-steps=16777216)
 endif()
 
-add_library(pupsnes_debugger_core STATIC ${PUPSNES_DEBUGGER_CORE_SOURCES})
-target_compile_features(pupsnes_debugger_core PUBLIC cxx_std_20)
-target_include_directories(pupsnes_debugger_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/includes)
-target_include_directories(pupsnes_debugger_core PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(pupsnes_debugger_core PUBLIC pupsnes)
-
-add_library(pupsnes_trace_runner STATIC ${PUPSNES_TRACE_RUNNER_SOURCES})
-target_compile_features(pupsnes_trace_runner PUBLIC cxx_std_20)
-target_include_directories(pupsnes_trace_runner PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/includes)
-target_include_directories(pupsnes_trace_runner PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(pupsnes_trace_runner PUBLIC pupsnes pupsnes_debugger_core)
+pupsnes_add_static_lib(pupsnes_debugger_core SOURCES ${PUPSNES_DEBUGGER_CORE_SOURCES} LINK_PUBLIC pupsnes)
+pupsnes_add_static_lib(pupsnes_trace_runner SOURCES ${PUPSNES_TRACE_RUNNER_SOURCES} LINK_PUBLIC pupsnes pupsnes_debugger_core)
+pupsnes_add_static_lib(pupsnes_trace_diff SOURCES ${PUPSNES_TRACE_DIFF_SOURCES})
 
 add_executable(pupsnes_trace_cli src/tools/trace_runner_main.cpp)
 target_compile_features(pupsnes_trace_cli PRIVATE cxx_std_20)
 target_link_libraries(pupsnes_trace_cli PRIVATE pupsnes_trace_runner)
 set_target_properties(pupsnes_trace_cli PROPERTIES OUTPUT_NAME pupsnes-trace)
-
-add_library(pupsnes_trace_diff STATIC ${PUPSNES_TRACE_DIFF_SOURCES})
-target_compile_features(pupsnes_trace_diff PUBLIC cxx_std_20)
-target_include_directories(pupsnes_trace_diff PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/includes)
-target_include_directories(pupsnes_trace_diff PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
 add_executable(pupsnes_trace_diff_cli src/tools/pupsnes_trace_diff_main.cpp)
 target_compile_features(pupsnes_trace_diff_cli PRIVATE cxx_std_20)
@@ -316,45 +315,17 @@ find_program(CLANG_FORMAT_EXE NAMES clang-format)
 find_program(CLANG_TIDY_EXE NAMES clang-tidy)
 find_program(CPPLINT_EXE NAMES cpplint)
 
+# Lint/format targets walk every public header plus the few src/-side headers
+# that are intentionally part of the public-ish surface. CONFIGURE_DEPENDS
+# triggers re-glob when files appear or disappear, so we don't need to
+# maintain an explicit list (build correctness doesn't depend on this glob —
+# build targets list .cpp sources explicitly above).
+file(GLOB_RECURSE PUPSNES_PUBLIC_HEADERS CONFIGURE_DEPENDS
+  ${CMAKE_CURRENT_SOURCE_DIR}/includes/*.h)
 set(PUPSNES_HEADERS
-  ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/config.h
-  ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/types.h
-  ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/mem.h
-  ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/rom_format.h
-  ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/debugger/breakpoints.h
-  ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/debugger/bus_event_log.h
-  ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/debugger/disasm.h
-  ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/debugger/error_log.h
-  ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/debugger/fan_out_trace_sink.h
-  ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/debugger/file_trace_sink.h
-  ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/debugger/microop_trace.h
-  ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/debugger/ring_buffer.h
-  ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/debugger/run_control.h
-  ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/debugger/sha1.h
-  ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/debugger/trace.h
-  ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/debugger/trace_diff.h
-  ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/tools/trace_runner.h
+  ${PUPSNES_PUBLIC_HEADERS}
   ${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/app.h
   ${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/panels/panels.h
-  ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/5a22/cpu.h
-  ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/5a22/cpu_mmio.h
-  ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/5a22/cpu_regs.h
-  ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/5a22/micro_op_strings.h
-  ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/5a22/opcode_metadata.h
-  ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/apu_stub.h
-  ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/bus_event.h
-  ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/cartridge.h
-  ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/debugger_contract.h
-  ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/device.h
-  ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/master_clock_driver.h
-  ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/scheduler.h
-  ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/signal_event.h
-  ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/snes.h
-  ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/sppu/ppu.h
-  ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/sppu/ppu_regs.h
-  ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/systembus.h
-  ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/token.h
-  ${CMAKE_CURRENT_SOURCE_DIR}/includes/pupsnes/hw/wram.h
 )
 
 set(PUPSNES_ALL_SOURCES

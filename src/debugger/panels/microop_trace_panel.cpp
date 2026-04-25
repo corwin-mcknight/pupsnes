@@ -5,6 +5,7 @@
 
 #include "debugger/app.h"
 #include "imgui.h"
+#include "panel_utils.h"
 #include "panels.h"
 #include "pupsnes/debugger/microop_trace.h"
 #include "pupsnes/hw/5a22/cpu.h"
@@ -95,13 +96,8 @@ void RenderTrace(const InstructionTrace& t, std::optional<uint8_t> highlight_ind
 }  // namespace
 
 void RenderMicroOpTracePanel(DebuggerApp& app) {
-  if (!app.GetUiState().show_microop_trace_panel) {
-    return;
-  }
-  if (!ImGui::Begin("Micro-op Trace", &app.GetUiState().show_microop_trace_panel)) {
-    ImGui::End();
-    return;
-  }
+  ScopedPanel panel("Micro-op Trace", app.GetUiState().show_microop_trace_panel);
+  if (!panel) return;
 
   auto& trace = app.GetMicroOpTrace();
 
@@ -139,8 +135,6 @@ void RenderMicroOpTracePanel(DebuggerApp& app) {
     RenderTrace(*t, std::nullopt);
     ImGui::PopID();
   }
-
-  ImGui::End();
 }
 
 }  // namespace pupsnes::debugger
