@@ -1,5 +1,7 @@
 #include "pupsnes/hw/5a22/micro_op_strings.h"
 
+#include "pupsnes/hw/5a22/micro_op.h"
+
 namespace pupsnes {
 
 std::string_view ToString(MicroBusAction action) {
@@ -19,6 +21,9 @@ std::string_view ToString(MicroInternalOp op) {
   switch (op) {
     case MicroInternalOp::kNone: return "None";
     case MicroInternalOp::kLoadReg: return "LoadReg";
+    case MicroInternalOp::kLoadPcLowFromFetch: return "LoadPcLowFromFetch";
+    case MicroInternalOp::kLoadPcHighFromFetch: return "LoadPcHighFromFetch";
+    case MicroInternalOp::kLoadPbrFromFetch: return "LoadPbrFromFetch";
     case MicroInternalOp::kSetBranchTakenCond: return "SetBranchTakenCond";
     case MicroInternalOp::kBranchRelative: return "BranchRelative";
     case MicroInternalOp::kAddIndexToAddr: return "AddIndexToAddr";

@@ -2,6 +2,7 @@
 #include <string_view>
 
 #include "pupsnes/hw/5a22/cpu.h"
+#include "pupsnes/hw/5a22/micro_op.h"
 #include "pupsnes/hw/5a22/micro_op_strings.h"
 
 namespace pupsnes {

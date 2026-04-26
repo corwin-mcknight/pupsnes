@@ -225,8 +225,9 @@ struct BcdResult {
 
 // Mutable reference to the 16-bit GPR slot selected by `reg`. Used by
 // kLoadReg / kIncDecReg / kTransferReg to share the read-modify-write pattern
-// across A, X, Y, SP, and DP. Not valid for Reg::kDbr/kPbr/kPcl/kPch/kP —
-// those are byte-sized or synthesized and handled inline at the call site.
+// across A, X, Y, SP, and DP. Not valid for Reg::kDbr/kP — those are byte-sized
+// and handled inline at the call site. PC/PBR have dedicated micro-ops
+// (kLoadPcLowFromFetch / kLoadPcHighFromFetch / kLoadPbrFromFetch).
 [[gnu::always_inline]] inline uint16_t& RegRef(CpuRegs& r, Reg reg) {
   switch (reg) {
     case Reg::kA: return r.A;
@@ -492,10 +493,6 @@ void CPU::ExecuteInternalOp(MicroInternalOp op, [[maybe_unused]] uint8_t params)
       const bool nz = mp::UnpackLoadRegNz(params);
       const uint8_t fetch = fetch_data_;
 
-      if (reg == Reg::kPbr) {
-        regs_.PBR = fetch;
-        return;
-      }
       if (reg == Reg::kP) {
         regs_.P.FromByte(fetch, regs_.P.E);
         ApplyEmulationForcing(regs_);
@@ -508,19 +505,33 @@ void CPU::ExecuteInternalOp(MicroInternalOp op, [[maybe_unused]] uint8_t params)
         return;
       }
 
-      const bool is_pc = (reg == Reg::kPcl || reg == Reg::kPch);
-      uint16_t& r = is_pc ? regs_.PC : RegRef(regs_, reg);
-      const bool high = (sel == ByteSel::kHigh) || reg == Reg::kPch;
+      uint16_t& r = RegRef(regs_, reg);
+      const bool high = (sel == ByteSel::kHigh);
       const unsigned shift = high ? 8U : 0U;
       const uint32_t keep = high ? 0x00FFU : 0xFF00U;
       r = static_cast<uint16_t>((r & keep) | (uint32_t{fetch} << shift));
-      // NZ: PC never updates. On high, A/X/Y/DP always update (16-bit). On low, DP
-      // never updates; A/X/Y update only when nz is set (8-bit).
-      const bool skip_nz = is_pc || (!high && (reg == Reg::kDp || !nz));
+      // NZ: on high, A/X/Y/DP always update (16-bit). On low, DP never updates;
+      // A/X/Y update only when nz is set (8-bit).
+      const bool skip_nz = !high && (reg == Reg::kDp || !nz);
       if (!skip_nz) SetNzFromWidth(regs_, r, high);
       if (mp::UnpackLoadRegPostIncAddr(params)) {
         addr_ = (addr_ + 1U) & 0xFFFFFFU;
       }
+      return;
+    }
+
+    case MicroInternalOp::kLoadPcLowFromFetch: {
+      regs_.PC = static_cast<uint16_t>((regs_.PC & 0xFF00U) | uint32_t{fetch_data_});
+      return;
+    }
+
+    case MicroInternalOp::kLoadPcHighFromFetch: {
+      regs_.PC = static_cast<uint16_t>((regs_.PC & 0x00FFU) | (uint32_t{fetch_data_} << 8U));
+      return;
+    }
+
+    case MicroInternalOp::kLoadPbrFromFetch: {
+      regs_.PBR = fetch_data_;
       return;
     }
 

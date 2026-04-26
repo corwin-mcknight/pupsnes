@@ -1032,17 +1032,21 @@ TEST_CASE("PHB pushes data bank register and decrements SP", "[cpu]") {
   REQUIRE(f.wram.Peek(0x01FF) == 0x7E);
 }
 
-TEST_CASE("PLB pulls data bank register from stack and updates DBR and flags", "[cpu]") {
+// PLB-after-Reset completes exactly at master_time + 28; the helper uses that
+// precise window so PC is always at 0x8001 (immediately after PLB) — no chance
+// of slipping into the next opcode fetch.
+static void CheckPlbFlagPermutation(uint8_t stack_value, uint8_t initial_dbr, bool initial_n, bool initial_z,
+                                    uint8_t expected_dbr, bool expected_n, bool expected_z) {
   ResetFixture f;
   f.LoadInstruction({0xAB});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x01FF, 0x42, 0);
-  f.ModifyRegs([](auto& r) {
+  f.wram.WriteRegister(0x01FF, stack_value, 0);
+  f.ModifyRegs([&](auto& r) {
     r.SP = 0x01FE;
-    r.DBR = 0x00;
-    r.P.N = true;
-    r.P.Z = true;
+    r.DBR = initial_dbr;
+    r.P.N = initial_n;
+    r.P.Z = initial_z;
   });
 
   TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 28);
@@ -1050,45 +1054,22 @@ TEST_CASE("PLB pulls data bank register from stack and updates DBR and flags", "
   REQUIRE(r.completed_cycles == 28);
   REQUIRE(r.reason == TickStopReason::kReachedTarget);
   REQUIRE(f.cpu.GetRegs().PC == 0x8001);
-  REQUIRE(f.cpu.GetRegs().DBR == 0x42);
+  REQUIRE(f.cpu.GetRegs().DBR == expected_dbr);
   REQUIRE(f.cpu.GetRegs().SP == 0x01FF);
-  REQUIRE(f.cpu.GetRegs().P.N == false);
-  REQUIRE(f.cpu.GetRegs().P.Z == false);
+  REQUIRE(f.cpu.GetRegs().P.N == expected_n);
+  REQUIRE(f.cpu.GetRegs().P.Z == expected_z);
+}
+
+TEST_CASE("PLB pulls data bank register from stack and updates DBR and flags", "[cpu]") {
+  CheckPlbFlagPermutation(0x42, 0x00, true, true, 0x42, false, false);
 }
 
 TEST_CASE("PLB sets Z when pulled value is zero", "[cpu]") {
-  ResetFixture f;
-  f.LoadInstruction({0xAB});
-
-  f.cpu.Reset();
-  f.wram.WriteRegister(0x01FF, 0x00, 0);
-  f.ModifyRegs([](auto& r) {
-    r.SP = 0x01FE;
-    r.DBR = 0x7E;
-  });
-
-  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 36);
-
-  REQUIRE(r.completed_cycles == 36);
-  REQUIRE(f.cpu.GetRegs().DBR == 0x00);
-  REQUIRE(f.cpu.GetRegs().P.Z == true);
-  REQUIRE(f.cpu.GetRegs().P.N == false);
+  CheckPlbFlagPermutation(0x00, 0x7E, false, false, 0x00, false, true);
 }
 
 TEST_CASE("PLB sets N when pulled value has bit 7 set", "[cpu]") {
-  ResetFixture f;
-  f.LoadInstruction({0xAB});
-
-  f.cpu.Reset();
-  f.wram.WriteRegister(0x01FF, 0x80, 0);
-  f.ModifyRegs([](auto& r) { r.SP = 0x01FE; });
-
-  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 36);
-
-  REQUIRE(r.completed_cycles == 36);
-  REQUIRE(f.cpu.GetRegs().DBR == 0x80);
-  REQUIRE(f.cpu.GetRegs().P.N == true);
-  REQUIRE(f.cpu.GetRegs().P.Z == false);
+  CheckPlbFlagPermutation(0x80, 0x00, false, false, 0x80, true, false);
 }
 
 TEST_CASE("PLB in emulation mode wraps SP across page 1", "[cpu]") {

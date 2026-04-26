@@ -10,6 +10,7 @@
 #include <cstdint>
 
 #include "pupsnes/hw/5a22/cpu.h"
+#include "pupsnes/hw/5a22/micro_op.h"
 
 namespace pupsnes {
 

@@ -8,6 +8,7 @@
 
 #include "pupsnes/debugger/ring_buffer.h"
 #include "pupsnes/hw/5a22/cpu.h"
+#include "pupsnes/hw/5a22/micro_op.h"
 
 namespace pupsnes::debugger {
 

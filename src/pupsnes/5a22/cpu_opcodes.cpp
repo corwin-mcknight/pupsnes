@@ -548,16 +548,10 @@ constexpr CycleFragment JsrAbsoluteLong() {
       .Build();
 }
 
-// Build a "pre-increment-pull + LoadReg(reg=PCL/PCH/PBR)" slot. Used by
-// RTS/RTL to pull the return address bytes directly into PC.
-constexpr CycleSlotSpec PullPreIncLoadPcByte(Reg reg, std::string_view label) {
-  return CycleSlotSpec{
-      MicroBusAction::kPreIncPullStack,
-      MicroInternalOp::kLoadReg,
-      Always(),
-      label,
-      micro_op_params::PackLoadReg(reg, ByteSel::kLow, false),
-  };
+// Build a "pre-increment-pull + load PC byte / PBR" slot. Used by RTS/RTL/RTI
+// to pull the return address bytes directly into PC (or PBR for RTL).
+constexpr CycleSlotSpec PullPreIncLoadPcByte(MicroInternalOp op, std::string_view label) {
+  return CycleSlotSpec{MicroBusAction::kPreIncPullStack, op, Always(), label};
 }
 
 constexpr CycleFragment Rts() {
@@ -565,8 +559,8 @@ constexpr CycleFragment Rts() {
   return Fragment()
       .Then(Idle())
       .Then(Idle())
-      .Then(PullPreIncLoadPcByte(Reg::kPcl, "pull PCL"))
-      .Then(PullPreIncLoadPcByte(Reg::kPch, "pull PCH"))
+      .Then(PullPreIncLoadPcByte(MicroInternalOp::kLoadPcLowFromFetch, "pull PCL"))
+      .Then(PullPreIncLoadPcByte(MicroInternalOp::kLoadPcHighFromFetch, "pull PCH"))
       .Then(ModifyPc(true, Always(), "increment PC"))
       .Build();
 }
@@ -575,10 +569,10 @@ constexpr CycleFragment Rtl() {
   // RTL: 6 cycles total. Pull PCL, pull PCH, increment PC, pull PBR.
   return Fragment()
       .Then(Idle())
-      .Then(PullPreIncLoadPcByte(Reg::kPcl, "pull PCL"))
-      .Then(PullPreIncLoadPcByte(Reg::kPch, "pull PCH"))
+      .Then(PullPreIncLoadPcByte(MicroInternalOp::kLoadPcLowFromFetch, "pull PCL"))
+      .Then(PullPreIncLoadPcByte(MicroInternalOp::kLoadPcHighFromFetch, "pull PCH"))
       .Then(ModifyPc(true, Always(), "increment PC"))
-      .Then(PullPreIncLoadPcByte(Reg::kPbr, "pull PBR"))
+      .Then(PullPreIncLoadPcByte(MicroInternalOp::kLoadPbrFromFetch, "pull PBR"))
       .Build();
 }
 
@@ -617,14 +611,13 @@ constexpr CycleFragment ReturnFromInterrupt() {
       .Then(Idle())
       .Then(Idle())
       .Then(PullPreIncLoadReg(Reg::kP, ByteSel::kLow, false, Always(), "pull P"))
-      .Then(PullPreIncLoadPcByte(Reg::kPcl, "pull PCL"))
-      .Then(PullPreIncLoadPcByte(Reg::kPch, "pull PCH"))
+      .Then(PullPreIncLoadPcByte(MicroInternalOp::kLoadPcLowFromFetch, "pull PCL"))
+      .Then(PullPreIncLoadPcByte(MicroInternalOp::kLoadPcHighFromFetch, "pull PCH"))
       .Then(CycleSlotSpec{
           MicroBusAction::kPreIncPullStack,
-          MicroInternalOp::kLoadReg,
+          MicroInternalOp::kLoadPbrFromFetch,
           Not(Condition(TimingCondition::kEmulationMode)),
           "pull PBR (native)",
-          micro_op_params::PackLoadReg(Reg::kPbr, ByteSel::kLow, false),
       })
       .Build();
 }
