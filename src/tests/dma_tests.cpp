@@ -35,3 +35,37 @@ TEST_CASE("DMA controller exists and resets to zero state", "[unit][dma]") {
   REQUIRE(dma.GetChannelState(0).a1b == 0);
   REQUIRE(dma.GetChannelState(0).das == 0);
 }
+
+TEST_CASE("DMA channel 0 register writes update channel state", "[unit][dma]") {
+  SNES snes;
+  DmaController& dma = snes.GetDma();
+  TimeMasterT now = 1;
+
+  // $4300 DMAP0, $4301 BBAD0, $4302/3 A1T0, $4304 A1B0, $4305/6 DAS0, $4307 DASB0.
+  BusWrite(snes, 0x4300U, 0x12U, now++);
+  BusWrite(snes, 0x4301U, 0x18U, now++);  // VRAM data port
+  BusWrite(snes, 0x4302U, 0x34U, now++);
+  BusWrite(snes, 0x4303U, 0x12U, now++);  // a1t = 0x1234
+  BusWrite(snes, 0x4304U, 0x80U, now++);
+  BusWrite(snes, 0x4305U, 0x00U, now++);
+  BusWrite(snes, 0x4306U, 0x10U, now++);  // das = 0x1000
+  BusWrite(snes, 0x4307U, 0xABU, now++);
+
+  const auto& ch = dma.GetChannelState(0);
+  REQUIRE(ch.dmap == 0x12U);
+  REQUIRE(ch.bbad == 0x18U);
+  REQUIRE(ch.a1t == 0x1234U);
+  REQUIRE(ch.a1b == 0x80U);
+  REQUIRE(ch.das == 0x1000U);
+  REQUIRE(ch.dasb == 0xABU);
+}
+
+TEST_CASE("DMA channel 7 register writes target the correct channel", "[unit][dma]") {
+  SNES snes;
+  DmaController& dma = snes.GetDma();
+  TimeMasterT now = 1;
+
+  BusWrite(snes, 0x4370U, 0xAAU, now++);
+  REQUIRE(dma.GetChannelState(7).dmap == 0xAAU);
+  REQUIRE(dma.GetChannelState(0).dmap == 0x00U);
+}
