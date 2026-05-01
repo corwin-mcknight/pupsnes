@@ -82,15 +82,54 @@ void DmaController::WriteRegister(uint32_t offset, uint8_t data, TimeMasterT /*c
 }
 
 TimeMasterT DmaController::Trigger(uint8_t channels_mask, TimeMasterT start_time) {
-  // v1: clear the byte-counter for each enabled channel. Real transfer logic
-  // arrives in subsequent tasks; this gets the test to pass and proves the
-  // CpuMmio -> DmaController wiring.
+  TimeMasterT t = start_time + 8U;  // Startup overhead.
+
   for (uint8_t ch = 0; ch < 8U; ++ch) {
-    if ((channels_mask & (1U << ch)) != 0U) {
-      channels_[ch].das = 0U;
+    if ((channels_mask & (1U << ch)) == 0U) continue;
+    ChannelState& s = channels_[ch];
+
+    const bool b_to_a = (s.dmap & 0x80U) != 0U;
+    const uint8_t step_mode = static_cast<uint8_t>((s.dmap >> 3U) & 0x03U);
+    // step_mode: 0=inc, 1=fixed, 2=dec, 3=fixed.
+    const int32_t step_delta =
+        (step_mode == 0U) ? 1 : (step_mode == 2U ? -1 : 0);
+    const uint8_t mode = static_cast<uint8_t>(s.dmap & 0x07U);
+    if (mode != 0U) {
+      // Modes 1-7 land in Task 7. For now, treat as a no-op transfer:
+      // clear DAS so multi-channel iteration doesn't get stuck mid-test.
+      s.das = 0U;
+      continue;
     }
+
+    // 0 means 64K bytes. Use a do/while loop so the first byte still runs
+    // when initial DAS is 0; the post-decrement gets it to 0xFFFF, and the
+    // loop continues until the natural zero from the wrap.
+    do {
+      const uint32_t a_addr =
+          (static_cast<uint32_t>(s.a1b) << 16U) | static_cast<uint32_t>(s.a1t);
+      const uint32_t b_addr = static_cast<uint32_t>(0x2100U | s.bbad);
+
+      if (b_to_a) {
+        // B-bus → A-bus: read from $00:21bb, write to A-bus addr.
+        auto rplan = snes_->system_bus->Plan(b_addr, BusAccessType::kRead);
+        const auto rresult = snes_->system_bus->Follow(rplan, t, GetDeviceId());
+        auto wplan = snes_->system_bus->Plan(a_addr, BusAccessType::kWrite, rresult.data);
+        (void)snes_->system_bus->Follow(wplan, t + 4U, GetDeviceId());
+      } else {
+        // A-bus → B-bus.
+        auto rplan = snes_->system_bus->Plan(a_addr, BusAccessType::kRead);
+        const auto rresult = snes_->system_bus->Follow(rplan, t, GetDeviceId());
+        auto wplan = snes_->system_bus->Plan(b_addr, BusAccessType::kWrite, rresult.data);
+        (void)snes_->system_bus->Follow(wplan, t + 4U, GetDeviceId());
+      }
+
+      t += 8U;  // 8 master cycles per byte.
+      s.a1t = static_cast<uint16_t>(static_cast<int32_t>(s.a1t) + step_delta);  // wraps within bank.
+      s.das = static_cast<uint16_t>(s.das - 1U);
+    } while (s.das != 0U);
   }
-  return start_time;
+
+  return t;
 }
 
 std::optional<uint8_t> DmaController::HandleDebugRead(uint32_t offset) const {
