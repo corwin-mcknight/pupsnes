@@ -47,6 +47,12 @@ class DmaController : public Device {
   }
 
  private:
+  // Returns the live shadow byte for a valid DMA register offset
+  // ($4300-$437F, local 0x0..0xA). Returns std::nullopt for the unused
+  // $xB-$xF tail and for offsets outside the channel window so callers can
+  // distinguish "not handled" from a real zero byte.
+  [[nodiscard]] std::optional<uint8_t> ReadRegisterShadow(uint32_t offset) const;
+
   std::array<ChannelState, 8> channels_{};
 };
 

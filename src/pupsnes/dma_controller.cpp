@@ -23,28 +23,36 @@ void DmaController::Reset() {
   channels_.fill({});
 }
 
-MmioReadResult DmaController::ReadRegister(uint32_t offset, TimeMasterT /*current_time*/) {
+std::optional<uint8_t> DmaController::ReadRegisterShadow(uint32_t offset) const {
   const uint32_t reg = offset & 0xFFFFU;
   if (reg < 0x4300U || reg >= 0x4380U) {
-    return {0x00U, 0x00U};
+    return std::nullopt;
   }
   const uint8_t channel = static_cast<uint8_t>((reg >> 4U) & 0x07U);
   const uint8_t local = static_cast<uint8_t>(reg & 0x0FU);
   const ChannelState& ch = channels_[channel];
   switch (local) {
-    case 0x0: return {ch.dmap, 0xFFU};
-    case 0x1: return {ch.bbad, 0xFFU};
-    case 0x2: return {static_cast<uint8_t>(ch.a1t & 0xFFU), 0xFFU};
-    case 0x3: return {static_cast<uint8_t>((ch.a1t >> 8U) & 0xFFU), 0xFFU};
-    case 0x4: return {ch.a1b, 0xFFU};
-    case 0x5: return {static_cast<uint8_t>(ch.das & 0xFFU), 0xFFU};
-    case 0x6: return {static_cast<uint8_t>((ch.das >> 8U) & 0xFFU), 0xFFU};
-    case 0x7: return {ch.dasb, 0xFFU};
-    case 0x8: return {ch.a2a, 0xFFU};
-    case 0x9: return {ch.a2a_high, 0xFFU};
-    case 0xA: return {ch.ntrl, 0xFFU};
-    default:  return {0x00U, 0x00U};
+    case 0x0: return ch.dmap;
+    case 0x1: return ch.bbad;
+    case 0x2: return static_cast<uint8_t>(ch.a1t & 0xFFU);
+    case 0x3: return static_cast<uint8_t>((ch.a1t >> 8U) & 0xFFU);
+    case 0x4: return ch.a1b;
+    case 0x5: return static_cast<uint8_t>(ch.das & 0xFFU);
+    case 0x6: return static_cast<uint8_t>((ch.das >> 8U) & 0xFFU);
+    case 0x7: return ch.dasb;
+    case 0x8: return ch.a2a;
+    case 0x9: return ch.a2a_high;
+    case 0xA: return ch.ntrl;
+    default:  return std::nullopt;  // $43xB-$43xF unused per fullsnes.
   }
+}
+
+MmioReadResult DmaController::ReadRegister(uint32_t offset, TimeMasterT /*current_time*/) {
+  const auto shadow = ReadRegisterShadow(offset);
+  if (shadow.has_value()) {
+    return {*shadow, 0xFFU};
+  }
+  return {0x00U, 0x00U};
 }
 
 void DmaController::WriteRegister(uint32_t offset, uint8_t data, TimeMasterT /*current_time*/) {
@@ -78,11 +86,9 @@ TimeMasterT DmaController::Trigger(uint8_t /*channels_mask*/, TimeMasterT start_
   return start_time;
 }
 
-std::optional<uint8_t> DmaController::HandleDebugRead(uint32_t /*offset*/) const {
-  // Channel-state shadow exposure to the debugger lands with Task 3. Until then
-  // return a defined zero so DebugRead succeeds (and the bus marks the page
-  // mapped) instead of reporting kDeviceRefused.
-  return 0x00U;
+std::optional<uint8_t> DmaController::HandleDebugRead(uint32_t offset) const {
+  // Debugger reads of $4300-$437F return the live channel-state shadow.
+  return ReadRegisterShadow(offset);
 }
 
 bool DmaController::HandleDebugWrite(uint32_t /*offset*/, uint8_t /*data*/) {
