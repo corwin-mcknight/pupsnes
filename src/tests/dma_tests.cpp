@@ -301,3 +301,41 @@ TEST_CASE("DMA mode 5 transfers 4 bytes alternating BBAD/BBAD+1", "[unit][dma]")
   REQUIRE(snes.GetDma().GetChannelState(0).das == 0U);
   REQUIRE(snes.GetDma().GetChannelState(0).a1t == 0x0004U);
 }
+
+TEST_CASE("DMA $420B with two channels runs channel 0 then channel 1", "[unit][dma]") {
+  SNES snes;
+  TimeMasterT now = 100;
+
+  // Two transfers writing to a B-bus port we can observe — use OAM ($2104)
+  // since OAM bytes are independently addressable and persistent. Source A: a
+  // single byte. Source B: a single byte. Verify both channels' state cleared.
+
+  BusWrite(snes, 0x7E0000U, 0x11U, now++);
+  BusWrite(snes, 0x7E0010U, 0x22U, now++);
+
+  // Channel 0
+  BusWrite(snes, 0x4300U, 0x00U, now++);
+  BusWrite(snes, 0x4301U, 0x04U, now++);  // BBAD = $04 ($2104 OAM)
+  BusWrite(snes, 0x4302U, 0x00U, now++);
+  BusWrite(snes, 0x4303U, 0x00U, now++);
+  BusWrite(snes, 0x4304U, 0x7EU, now++);
+  BusWrite(snes, 0x4305U, 0x01U, now++);
+  BusWrite(snes, 0x4306U, 0x00U, now++);
+
+  // Channel 1
+  BusWrite(snes, 0x4310U, 0x00U, now++);
+  BusWrite(snes, 0x4311U, 0x04U, now++);
+  BusWrite(snes, 0x4312U, 0x10U, now++);
+  BusWrite(snes, 0x4313U, 0x00U, now++);
+  BusWrite(snes, 0x4314U, 0x7EU, now++);
+  BusWrite(snes, 0x4315U, 0x01U, now++);
+  BusWrite(snes, 0x4316U, 0x00U, now++);
+
+  // Trigger both.
+  BusWrite(snes, 0x420BU, 0x03U, now++);
+
+  REQUIRE(snes.GetDma().GetChannelState(0).das == 0U);
+  REQUIRE(snes.GetDma().GetChannelState(1).das == 0U);
+  REQUIRE(snes.GetDma().GetChannelState(0).a1t == 0x0001U);
+  REQUIRE(snes.GetDma().GetChannelState(1).a1t == 0x0011U);
+}
