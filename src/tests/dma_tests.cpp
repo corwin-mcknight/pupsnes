@@ -157,3 +157,45 @@ TEST_CASE("DMA mode 0 A->B copies N bytes from WRAM to VRAM", "[unit][dma]") {
   REQUIRE(snes.GetDma().GetChannelState(0).a1t == 0x0004U);
   REQUIRE(snes.GetDma().GetChannelState(0).a1b == 0x7EU);  // bank constant
 }
+
+TEST_CASE("DMA A-bus decrement mode walks source backwards", "[unit][dma]") {
+  SNES snes;
+  TimeMasterT now = 100;
+
+  BusWrite(snes, 0x7E0010U, 0xAAU, now++);
+  BusWrite(snes, 0x7E000FU, 0xBBU, now++);
+  BusWrite(snes, 0x7E000EU, 0xCCU, now++);
+
+  BusWrite(snes, 0x4300U, 0x10U, now++);  // step_mode=2 (decrement) -> dmap bit 4 set
+  BusWrite(snes, 0x4301U, 0x18U, now++);
+  BusWrite(snes, 0x4302U, 0x10U, now++);
+  BusWrite(snes, 0x4303U, 0x00U, now++);  // a1t = $0010
+  BusWrite(snes, 0x4304U, 0x7EU, now++);
+  BusWrite(snes, 0x4305U, 0x03U, now++);
+  BusWrite(snes, 0x4306U, 0x00U, now++);  // das = 3
+
+  BusWrite(snes, 0x420BU, 0x01U, now++);
+
+  REQUIRE(snes.GetDma().GetChannelState(0).a1t == 0x000DU);  // 0x10 - 3
+  REQUIRE(snes.GetDma().GetChannelState(0).das == 0U);
+}
+
+TEST_CASE("DMA A-bus fixed mode keeps source pointer constant", "[unit][dma]") {
+  SNES snes;
+  TimeMasterT now = 100;
+
+  BusWrite(snes, 0x7E0020U, 0xEEU, now++);
+
+  BusWrite(snes, 0x4300U, 0x08U, now++);  // step_mode=1 (fixed)
+  BusWrite(snes, 0x4301U, 0x18U, now++);
+  BusWrite(snes, 0x4302U, 0x20U, now++);
+  BusWrite(snes, 0x4303U, 0x00U, now++);
+  BusWrite(snes, 0x4304U, 0x7EU, now++);
+  BusWrite(snes, 0x4305U, 0x05U, now++);
+  BusWrite(snes, 0x4306U, 0x00U, now++);  // das = 5
+
+  BusWrite(snes, 0x420BU, 0x01U, now++);
+
+  REQUIRE(snes.GetDma().GetChannelState(0).a1t == 0x0020U);  // unchanged
+  REQUIRE(snes.GetDma().GetChannelState(0).das == 0U);
+}
