@@ -339,3 +339,41 @@ TEST_CASE("DMA $420B with two channels runs channel 0 then channel 1", "[unit][d
   REQUIRE(snes.GetDma().GetChannelState(0).a1t == 0x0001U);
   REQUIRE(snes.GetDma().GetChannelState(1).a1t == 0x0011U);
 }
+
+TEST_CASE("DMA stalls the CPU by 8 master cycles per byte + startup", "[unit][dma]") {
+  SNES snes;
+  TimeMasterT now = 1000;
+
+  // 16-byte transfer: expected cost = 8 (startup) + 16 * 8 = 136 master cycles.
+  BusWrite(snes, 0x4300U, 0x00U, now++);
+  BusWrite(snes, 0x4301U, 0x18U, now++);
+  BusWrite(snes, 0x4302U, 0x00U, now++);
+  BusWrite(snes, 0x4303U, 0x00U, now++);
+  BusWrite(snes, 0x4304U, 0x7EU, now++);
+  BusWrite(snes, 0x4305U, 0x10U, now++);
+  BusWrite(snes, 0x4306U, 0x00U, now++);
+
+  const TimeMasterT before = snes.GetMasterTime();
+  // Trigger directly via the DMA controller to isolate the cost from the
+  // surrounding bus access overhead.
+  const TimeMasterT after = snes.GetDma().Trigger(0x01U, before);
+  REQUIRE(after - before == 8U + 16U * 8U);
+}
+
+TEST_CASE("$420B write advances master_time by full DMA cost", "[unit][dma]") {
+  SNES snes;
+  TimeMasterT now = 1000;
+  snes.SetMasterTime(now);
+
+  BusWrite(snes, 0x4300U, 0x00U, now++);
+  BusWrite(snes, 0x4301U, 0x18U, now++);
+  BusWrite(snes, 0x4302U, 0x00U, now++);
+  BusWrite(snes, 0x4303U, 0x00U, now++);
+  BusWrite(snes, 0x4304U, 0x7EU, now++);
+  BusWrite(snes, 0x4305U, 0x04U, now++);
+  BusWrite(snes, 0x4306U, 0x00U, now++);
+
+  const TimeMasterT before_trigger = now;
+  BusWrite(snes, 0x420BU, 0x01U, now);  // Note: not now++ — we want the timestamp of the trigger.
+  REQUIRE(snes.GetMasterTime() >= before_trigger + 8U + 4U * 8U);
+}
