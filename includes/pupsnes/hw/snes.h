@@ -12,6 +12,7 @@ class ApuStub;
 class CPU;
 class Cartridge;
 class CpuMmio;
+class DmaController;
 class Ppu;
 class Scheduler;
 class SystemBus;
@@ -35,6 +36,7 @@ class SNES {
   std::unique_ptr<SystemBus> system_bus;
   std::unique_ptr<WRAM> wram;
   std::unique_ptr<CpuMmio> cpu_mmio;
+  std::unique_ptr<DmaController> dma;
   // Throwaway fake-APU — declared before the PPU so PPU can delegate page-$21
   // APU-port accesses to it. Replace when the real SPC700 core lands.
   std::unique_ptr<ApuStub> apu_stub;
@@ -67,6 +69,8 @@ class SNES {
   [[nodiscard]] const WRAM& GetWram() const;
   [[nodiscard]] CpuMmio& GetCpuMmio();
   [[nodiscard]] const CpuMmio& GetCpuMmio() const;
+  [[nodiscard]] DmaController& GetDma();
+  [[nodiscard]] const DmaController& GetDma() const;
   [[nodiscard]] Ppu& GetPpu();
   [[nodiscard]] const Ppu& GetPpu() const;
   [[nodiscard]] ApuStub& GetApuStub();

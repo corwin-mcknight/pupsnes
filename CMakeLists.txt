@@ -9,6 +9,7 @@ set(PUPSNES_LIB_SOURCES
   src/pupsnes/5a22/micro_op_strings.cpp
   src/pupsnes/apu_stub.cpp
   src/pupsnes/cartridge.cpp
+  src/pupsnes/dma_controller.cpp
   src/pupsnes/scheduler.cpp
   src/pupsnes/snes.cpp
   src/pupsnes/sppu/ppu.cpp
@@ -63,6 +64,7 @@ set(PUPSNES_TEST_SOURCES
   src/tests/cpu_tests.cpp
   src/tests/cpu_mmio_tests.cpp
   src/tests/cpu_opcode_defs_tests.cpp
+  src/tests/dma_tests.cpp
   src/tests/fastrom_tests.cpp
   src/tests/rom_format_tests.cpp
   src/tests/rom_integration_tests.cpp

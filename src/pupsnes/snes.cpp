@@ -8,6 +8,7 @@
 #include "pupsnes/hw/apu_stub.h"
 #include "pupsnes/hw/cartridge.h"
 #include "pupsnes/hw/device.h"
+#include "pupsnes/hw/dma_controller.h"
 #include "pupsnes/hw/scheduler.h"
 #include "pupsnes/hw/sppu/ppu.h"
 #include "pupsnes/hw/systembus.h"
@@ -30,10 +31,12 @@ pupsnes::SNES::SNES()
       system_bus(std::make_unique<SystemBus>(this)),
       wram(std::make_unique<WRAM>(this)),
       cpu_mmio(std::make_unique<CpuMmio>(this)),
+      dma(std::make_unique<DmaController>(this)),
       apu_stub(std::make_unique<ApuStub>(this)),
       ppu(std::make_unique<Ppu>(this)) {
   wram->MapSystemBus(*system_bus);
   cpu_mmio->MapSystemBus(*system_bus);
+  dma->MapSystemBus(*system_bus);
   ppu->MapSystemBus(*system_bus);
 }
 
@@ -60,6 +63,7 @@ void pupsnes::SNES::Reset() {
     }
   }
   cpu_mmio->Reset();
+  dma->Reset();
   apu_stub->Reset();
   // Reset the PPU before the CPU: the CPU's reset vector fetch may pass
   // through page $21 (cartridge DBs), and the PPU needs its shadow / decoded
@@ -85,6 +89,9 @@ const pupsnes::WRAM& pupsnes::SNES::GetWram() const { return *wram; }
 
 pupsnes::CpuMmio& pupsnes::SNES::GetCpuMmio() { return *cpu_mmio; }
 const pupsnes::CpuMmio& pupsnes::SNES::GetCpuMmio() const { return *cpu_mmio; }
+
+pupsnes::DmaController& pupsnes::SNES::GetDma() { return *dma; }
+const pupsnes::DmaController& pupsnes::SNES::GetDma() const { return *dma; }
 
 pupsnes::Ppu& pupsnes::SNES::GetPpu() { return *ppu; }
 const pupsnes::Ppu& pupsnes::SNES::GetPpu() const { return *ppu; }
