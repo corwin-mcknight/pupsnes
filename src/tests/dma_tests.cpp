@@ -377,3 +377,83 @@ TEST_CASE("$420B write advances master_time by full DMA cost", "[unit][dma]") {
   BusWrite(snes, 0x420BU, 0x01U, now);  // Note: not now++ — we want the timestamp of the trigger.
   REQUIRE(snes.GetMasterTime() >= before_trigger + 8U + 4U * 8U);
 }
+
+TEST_CASE("DMA upload of palette + tilemap + char data renders a Mode 1 tile", "[integration][dma][ppu]") {
+  SNES snes;
+  Ppu& ppu = snes.GetPpu();
+  TimeMasterT now = 100;
+
+  BusWrite(snes, 0x002100U, 0x0FU, now++);  // brightness 15, no forced blank
+  BusWrite(snes, 0x002115U, 0x80U, now++);  // VMAIN: inc after $2119
+
+  // --- Build source data in WRAM ---
+  // 16 words = one 4bpp 8x8 tile, all color index 1.
+  // Plane 0 row N: byte 0xFF (all columns set in plane 0).
+  // Planes 1/2/3: 0.
+  for (uint16_t row = 0; row < 8; ++row) {
+    BusWrite(snes, 0x7E0000U + row * 2U, 0xFFU, now++);
+    BusWrite(snes, 0x7E0001U + row * 2U, 0x00U, now++);
+  }
+  for (uint16_t row = 0; row < 8; ++row) {
+    BusWrite(snes, 0x7E0010U + row * 2U, 0x00U, now++);
+    BusWrite(snes, 0x7E0011U + row * 2U, 0x00U, now++);
+  }
+  // Tilemap entry at WRAM $7E:0100 = 0x0000 (char 0, palette 0, no flip, no priority).
+  BusWrite(snes, 0x7E0100U, 0x00U, now++);
+  BusWrite(snes, 0x7E0101U, 0x00U, now++);
+  // CGRAM bytes at WRAM $7E:0200: backdrop (0,0), color 1 = 0x7FFF (white).
+  BusWrite(snes, 0x7E0200U, 0x00U, now++);
+  BusWrite(snes, 0x7E0201U, 0x00U, now++);
+  BusWrite(snes, 0x7E0202U, 0xFFU, now++);
+  BusWrite(snes, 0x7E0203U, 0x7FU, now++);
+
+  // --- DMA channel 0: WRAM $7E:0000..$7E:001F → VRAM word 0x1000 (= byte $2000) ---
+  // Set VMADD first.
+  BusWrite(snes, 0x002116U, 0x00U, now++);
+  BusWrite(snes, 0x002117U, 0x10U, now++);  // VMADD = 0x1000
+
+  BusWrite(snes, 0x4300U, 0x01U, now++);  // mode 1, A→B, increment
+  BusWrite(snes, 0x4301U, 0x18U, now++);  // BBAD = $18 (VMDATAL)
+  BusWrite(snes, 0x4302U, 0x00U, now++);
+  BusWrite(snes, 0x4303U, 0x00U, now++);
+  BusWrite(snes, 0x4304U, 0x7EU, now++);
+  BusWrite(snes, 0x4305U, 0x20U, now++);
+  BusWrite(snes, 0x4306U, 0x00U, now++);  // das = 32 bytes
+  BusWrite(snes, 0x420BU, 0x01U, now++);
+
+  // --- DMA channel 0 reused: tilemap entry → VRAM word 0 ---
+  BusWrite(snes, 0x002116U, 0x00U, now++);
+  BusWrite(snes, 0x002117U, 0x00U, now++);
+  BusWrite(snes, 0x4302U, 0x00U, now++);
+  BusWrite(snes, 0x4303U, 0x01U, now++);  // a1t = 0x0100
+  BusWrite(snes, 0x4305U, 0x02U, now++);
+  BusWrite(snes, 0x4306U, 0x00U, now++);
+  BusWrite(snes, 0x420BU, 0x01U, now++);
+
+  // --- DMA channel 0: CGRAM bytes → CGRAM via $2122 ---
+  BusWrite(snes, 0x002121U, 0x00U, now++);  // CGADD = 0
+  BusWrite(snes, 0x4300U, 0x00U, now++);    // mode 0 (every byte to BBAD)
+  BusWrite(snes, 0x4301U, 0x22U, now++);    // BBAD = $22 (CGDATA)
+  BusWrite(snes, 0x4302U, 0x00U, now++);
+  BusWrite(snes, 0x4303U, 0x02U, now++);  // a1t = 0x0200
+  BusWrite(snes, 0x4305U, 0x04U, now++);
+  BusWrite(snes, 0x4306U, 0x00U, now++);
+  BusWrite(snes, 0x420BU, 0x01U, now++);
+
+  // --- Configure Mode 1 BG1 to draw the tile at (0,0) ---
+  BusWrite(snes, 0x002105U, 0x01U, now++);  // BGMODE = 1
+  BusWrite(snes, 0x002107U, 0x00U, now++);  // BG1SC: tilemap base 0
+  BusWrite(snes, 0x00210BU, 0x01U, now++);  // BG12NBA: BG1 char base nibble = 1
+  BusWrite(snes, 0x00210DU, 0x00U, now++);
+  BusWrite(snes, 0x00210DU, 0x00U, now++);  // BG1 H scroll = 0
+  BusWrite(snes, 0x00210EU, 0x00U, now++);
+  BusWrite(snes, 0x00210EU, 0x00U, now++);  // BG1 V scroll = 0
+  BusWrite(snes, 0x00212CU, 0x01U, now++);  // TM = BG1
+
+  // Render a frame.
+  ppu.CatchUpTo(262U * 1364U + 100U);
+  const FrameBufferView view = ppu.BuildFrontView();
+
+  REQUIRE(view.pixels[0U] == 0x7FFFU);  // white at (0,0)
+  REQUIRE(view.pixels[7U] == 0x7FFFU);  // white at (7,0)
+}
