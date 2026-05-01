@@ -63,6 +63,12 @@ class CpuMmio : public Device {
   static constexpr uint32_t kAutoJoyResultFirst = 0x4218U;
   static constexpr uint32_t kAutoJoyResultLast = 0x421FU;
 
+  // MDMAEN ($420B): write-only, bit N = trigger general DMA on channel N.
+  // HDMAEN ($420C): write-only, bit N = enable HDMA on channel N for the frame.
+  // HDMA itself is deferred; in v1 we shadow the byte for debug visibility.
+  static constexpr uint16_t kMdmaEnOffset = 0x420BU;
+  static constexpr uint16_t kHdmaEnOffset = 0x420CU;
+
   explicit CpuMmio(SNES* snes);
   ~CpuMmio() override = default;
 
@@ -91,6 +97,7 @@ class CpuMmio : public Device {
  private:
   uint8_t memsel_ = 0;
   uint8_t nmitimen_ = 0;
+  uint8_t hdmaen_ = 0;
 };
 
 }  // namespace pupsnes

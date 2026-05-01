@@ -2,6 +2,7 @@
 
 #include "pupsnes/hw/5a22/cpu.h"
 #include "pupsnes/hw/cartridge.h"
+#include "pupsnes/hw/dma_controller.h"
 #include "pupsnes/hw/snes.h"
 #include "pupsnes/hw/sppu/ppu.h"
 #include "pupsnes/hw/systembus.h"
@@ -119,6 +120,24 @@ void CpuMmio::WriteRegister(uint32_t offset, uint8_t data, TimeMasterT current_t
     // V-IRQ / H-IRQ / auto-joypad bits stored but not acted upon in v1 —
     // IRQ signal and joypad auto-read land in subsequent work. Keeping the
     // shadow byte lets the debugger show the current enable state.
+    return;
+  }
+  if (reg == kMdmaEnOffset) {
+    if (data != 0U && snes_ != nullptr && snes_->dma != nullptr) {
+      const TimeMasterT end_time = snes_->dma->Trigger(data, current_time);
+      // Stall the CPU: bump master time and the CPU's local-time mirror so the
+      // next bus access sees the post-DMA cycle. Real hardware halts the 65816
+      // for the DMA duration; this models the same effect inline.
+      snes_->SetMasterTime(end_time);
+      if (snes_->cpu != nullptr) {
+        snes_->cpu->SetLocalTime(end_time);
+      }
+    }
+    return;
+  }
+  if (reg == kHdmaEnOffset) {
+    // HDMA enable: shadow only in v1 (HDMA itself not yet implemented).
+    hdmaen_ = data;
     return;
   }
   // Stub: writes to other registers are accepted silently so ROMs can poke

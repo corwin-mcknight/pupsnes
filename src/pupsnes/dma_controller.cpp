@@ -81,8 +81,15 @@ void DmaController::WriteRegister(uint32_t offset, uint8_t data, TimeMasterT /*c
   }
 }
 
-TimeMasterT DmaController::Trigger(uint8_t /*channels_mask*/, TimeMasterT start_time) {
-  // Filled in by Task 5+.
+TimeMasterT DmaController::Trigger(uint8_t channels_mask, TimeMasterT start_time) {
+  // v1: clear the byte-counter for each enabled channel. Real transfer logic
+  // arrives in subsequent tasks; this gets the test to pass and proves the
+  // CpuMmio -> DmaController wiring.
+  for (uint8_t ch = 0; ch < 8U; ++ch) {
+    if ((channels_mask & (1U << ch)) != 0U) {
+      channels_[ch].das = 0U;
+    }
+  }
   return start_time;
 }
 

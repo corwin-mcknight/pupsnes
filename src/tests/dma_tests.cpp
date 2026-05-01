@@ -92,3 +92,23 @@ TEST_CASE("DMA channel registers read back what was written", "[unit][dma]") {
   REQUIRE(BusRead(snes, 0x4306U, now++) == 0x10U);
   REQUIRE(BusRead(snes, 0x4307U, now++) == 0xABU);
 }
+
+TEST_CASE("$420B MDMAEN write delegates to DmaController::Trigger", "[unit][dma]") {
+  SNES snes;
+  DmaController& dma = snes.GetDma();
+  TimeMasterT now = 100;
+
+  // Configure channel 0 with a tiny transfer (1 byte, mode 0, A->B, increment).
+  // Source: $00:1000 (cartridge ROM space - value doesn't matter for this test).
+  BusWrite(snes, 0x4300U, 0x00U, now++);  // DMAP: A->B, increment, mode 0
+  BusWrite(snes, 0x4301U, 0x18U, now++);  // BBAD = $18 ($2118 VRAM)
+  BusWrite(snes, 0x4302U, 0x00U, now++);
+  BusWrite(snes, 0x4303U, 0x10U, now++);  // a1t = $1000
+  BusWrite(snes, 0x4304U, 0x00U, now++);  // a1b = $00
+  BusWrite(snes, 0x4305U, 0x01U, now++);
+  BusWrite(snes, 0x4306U, 0x00U, now++);  // das = 1 byte
+
+  // Triggering channel 0 should clear DAS to 0.
+  BusWrite(snes, 0x420BU, 0x01U, now++);
+  REQUIRE(dma.GetChannelState(0).das == 0U);
+}
