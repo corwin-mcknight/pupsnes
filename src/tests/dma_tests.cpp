@@ -199,3 +199,105 @@ TEST_CASE("DMA A-bus fixed mode keeps source pointer constant", "[unit][dma]") {
   REQUIRE(snes.GetDma().GetChannelState(0).a1t == 0x0020U);  // unchanged
   REQUIRE(snes.GetDma().GetChannelState(0).das == 0U);
 }
+
+TEST_CASE("DMA mode 1 transfers 2-byte pairs to BBAD/BBAD+1 (VRAM upload pattern)", "[unit][dma]") {
+  SNES snes;
+  Ppu& ppu = snes.GetPpu();
+  TimeMasterT now = 100;
+
+  BusWrite(snes, 0x002100U, 0x0FU, now++);
+  BusWrite(snes, 0x002115U, 0x80U, now++);  // VMAIN: inc after $2119, +1 word
+  BusWrite(snes, 0x002116U, 0x00U, now++);
+  BusWrite(snes, 0x002117U, 0x00U, now++);  // VMADD = 0
+
+  // Source: 4 bytes in WRAM forming two VRAM words: 0xBBAA at word 0, 0xDDCC at word 1.
+  BusWrite(snes, 0x7E0000U, 0xAAU, now++);
+  BusWrite(snes, 0x7E0001U, 0xBBU, now++);
+  BusWrite(snes, 0x7E0002U, 0xCCU, now++);
+  BusWrite(snes, 0x7E0003U, 0xDDU, now++);
+
+  BusWrite(snes, 0x4300U, 0x01U, now++);  // mode 1, A->B, increment
+  BusWrite(snes, 0x4301U, 0x18U, now++);  // BBAD = $18
+  BusWrite(snes, 0x4302U, 0x00U, now++);
+  BusWrite(snes, 0x4303U, 0x00U, now++);
+  BusWrite(snes, 0x4304U, 0x7EU, now++);
+  BusWrite(snes, 0x4305U, 0x04U, now++);
+  BusWrite(snes, 0x4306U, 0x00U, now++);  // das = 4 bytes (= 2 words)
+
+  BusWrite(snes, 0x420BU, 0x01U, now++);
+  ppu.CatchUpTo(now + 10000U);
+
+  // Read back via $2139/$213A (RDVRAM). Reset VMADD and use the prefetch
+  // protocol: first read after VMADD is the throwaway prefetch.
+  BusWrite(snes, 0x002116U, 0x00U, now++);
+  BusWrite(snes, 0x002117U, 0x00U, now++);
+  // Throwaway read to load prefetch buffer with VRAM word 0:
+  (void)BusRead(snes, 0x002139U, now++);
+  (void)BusRead(snes, 0x00213AU, now++);
+  // Now read word 0 (low+high) -- should be $BBAA, then word 1 = $DDCC.
+  const uint8_t w0_lo = BusRead(snes, 0x002139U, now++);
+  const uint8_t w0_hi = BusRead(snes, 0x00213AU, now++);
+  REQUIRE(w0_lo == 0xAAU);
+  REQUIRE(w0_hi == 0xBBU);
+  const uint8_t w1_lo = BusRead(snes, 0x002139U, now++);
+  const uint8_t w1_hi = BusRead(snes, 0x00213AU, now++);
+  REQUIRE(w1_lo == 0xCCU);
+  REQUIRE(w1_hi == 0xDDU);
+}
+
+TEST_CASE("DMA mode 4 transfers 4 sequential bytes to BBAD..BBAD+3", "[unit][dma]") {
+  SNES snes;
+  TimeMasterT now = 100;
+
+  for (uint8_t i = 0; i < 4U; ++i) BusWrite(snes, 0x7E0000U + i, static_cast<uint8_t>(0xA0U + i), now++);
+
+  BusWrite(snes, 0x4300U, 0x04U, now++);  // mode 4
+  BusWrite(snes, 0x4301U, 0x00U, now++);
+  BusWrite(snes, 0x4302U, 0x00U, now++);
+  BusWrite(snes, 0x4303U, 0x00U, now++);
+  BusWrite(snes, 0x4304U, 0x7EU, now++);
+  BusWrite(snes, 0x4305U, 0x04U, now++);
+  BusWrite(snes, 0x4306U, 0x00U, now++);
+  BusWrite(snes, 0x420BU, 0x01U, now++);
+
+  REQUIRE(snes.GetDma().GetChannelState(0).das == 0U);
+  REQUIRE(snes.GetDma().GetChannelState(0).a1t == 0x0004U);
+}
+
+TEST_CASE("DMA mode 2 transfers 2 bytes to BBAD twice (CGRAM upload pattern)", "[unit][dma]") {
+  SNES snes;
+  TimeMasterT now = 100;
+
+  for (uint8_t i = 0; i < 4U; ++i) BusWrite(snes, 0x7E0000U + i, static_cast<uint8_t>(0xC0U + i), now++);
+
+  BusWrite(snes, 0x4300U, 0x02U, now++);  // mode 2
+  BusWrite(snes, 0x4301U, 0x22U, now++);  // BBAD = $22 (CGDATA)
+  BusWrite(snes, 0x4302U, 0x00U, now++);
+  BusWrite(snes, 0x4303U, 0x00U, now++);
+  BusWrite(snes, 0x4304U, 0x7EU, now++);
+  BusWrite(snes, 0x4305U, 0x04U, now++);
+  BusWrite(snes, 0x4306U, 0x00U, now++);
+  BusWrite(snes, 0x420BU, 0x01U, now++);
+
+  REQUIRE(snes.GetDma().GetChannelState(0).das == 0U);
+  REQUIRE(snes.GetDma().GetChannelState(0).a1t == 0x0004U);
+}
+
+TEST_CASE("DMA mode 5 transfers 4 bytes alternating BBAD/BBAD+1", "[unit][dma]") {
+  SNES snes;
+  TimeMasterT now = 100;
+
+  for (uint8_t i = 0; i < 4U; ++i) BusWrite(snes, 0x7E0000U + i, static_cast<uint8_t>(0x50U + i), now++);
+
+  BusWrite(snes, 0x4300U, 0x05U, now++);  // mode 5
+  BusWrite(snes, 0x4301U, 0x18U, now++);
+  BusWrite(snes, 0x4302U, 0x00U, now++);
+  BusWrite(snes, 0x4303U, 0x00U, now++);
+  BusWrite(snes, 0x4304U, 0x7EU, now++);
+  BusWrite(snes, 0x4305U, 0x04U, now++);
+  BusWrite(snes, 0x4306U, 0x00U, now++);
+  BusWrite(snes, 0x420BU, 0x01U, now++);
+
+  REQUIRE(snes.GetDma().GetChannelState(0).das == 0U);
+  REQUIRE(snes.GetDma().GetChannelState(0).a1t == 0x0004U);
+}

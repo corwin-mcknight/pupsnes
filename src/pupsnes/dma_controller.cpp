@@ -1,9 +1,36 @@
 #include "pupsnes/hw/dma_controller.h"
 
+#include <array>
+
 #include "pupsnes/hw/snes.h"
 #include "pupsnes/hw/systembus.h"
 
 namespace pupsnes {
+
+namespace {
+
+// B-bus offset pattern per DMA mode (fullsnes hardware reference). Each entry
+// is the bbad-relative offset applied to the next byte transferred. After
+// consuming `length` entries, the index wraps to 0. The byte counter (DAS)
+// advances per byte regardless of pattern length, so each "transfer unit"
+// implicitly covers `length` decrements of DAS.
+struct ModePattern {
+  uint8_t length;
+  std::array<uint8_t, 4> offsets;
+};
+
+constexpr std::array<ModePattern, 8> kModePatterns = {{
+    {1, {0, 0, 0, 0}},  // 0: BBAD
+    {2, {0, 1, 0, 0}},  // 1: BBAD, BBAD+1
+    {2, {0, 0, 0, 0}},  // 2: BBAD, BBAD
+    {4, {0, 0, 1, 1}},  // 3: BBAD, BBAD, BBAD+1, BBAD+1
+    {4, {0, 1, 2, 3}},  // 4: BBAD, BBAD+1, BBAD+2, BBAD+3
+    {4, {0, 1, 0, 1}},  // 5: BBAD, BBAD+1, BBAD, BBAD+1
+    {2, {0, 0, 0, 0}},  // 6: alias of mode 2
+    {4, {0, 0, 1, 1}},  // 7: alias of mode 3
+}};
+
+}  // namespace
 
 DmaController::DmaController(SNES* snes) : Device(snes) {}
 
@@ -94,29 +121,26 @@ TimeMasterT DmaController::Trigger(uint8_t channels_mask, TimeMasterT start_time
     const int32_t step_delta =
         (step_mode == 0U) ? 1 : (step_mode == 2U ? -1 : 0);
     const uint8_t mode = static_cast<uint8_t>(s.dmap & 0x07U);
-    if (mode != 0U) {
-      // Modes 1-7 land in Task 7. For now, treat as a no-op transfer:
-      // clear DAS so multi-channel iteration doesn't get stuck mid-test.
-      s.das = 0U;
-      continue;
-    }
+    const ModePattern& pat = kModePatterns[mode];
+    uint8_t pat_index = 0;
 
-    // 0 means 64K bytes. Use a do/while loop so the first byte still runs
+    // DAS=0 means 64K bytes. Use a do/while loop so the first byte still runs
     // when initial DAS is 0; the post-decrement gets it to 0xFFFF, and the
     // loop continues until the natural zero from the wrap.
     do {
       const uint32_t a_addr =
           (static_cast<uint32_t>(s.a1b) << 16U) | static_cast<uint32_t>(s.a1t);
-      const uint32_t b_addr = static_cast<uint32_t>(0x2100U | s.bbad);
+      const uint32_t b_addr = static_cast<uint32_t>(
+          0x2100U | static_cast<uint8_t>(s.bbad + pat.offsets[pat_index]));
 
       if (b_to_a) {
-        // B-bus → A-bus: read from $00:21bb, write to A-bus addr.
+        // B-bus -> A-bus: read from $00:21bb, write to A-bus addr.
         auto rplan = snes_->system_bus->Plan(b_addr, BusAccessType::kRead);
         const auto rresult = snes_->system_bus->Follow(rplan, t, GetDeviceId());
         auto wplan = snes_->system_bus->Plan(a_addr, BusAccessType::kWrite, rresult.data);
         (void)snes_->system_bus->Follow(wplan, t + 4U, GetDeviceId());
       } else {
-        // A-bus → B-bus.
+        // A-bus -> B-bus.
         auto rplan = snes_->system_bus->Plan(a_addr, BusAccessType::kRead);
         const auto rresult = snes_->system_bus->Follow(rplan, t, GetDeviceId());
         auto wplan = snes_->system_bus->Plan(b_addr, BusAccessType::kWrite, rresult.data);
@@ -126,6 +150,7 @@ TimeMasterT DmaController::Trigger(uint8_t channels_mask, TimeMasterT start_time
       t += 8U;  // 8 master cycles per byte.
       s.a1t = static_cast<uint16_t>(static_cast<int32_t>(s.a1t) + step_delta);  // wraps within bank.
       s.das = static_cast<uint16_t>(s.das - 1U);
+      pat_index = static_cast<uint8_t>((pat_index + 1U) % pat.length);
     } while (s.das != 0U);
   }
 
