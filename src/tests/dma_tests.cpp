@@ -69,3 +69,26 @@ TEST_CASE("DMA channel 7 register writes target the correct channel", "[unit][dm
   REQUIRE(dma.GetChannelState(7).dmap == 0xAAU);
   REQUIRE(dma.GetChannelState(0).dmap == 0x00U);
 }
+
+TEST_CASE("DMA channel registers read back what was written", "[unit][dma]") {
+  SNES snes;
+  TimeMasterT now = 1;
+
+  BusWrite(snes, 0x4300U, 0x12U, now++);
+  BusWrite(snes, 0x4301U, 0x18U, now++);
+  BusWrite(snes, 0x4302U, 0x34U, now++);
+  BusWrite(snes, 0x4303U, 0x12U, now++);
+  BusWrite(snes, 0x4304U, 0x80U, now++);
+  BusWrite(snes, 0x4305U, 0x00U, now++);
+  BusWrite(snes, 0x4306U, 0x10U, now++);
+  BusWrite(snes, 0x4307U, 0xABU, now++);
+
+  REQUIRE(BusRead(snes, 0x4300U, now++) == 0x12U);
+  REQUIRE(BusRead(snes, 0x4301U, now++) == 0x18U);
+  REQUIRE(BusRead(snes, 0x4302U, now++) == 0x34U);
+  REQUIRE(BusRead(snes, 0x4303U, now++) == 0x12U);
+  REQUIRE(BusRead(snes, 0x4304U, now++) == 0x80U);
+  REQUIRE(BusRead(snes, 0x4305U, now++) == 0x00U);
+  REQUIRE(BusRead(snes, 0x4306U, now++) == 0x10U);
+  REQUIRE(BusRead(snes, 0x4307U, now++) == 0xABU);
+}

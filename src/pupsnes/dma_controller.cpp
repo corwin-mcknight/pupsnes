@@ -23,9 +23,28 @@ void DmaController::Reset() {
   channels_.fill({});
 }
 
-MmioReadResult DmaController::ReadRegister(uint32_t /*offset*/, TimeMasterT /*current_time*/) {
-  // Filled in by Task 3.
-  return {0x00U, 0x00U};
+MmioReadResult DmaController::ReadRegister(uint32_t offset, TimeMasterT /*current_time*/) {
+  const uint32_t reg = offset & 0xFFFFU;
+  if (reg < 0x4300U || reg >= 0x4380U) {
+    return {0x00U, 0x00U};
+  }
+  const uint8_t channel = static_cast<uint8_t>((reg >> 4U) & 0x07U);
+  const uint8_t local = static_cast<uint8_t>(reg & 0x0FU);
+  const ChannelState& ch = channels_[channel];
+  switch (local) {
+    case 0x0: return {ch.dmap, 0xFFU};
+    case 0x1: return {ch.bbad, 0xFFU};
+    case 0x2: return {static_cast<uint8_t>(ch.a1t & 0xFFU), 0xFFU};
+    case 0x3: return {static_cast<uint8_t>((ch.a1t >> 8U) & 0xFFU), 0xFFU};
+    case 0x4: return {ch.a1b, 0xFFU};
+    case 0x5: return {static_cast<uint8_t>(ch.das & 0xFFU), 0xFFU};
+    case 0x6: return {static_cast<uint8_t>((ch.das >> 8U) & 0xFFU), 0xFFU};
+    case 0x7: return {ch.dasb, 0xFFU};
+    case 0x8: return {ch.a2a, 0xFFU};
+    case 0x9: return {ch.a2a_high, 0xFFU};
+    case 0xA: return {ch.ntrl, 0xFFU};
+    default:  return {0x00U, 0x00U};
+  }
 }
 
 void DmaController::WriteRegister(uint32_t offset, uint8_t data, TimeMasterT /*current_time*/) {
