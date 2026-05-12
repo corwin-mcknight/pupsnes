@@ -10,6 +10,7 @@ set(PUPSNES_LIB_SOURCES
   src/pupsnes/apu_stub.cpp
   src/pupsnes/cartridge.cpp
   src/pupsnes/dma_controller.cpp
+  src/pupsnes/joypad.cpp
   src/pupsnes/scheduler.cpp
   src/pupsnes/snes.cpp
   src/pupsnes/sppu/ppu.cpp
@@ -41,6 +42,7 @@ set(PUPSNES_DEBUGGER_SOURCES
   src/debugger/app.cpp
   src/debugger/main.cpp
   src/debugger/panels/bus_event_panel.cpp
+  src/debugger/panels/controller_panel.cpp
   src/debugger/panels/controls_panel.cpp
   src/debugger/panels/disasm_panel.cpp
   src/debugger/panels/errors_panel.cpp
@@ -66,6 +68,7 @@ set(PUPSNES_TEST_SOURCES
   src/tests/cpu_opcode_defs_tests.cpp
   src/tests/dma_tests.cpp
   src/tests/fastrom_tests.cpp
+  src/tests/joypad_tests.cpp
   src/tests/rom_format_tests.cpp
   src/tests/rom_integration_tests.cpp
   src/tests/scheduler_tests.cpp

@@ -480,6 +480,7 @@ void DebuggerApp::RenderMenuBar() {
       ImGui::MenuItem("Scheduler", nullptr, &ui_state_.show_scheduler_panel);
       ImGui::MenuItem("Errors", nullptr, &ui_state_.show_errors_panel);
       ImGui::MenuItem("Bus", nullptr, &ui_state_.show_bus_panel);
+      ImGui::MenuItem("P1 Controller", nullptr, &ui_state_.show_controller_panel);
       ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Debug")) {
@@ -563,7 +564,7 @@ struct StringField {
   std::string UiState::* member;
 };
 
-constexpr std::array<BoolField, 12> kBoolFields{{
+constexpr std::array<BoolField, 13> kBoolFields{{
     {"show_registers_panel", &UiState::show_registers_panel},
     {"show_disasm_panel", &UiState::show_disasm_panel},
     {"show_memory_panel", &UiState::show_memory_panel},
@@ -576,6 +577,7 @@ constexpr std::array<BoolField, 12> kBoolFields{{
     {"show_scheduler_panel", &UiState::show_scheduler_panel},
     {"show_errors_panel", &UiState::show_errors_panel},
     {"show_bus_panel", &UiState::show_bus_panel},
+    {"show_controller_panel", &UiState::show_controller_panel},
 }};
 
 constexpr std::array<StringField, 3> kStringFields{{
@@ -685,6 +687,7 @@ void DebuggerApp::Render() {
   RenderSchedulerPanel(*this);
   RenderErrorsPanel(*this);
   RenderBusEventPanel(*this);
+  RenderControllerPanel(*this);
   RenderLoadRomDialog(*this);
   RenderFatalModal();
 

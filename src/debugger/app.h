@@ -87,6 +87,7 @@ struct UiState {
   bool show_scheduler_panel = true;
   bool show_errors_panel = true;
   bool show_bus_panel = true;
+  bool show_controller_panel = true;
   // Emulated SNES time per real time. 1.0 = 100% real-hardware speed. Always
   // applied (the CPU is budgeted dt * kMasterClockHz * multiplier cycles per
   // host frame). When < 0.25, the PPU preview shows the in-progress frame

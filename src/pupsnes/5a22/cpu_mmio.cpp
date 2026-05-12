@@ -3,6 +3,7 @@
 #include "pupsnes/hw/5a22/cpu.h"
 #include "pupsnes/hw/cartridge.h"
 #include "pupsnes/hw/dma_controller.h"
+#include "pupsnes/hw/joypad.h"
 #include "pupsnes/hw/snes.h"
 #include "pupsnes/hw/sppu/ppu.h"
 #include "pupsnes/hw/systembus.h"
@@ -81,10 +82,36 @@ MmioReadResult CpuMmio::ReadRegister(uint32_t offset, TimeMasterT current_time) 
     // Auto-joypad busy bit stays 0 until the joypad auto-read controller lands.
     return {value, kHvbJoyDrivenMask};
   }
-  if (reg == kJoySer0Offset || reg == kJoySer1Offset ||
-      (reg >= kAutoJoyResultFirst && reg <= kAutoJoyResultLast)) {
-    // No controller model yet — return stable $00 with the full byte driven so
-    // joypad polling reads "no buttons" rather than open-bus garbage.
+  if (reg == kJoySer0Offset) {
+    // Manual serial port for P1. Only bit 0 carries pad data; leave bits 7-1
+    // as open-bus rather than fabricating zeros — real hardware exposes a few
+    // open I/O pins in that window.
+    if (snes_ != nullptr && snes_->joypad != nullptr) {
+      return {snes_->joypad->ReadJoySer0(), 0x01U};
+    }
+    return {0x00U, 0x01U};
+  }
+  if (reg == kJoySer1Offset) {
+    // P2 manual serial port. No P2 controller, so the data line reads 0 with
+    // bit 0 driven; bits 7-1 stay open-bus.
+    if (snes_ != nullptr && snes_->joypad != nullptr) {
+      return {snes_->joypad->ReadJoySer1(), 0x01U};
+    }
+    return {0x00U, 0x01U};
+  }
+  if (reg == kAutoJoyResultFirst) {
+    // $4218 JOY1L — A, X, L, R in bits 7..4, controller-type ID in bits 3..0.
+    const uint8_t value = (snes_ != nullptr && snes_->joypad != nullptr) ? snes_->joypad->ReadJoy1L() : 0x00U;
+    return {value, 0xFFU};
+  }
+  if (reg == kAutoJoyResultFirst + 1U) {
+    // $4219 JOY1H — B, Y, Select, Start, Up, Down, Left, Right.
+    const uint8_t value = (snes_ != nullptr && snes_->joypad != nullptr) ? snes_->joypad->ReadJoy1H() : 0x00U;
+    return {value, 0xFFU};
+  }
+  if (reg > kAutoJoyResultFirst + 1U && reg <= kAutoJoyResultLast) {
+    // $421A-$421F: JOY2/JOY3/JOY4. No P2-P4 controllers; drive zero so polling
+    // doesn't pick up open-bus garbage as phantom button presses.
     return {0x00U, 0xFFU};
   }
   // Stub: other CPU MMIO registers (NMITIMEN, RDNMI, HDMA) are not yet
@@ -138,6 +165,15 @@ void CpuMmio::WriteRegister(uint32_t offset, uint8_t data, TimeMasterT current_t
   if (reg == kHdmaEnOffset) {
     // HDMA enable: shadow only in v1 (HDMA itself not yet implemented).
     hdmaen_ = data;
+    return;
+  }
+  if (reg == kJoySer0Offset) {
+    // $4016 write — bit 0 is the manual-serial strobe for both controller
+    // ports. Bits 7-1 are programmable I/O pins on the controller connector;
+    // ignored here because we don't model the I/O port.
+    if (snes_ != nullptr && snes_->joypad != nullptr) {
+      snes_->joypad->WriteJoySer0(data);
+    }
     return;
   }
   // Stub: writes to other registers are accepted silently so ROMs can poke

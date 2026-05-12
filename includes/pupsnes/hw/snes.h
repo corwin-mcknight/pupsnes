@@ -13,6 +13,7 @@ class CPU;
 class Cartridge;
 class CpuMmio;
 class DmaController;
+class Joypad;
 class Ppu;
 class Scheduler;
 class SystemBus;
@@ -40,6 +41,9 @@ class SNES {
   // Throwaway fake-APU — declared before the PPU so PPU can delegate page-$21
   // APU-port accesses to it. Replace when the real SPC700 core lands.
   std::unique_ptr<ApuStub> apu_stub;
+  // P1 controller. Owns the live button state edited by the debug UI and the
+  // manual-serial shift register CpuMmio dispatches $4016 reads to.
+  std::unique_ptr<Joypad> joypad;
   // The PPU is declared last so it registers after every other Device and
   // gets the highest DeviceIdT. This keeps existing test expectations about
   // device-ID assignment for CPU / cartridge / WRAM / CpuMmio stable.
@@ -71,6 +75,8 @@ class SNES {
   [[nodiscard]] const CpuMmio& GetCpuMmio() const;
   [[nodiscard]] DmaController& GetDma();
   [[nodiscard]] const DmaController& GetDma() const;
+  [[nodiscard]] Joypad& GetJoypad();
+  [[nodiscard]] const Joypad& GetJoypad() const;
   [[nodiscard]] Ppu& GetPpu();
   [[nodiscard]] const Ppu& GetPpu() const;
   [[nodiscard]] ApuStub& GetApuStub();

@@ -57,8 +57,7 @@ TEST_CASE("CpuMmio MEMSEL access is routed as kSameClockMmio via plan", "[unit][
   REQUIRE(plan.access_cycles == 8);
 }
 
-TEST_CASE("HVBJOY ($4212) reports PPU VBlank bit through the bus",
-          "[unit][cpu_mmio]") {
+TEST_CASE("HVBJOY ($4212) reports PPU VBlank bit through the bus", "[unit][cpu_mmio]") {
   SNES snes;
   snes.Reset();
 
@@ -80,8 +79,7 @@ TEST_CASE("HVBJOY ($4212) reports PPU VBlank bit through the bus",
   REQUIRE((result.data & CpuMmio::kHvbJoyHblankMask) == 0);
 }
 
-TEST_CASE("RDNMI ($4210) latches bit 7 at VBlank entry and clears on read",
-          "[unit][cpu_mmio]") {
+TEST_CASE("RDNMI ($4210) latches bit 7 at VBlank entry and clears on read", "[unit][cpu_mmio]") {
   SNES snes;
   snes.Reset();
 
@@ -106,8 +104,7 @@ TEST_CASE("RDNMI ($4210) latches bit 7 at VBlank entry and clears on read",
   REQUIRE((result.data & CpuMmio::kRdNmiVersionMask) == CpuMmio::kRdNmiCpuVersion);
 }
 
-TEST_CASE("HVBJOY ($4212) reports HBlank bit inside the end-of-line pause",
-          "[unit][cpu_mmio]") {
+TEST_CASE("HVBJOY ($4212) reports HBlank bit inside the end-of-line pause", "[unit][cpu_mmio]") {
   SNES snes;
   snes.Reset();
 
@@ -121,8 +118,7 @@ TEST_CASE("HVBJOY ($4212) reports HBlank bit inside the end-of-line pause",
   // open-bus data so we don't assert on them.
 }
 
-TEST_CASE("CpuMmio maps pages $40 and $41 so JOYSER0/JOYSER1 reads route here",
-          "[unit][cpu_mmio]") {
+TEST_CASE("CpuMmio maps pages $40 and $41 so JOYSER0/JOYSER1 reads route here", "[unit][cpu_mmio]") {
   SNES snes;
   // $4016 / $4017 are the legacy serial joypad ports. Without coverage the bus
   // reports these as unmapped and noise floods the bus event log on every NMI.
@@ -134,27 +130,25 @@ TEST_CASE("CpuMmio maps pages $40 and $41 so JOYSER0/JOYSER1 reads route here",
   REQUIRE(debug_4017.device_id == snes.GetCpuMmio().GetDeviceId());
 }
 
-TEST_CASE("JOYSER0/JOYSER1 read $00 with no controller activity",
-          "[unit][cpu_mmio]") {
-  // Without controller emulation the manual serial-read ports must still
-  // return well-defined zero so games' joypad polling code doesn't pick up
-  // open-bus garbage as "buttons pressed".
+TEST_CASE("JOYSER0/JOYSER1 data line reads 0 when no buttons are held", "[unit][cpu_mmio]") {
+  // $4016/$4017 carry pad data on bit 0. Bits 7-1 expose programmable I/O pins
+  // and read as open-bus on a stock controller, so games look at bit 0 only.
+  // With no buttons held, the data line is low.
   SNES snes;
   snes.Reset();
 
   BusPlan plan_a = snes.system_bus->Plan(0x00'4016U, BusAccessType::kRead);
   auto result_a = snes.system_bus->Follow(plan_a, /*current_time=*/0, 0);
   REQUIRE(result_a.outcome == BusPlanOutcome::kInlineComplete);
-  REQUIRE(result_a.data == 0x00U);
+  REQUIRE((result_a.data & 0x01U) == 0x00U);
 
   BusPlan plan_b = snes.system_bus->Plan(0x00'4017U, BusAccessType::kRead);
   auto result_b = snes.system_bus->Follow(plan_b, /*current_time=*/0, 0);
   REQUIRE(result_b.outcome == BusPlanOutcome::kInlineComplete);
-  REQUIRE(result_b.data == 0x00U);
+  REQUIRE((result_b.data & 0x01U) == 0x00U);
 }
 
-TEST_CASE("Auto-joypad result registers $4218-$421F read $00",
-          "[unit][cpu_mmio]") {
+TEST_CASE("Auto-joypad result registers $4218-$421F read $00", "[unit][cpu_mmio]") {
   // Auto-joypad isn't yet driven, so the four 16-bit pad-state registers must
   // read all zeros — no buttons held, no controller present.
   SNES snes;

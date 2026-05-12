@@ -9,6 +9,7 @@
 #include "pupsnes/hw/cartridge.h"
 #include "pupsnes/hw/device.h"
 #include "pupsnes/hw/dma_controller.h"
+#include "pupsnes/hw/joypad.h"
 #include "pupsnes/hw/scheduler.h"
 #include "pupsnes/hw/sppu/ppu.h"
 #include "pupsnes/hw/systembus.h"
@@ -33,6 +34,7 @@ pupsnes::SNES::SNES()
       cpu_mmio(std::make_unique<CpuMmio>(this)),
       dma(std::make_unique<DmaController>(this)),
       apu_stub(std::make_unique<ApuStub>(this)),
+      joypad(std::make_unique<Joypad>(this)),
       ppu(std::make_unique<Ppu>(this)) {
   wram->MapSystemBus(*system_bus);
   cpu_mmio->MapSystemBus(*system_bus);
@@ -65,6 +67,7 @@ void pupsnes::SNES::Reset() {
   cpu_mmio->Reset();
   dma->Reset();
   apu_stub->Reset();
+  joypad->Reset();
   // Reset the PPU before the CPU: the CPU's reset vector fetch may pass
   // through page $21 (cartridge DBs), and the PPU needs its shadow / decoded
   // fields cleared before any bus traffic arrives.
@@ -92,6 +95,9 @@ const pupsnes::CpuMmio& pupsnes::SNES::GetCpuMmio() const { return *cpu_mmio; }
 
 pupsnes::DmaController& pupsnes::SNES::GetDma() { return *dma; }
 const pupsnes::DmaController& pupsnes::SNES::GetDma() const { return *dma; }
+
+pupsnes::Joypad& pupsnes::SNES::GetJoypad() { return *joypad; }
+const pupsnes::Joypad& pupsnes::SNES::GetJoypad() const { return *joypad; }
 
 pupsnes::Ppu& pupsnes::SNES::GetPpu() { return *ppu; }
 const pupsnes::Ppu& pupsnes::SNES::GetPpu() const { return *ppu; }
