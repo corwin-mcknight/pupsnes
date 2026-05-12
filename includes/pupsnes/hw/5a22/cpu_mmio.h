@@ -94,6 +94,10 @@ class CpuMmio : public Device {
   [[nodiscard]] bool GetHIrqEnable() const { return (nmitimen_ & kNmiTimenHIrqEnableMask) != 0U; }
   [[nodiscard]] bool GetAutoJoypadEnable() const { return (nmitimen_ & kNmiTimenAutoJoypadMask) != 0U; }
 
+  // HDMA execution is not yet implemented; expose the $420C shadow so the
+  // debugger can show what the game has programmed.
+  [[nodiscard]] uint8_t GetHdmaEn() const { return hdmaen_; }
+
  private:
   uint8_t memsel_ = 0;
   uint8_t nmitimen_ = 0;

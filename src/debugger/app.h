@@ -80,6 +80,7 @@ struct UiState {
   bool show_stack_panel = true;
   bool show_ppu_panel = true;
   bool show_ppu_viewer_panel = true;
+  bool show_dma_panel = true;
   bool show_trace_panel = true;
   bool show_trace_record_panel = true;
   std::string trace_record_path = "pupsnes-trace.log";

@@ -49,6 +49,7 @@ set(PUPSNES_DEBUGGER_SOURCES
   src/debugger/panels/load_rom_panel.cpp
   src/debugger/panels/memory_panel.cpp
   src/debugger/panels/microop_trace_panel.cpp
+  src/debugger/panels/dma_panel.cpp
   src/debugger/panels/ppu_panel.cpp
   src/debugger/panels/registers_panel.cpp
   src/debugger/panels/scheduler_panel.cpp
@@ -67,6 +68,7 @@ set(PUPSNES_TEST_SOURCES
   src/tests/cpu_mmio_tests.cpp
   src/tests/cpu_opcode_defs_tests.cpp
   src/tests/dma_tests.cpp
+  src/tests/dma_panel_tests.cpp
   src/tests/fastrom_tests.cpp
   src/tests/joypad_tests.cpp
   src/tests/rom_format_tests.cpp

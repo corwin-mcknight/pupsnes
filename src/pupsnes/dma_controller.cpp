@@ -40,14 +40,15 @@ void DmaController::MapSystemBus(SystemBus& bus) {
   for (uint8_t bank_base : {uint8_t{0x00U}, uint8_t{0x80U}}) {
     for (uint8_t bank_offset = 0; bank_offset < 0x40U; ++bank_offset) {
       const uint8_t bank = static_cast<uint8_t>(bank_base + bank_offset);
-      bus.MapPage({bank, 0x43U, GetDeviceId(), 0x4300U,
-                   PageDeviceKind::kSameClockMmio, 8, nullptr, nullptr});
+      bus.MapPage({bank, 0x43U, GetDeviceId(), 0x4300U, PageDeviceKind::kSameClockMmio, 8, nullptr, nullptr});
     }
   }
 }
 
 void DmaController::Reset() {
   channels_.fill({});
+  trigger_write_count_ = 0;
+  last_trigger_mask_ = 0;
 }
 
 std::optional<uint8_t> DmaController::ReadRegisterShadow(uint32_t offset) const {
@@ -70,7 +71,7 @@ std::optional<uint8_t> DmaController::ReadRegisterShadow(uint32_t offset) const 
     case 0x8: return ch.a2a;
     case 0x9: return ch.a2a_high;
     case 0xA: return ch.ntrl;
-    default:  return std::nullopt;  // $43xB-$43xF unused per fullsnes.
+    default: return std::nullopt;  // $43xB-$43xF unused per fullsnes.
   }
 }
 
@@ -109,6 +110,23 @@ void DmaController::WriteRegister(uint32_t offset, uint8_t data, TimeMasterT /*c
 }
 
 TimeMasterT DmaController::Trigger(uint8_t channels_mask, TimeMasterT start_time) {
+  // Snapshot pre-state for the debugger ring before the per-channel loop
+  // mutates anything. Always-on; cost is one struct copy per $420B (rare).
+  TriggerRecord record;
+  record.start_time = start_time;
+  record.channels_mask = channels_mask;
+  for (uint8_t ch = 0; ch < 8U; ++ch) {
+    if ((channels_mask & (1U << ch)) == 0U) continue;
+    const ChannelState& s = channels_[ch];
+    auto& slot = record.per_channel[ch];
+    slot.dmap = s.dmap;
+    slot.bbad = s.bbad;
+    slot.a1b = s.a1b;
+    slot.a1t_start = s.a1t;
+    slot.das_start = s.das;
+    slot.bytes_transferred = (s.das == 0U) ? 0x10000U : static_cast<uint32_t>(s.das);
+  }
+
   TimeMasterT t = start_time + 8U;  // Startup overhead.
 
   for (uint8_t ch = 0; ch < 8U; ++ch) {
@@ -118,8 +136,7 @@ TimeMasterT DmaController::Trigger(uint8_t channels_mask, TimeMasterT start_time
     const bool b_to_a = (s.dmap & 0x80U) != 0U;
     const uint8_t step_mode = static_cast<uint8_t>((s.dmap >> 3U) & 0x03U);
     // step_mode: 0=inc, 1=fixed, 2=dec, 3=fixed.
-    const int32_t step_delta =
-        (step_mode == 0U) ? 1 : (step_mode == 2U ? -1 : 0);
+    const int32_t step_delta = (step_mode == 0U) ? 1 : (step_mode == 2U ? -1 : 0);
     const uint8_t mode = static_cast<uint8_t>(s.dmap & 0x07U);
     const ModePattern& pat = kModePatterns[mode];
     uint8_t pat_index = 0;
@@ -128,10 +145,8 @@ TimeMasterT DmaController::Trigger(uint8_t channels_mask, TimeMasterT start_time
     // when initial DAS is 0; the post-decrement gets it to 0xFFFF, and the
     // loop continues until the natural zero from the wrap.
     do {
-      const uint32_t a_addr =
-          (static_cast<uint32_t>(s.a1b) << 16U) | static_cast<uint32_t>(s.a1t);
-      const uint32_t b_addr = static_cast<uint32_t>(
-          0x2100U | static_cast<uint8_t>(s.bbad + pat.offsets[pat_index]));
+      const uint32_t a_addr = (static_cast<uint32_t>(s.a1b) << 16U) | static_cast<uint32_t>(s.a1t);
+      const uint32_t b_addr = static_cast<uint32_t>(0x2100U | static_cast<uint8_t>(s.bbad + pat.offsets[pat_index]));
 
       if (b_to_a) {
         // B-bus -> A-bus: read from $00:21bb, write to A-bus addr.
@@ -147,14 +162,34 @@ TimeMasterT DmaController::Trigger(uint8_t channels_mask, TimeMasterT start_time
         (void)snes_->system_bus->Follow(wplan, t + 4U, GetDeviceId());
       }
 
-      t += 8U;  // 8 master cycles per byte.
+      t += 8U;                                                                  // 8 master cycles per byte.
       s.a1t = static_cast<uint16_t>(static_cast<int32_t>(s.a1t) + step_delta);  // wraps within bank.
       s.das = static_cast<uint16_t>(s.das - 1U);
       pat_index = static_cast<uint8_t>((pat_index + 1U) % pat.length);
     } while (s.das != 0U);
   }
 
+  record.end_time = t;
+  trigger_ring_[trigger_write_count_ % kTriggerRingCapacity] = record;
+  ++trigger_write_count_;
+  last_trigger_mask_ = channels_mask;
+
   return t;
+}
+
+std::size_t DmaController::GetRecentTriggerCount() const {
+  return (trigger_write_count_ < kTriggerRingCapacity) ? trigger_write_count_ : kTriggerRingCapacity;
+}
+
+const DmaController::TriggerRecord& DmaController::GetRecentTrigger(std::size_t index) const {
+  // Oldest-first: when the ring has wrapped, the oldest entry sits at
+  // (write_count_ % capacity); otherwise it's at slot 0.
+  const std::size_t size = GetRecentTriggerCount();
+  const std::size_t start =
+      (trigger_write_count_ >= kTriggerRingCapacity) ? (trigger_write_count_ % kTriggerRingCapacity) : 0;
+  // Defensive clamp keeps a stray index in-bounds rather than UB.
+  const std::size_t clamped = (index < size) ? index : (size > 0 ? size - 1 : 0);
+  return trigger_ring_[(start + clamped) % kTriggerRingCapacity];
 }
 
 std::optional<uint8_t> DmaController::HandleDebugRead(uint32_t offset) const {
