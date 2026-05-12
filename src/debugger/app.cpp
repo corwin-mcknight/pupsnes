@@ -474,6 +474,7 @@ void DebuggerApp::RenderMenuBar() {
       ImGui::MenuItem("Memory", nullptr, &ui_state_.show_memory_panel);
       ImGui::MenuItem("Stack", nullptr, &ui_state_.show_stack_panel);
       ImGui::MenuItem("PPU", nullptr, &ui_state_.show_ppu_panel);
+      ImGui::MenuItem("PPU Viewer", nullptr, &ui_state_.show_ppu_viewer_panel);
       ImGui::MenuItem("Trace", nullptr, &ui_state_.show_trace_panel);
       ImGui::MenuItem("Trace Record", nullptr, &ui_state_.show_trace_record_panel);
       ImGui::MenuItem("Micro-op Trace", nullptr, &ui_state_.show_microop_trace_panel);
@@ -564,12 +565,13 @@ struct StringField {
   std::string UiState::* member;
 };
 
-constexpr std::array<BoolField, 13> kBoolFields{{
+constexpr std::array<BoolField, 14> kBoolFields{{
     {"show_registers_panel", &UiState::show_registers_panel},
     {"show_disasm_panel", &UiState::show_disasm_panel},
     {"show_memory_panel", &UiState::show_memory_panel},
     {"show_stack_panel", &UiState::show_stack_panel},
     {"show_ppu_panel", &UiState::show_ppu_panel},
+    {"show_ppu_viewer_panel", &UiState::show_ppu_viewer_panel},
     {"show_trace_panel", &UiState::show_trace_panel},
     {"show_trace_record_panel", &UiState::show_trace_record_panel},
     {"trace_record_reset_on_start", &UiState::trace_record_reset_on_start},
@@ -681,6 +683,7 @@ void DebuggerApp::Render() {
   RenderMemoryPanel(*this);
   RenderStackPanel(*this);
   RenderPpuPanel(*this);
+  RenderPpuViewerPanel(*this);
   RenderTracePanel(*this);
   RenderTraceRecordPanel(*this);
   RenderMicroOpTracePanel(*this);

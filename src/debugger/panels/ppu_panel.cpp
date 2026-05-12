@@ -1,8 +1,10 @@
 #include <OpenGL/gl3.h>
 
 #include <array>
+#include <cstdarg>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 
 #include "debugger/app.h"
 #include "imgui.h"
@@ -14,6 +16,9 @@
 namespace pupsnes::debugger {
 
 namespace {
+
+constexpr ImGuiTableFlags kKvTableFlags =
+    ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingFixedFit;
 
 const char* VmainStepLabel(uint8_t vmain) {
   switch (vmain & sppu::regs::kVmainStepMask) {
@@ -35,6 +40,54 @@ const char* VmainTranslateLabel(uint8_t vmain) {
   }
 }
 
+const char* BgModeLabel(uint8_t mode) {
+  switch (mode & 0x07U) {
+    case 0: return "0  (4x 2bpp)";
+    case 1: return "1  (BG1/2 4bpp, BG3 2bpp)";
+    case 2: return "2  (BG1/2 4bpp, offset-per-tile)";
+    case 3: return "3  (BG1 8bpp, BG2 4bpp)";
+    case 4: return "4  (BG1 8bpp, BG2 2bpp, offset)";
+    case 5: return "5  (BG1 4bpp, BG2 2bpp, hi-res)";
+    case 6: return "6  (BG1 4bpp, hi-res + offset)";
+    case 7: return "7  (BG1 8bpp, rotation/scaling)";
+    default: return "?";
+  }
+}
+
+const char* BgLayoutLabel(uint8_t layout) {
+  switch (layout & 0x03U) {
+    case 0: return "32x32";
+    case 1: return "64x32";
+    case 2: return "32x64";
+    case 3: return "64x64";
+    default: return "?";
+  }
+}
+
+const char* ObjSizeLabel(uint8_t select) {
+  switch (select & 0x07U) {
+    case 0: return "8x8 / 16x16";
+    case 1: return "8x8 / 32x32";
+    case 2: return "8x8 / 64x64";
+    case 3: return "16x16 / 32x32";
+    case 4: return "16x16 / 64x64";
+    case 5: return "32x32 / 64x64";
+    case 6: return "16x32 / 32x64";
+    case 7: return "16x32 / 32x32";
+    default: return "?";
+  }
+}
+
+const char* MathRegionLabel(uint8_t value) {
+  switch (value & 0x03U) {
+    case 0: return "always";
+    case 1: return "inside math-window";
+    case 2: return "outside math-window";
+    case 3: return "never";
+    default: return "?";
+  }
+}
+
 void TableRowText(const char* name, const char* value) {
   ImGui::TableNextRow();
   ImGui::TableSetColumnIndex(0);
@@ -43,59 +96,224 @@ void TableRowText(const char* name, const char* value) {
   ImGui::TextUnformatted(value);
 }
 
-void DrawRegisterTable(const Ppu& ppu) {
-  constexpr ImGuiTableFlags kFlags =
-      ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingFixedFit;
-  if (!ImGui::BeginTable("ppu_regs", 2, kFlags)) {
-    return;
+__attribute__((format(printf, 2, 3))) void TableRowFmt(const char* name, const char* fmt, ...) {
+  ImGui::TableNextRow();
+  ImGui::TableSetColumnIndex(0);
+  ImGui::TextUnformatted(name);
+  ImGui::TableSetColumnIndex(1);
+  va_list args;
+  va_start(args, fmt);
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wformat-nonliteral"
+  ImGui::TextV(fmt, args);
+#pragma clang diagnostic pop
+  va_end(args);
+}
+
+void AppendLayerMask(char* buf, std::size_t cap, uint8_t mask) {
+  const char* names[5] = {"BG1", "BG2", "BG3", "BG4", "OBJ"};
+  bool first = true;
+  buf[0] = '\0';
+  std::size_t len = 0;
+  for (int i = 0; i < 5; ++i) {
+    if ((mask & (1U << i)) == 0U) continue;
+    const int n = std::snprintf(buf + len, cap - len, "%s%s", first ? "" : " ", names[i]);
+    if (n <= 0) break;
+    len += static_cast<std::size_t>(n);
+    first = false;
+    if (len >= cap) break;
   }
+  if (first) {
+    std::snprintf(buf, cap, "(none)");
+  }
+}
+
+void DrawDisplaySection(Ppu& ppu) {
+  if (!ImGui::BeginTable("ppu_display", 2, kKvTableFlags)) return;
   ImGui::TableSetupColumn("Field");
   ImGui::TableSetupColumn("Value");
 
+  TableRowText("BG mode", BgModeLabel(ppu.GetBgMode()));
+  TableRowText("BG3 priority (Mode 1)", ppu.GetBg3Priority() ? "yes" : "no");
   TableRowText("Forced blank", ppu.IsForcedBlank() ? "yes" : "no");
+  TableRowFmt("Brightness", "%u / 15", static_cast<unsigned>(ppu.GetBrightness()));
+  TableRowText("Overscan (SETINI.2)", ppu.IsOverscan() ? "239 lines" : "224 lines");
 
-  ImGui::TableNextRow();
-  ImGui::TableSetColumnIndex(0);
-  ImGui::TextUnformatted("Brightness");
-  ImGui::TableSetColumnIndex(1);
-  ImGui::Text("%u / 15", static_cast<unsigned>(ppu.GetBrightness()));
+  char main_buf[32];
+  char sub_buf[32];
+  AppendLayerMask(main_buf, sizeof(main_buf), ppu.GetMainScreenLayers());
+  AppendLayerMask(sub_buf, sizeof(sub_buf), ppu.GetSubScreenLayers());
+  TableRowFmt("Main screen (TM)", "%02X  %s", static_cast<unsigned>(ppu.GetMainScreenLayers()), main_buf);
+  TableRowFmt("Sub screen  (TS)", "%02X  %s", static_cast<unsigned>(ppu.GetSubScreenLayers()), sub_buf);
+  ImGui::EndTable();
 
-  TableRowText("Overscan", ppu.IsOverscan() ? "239 lines" : "224 lines");
+  bool force_overscan = ppu.GetForceOverscanDraw();
+  if (ImGui::Checkbox("Force overscan draw (239 lines)", &force_overscan)) {
+    ppu.SetForceOverscanDraw(force_overscan);
+  }
+}
 
-  ImGui::TableNextRow();
-  ImGui::TableSetColumnIndex(0);
-  ImGui::TextUnformatted("Dot (H,V)");
-  ImGui::TableSetColumnIndex(1);
-  ImGui::Text("(%u, %u)", ppu.GetDotH(), ppu.GetDotV());
+void DrawBackgroundsSection(const Ppu& ppu) {
+  constexpr ImGuiTableFlags kFlags = ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_BordersInnerV |
+                                     ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingFixedFit;
+  if (!ImGui::BeginTable("ppu_bgs", 7, kFlags)) return;
+  ImGui::TableSetupColumn("BG");
+  ImGui::TableSetupColumn("Tile");
+  ImGui::TableSetupColumn("Layout");
+  ImGui::TableSetupColumn("Tilemap");
+  ImGui::TableSetupColumn("Chars");
+  ImGui::TableSetupColumn("HOfs");
+  ImGui::TableSetupColumn("VOfs");
+  ImGui::TableHeadersRow();
 
-  TableRowText("Field", ppu.GetField() ? "odd" : "even");
+  for (uint8_t bg = 0; bg < 4U; ++bg) {
+    ImGui::TableNextRow();
+    ImGui::TableSetColumnIndex(0);
+    ImGui::Text("BG%u", static_cast<unsigned>(bg + 1U));
+    ImGui::TableSetColumnIndex(1);
+    ImGui::TextUnformatted(ppu.GetBgTile16x16(bg) ? "16x16" : "8x8");
+    ImGui::TableSetColumnIndex(2);
+    ImGui::TextUnformatted(BgLayoutLabel(ppu.GetBgTilemapLayout(bg)));
+    ImGui::TableSetColumnIndex(3);
+    ImGui::Text("$%04X", static_cast<unsigned>(ppu.GetBgTilemapWordBase(bg)));
+    ImGui::TableSetColumnIndex(4);
+    ImGui::Text("$%04X", static_cast<unsigned>(ppu.GetBgCharWordBase(bg)));
+    ImGui::TableSetColumnIndex(5);
+    ImGui::Text("%u", static_cast<unsigned>(ppu.GetBgHofs(bg)));
+    ImGui::TableSetColumnIndex(6);
+    ImGui::Text("%u", static_cast<unsigned>(ppu.GetBgVofs(bg)));
+  }
+  ImGui::EndTable();
+}
 
-  ImGui::TableNextRow();
-  ImGui::TableSetColumnIndex(0);
-  ImGui::TextUnformatted("CGADD");
-  ImGui::TableSetColumnIndex(1);
-  ImGui::Text("0x%02X", static_cast<unsigned>(ppu.GetShadow(sppu::regs::kCgAdd)));
+void DrawSpritesSection(const Ppu& ppu) {
+  if (!ImGui::BeginTable("ppu_obj", 2, kKvTableFlags)) return;
+  ImGui::TableSetupColumn("Field");
+  ImGui::TableSetupColumn("Value");
 
-  ImGui::TableNextRow();
-  ImGui::TableSetColumnIndex(0);
-  ImGui::TextUnformatted("OAMADD (raw)");
-  ImGui::TableSetColumnIndex(1);
-  ImGui::Text("H=0x%02X L=0x%02X", static_cast<unsigned>(ppu.GetShadow(sppu::regs::kOamAddH)),
-              static_cast<unsigned>(ppu.GetShadow(sppu::regs::kOamAddL)));
+  const uint8_t obsel = ppu.GetShadow(sppu::regs::kObsel);
+  TableRowText("OBJ size pair", ObjSizeLabel(ppu.GetObjSizeSelect()));
+  TableRowFmt("OBSEL.name-select", "%u  (gap = %u × 4K words)",
+              static_cast<unsigned>((obsel & sppu::regs::kObselNameSelectMask) >> sppu::regs::kObselNameSelectShift),
+              static_cast<unsigned>((obsel & sppu::regs::kObselNameSelectMask) >> sppu::regs::kObselNameSelectShift));
+  TableRowFmt("OBSEL.name-base", "%u  (×8K words)",
+              static_cast<unsigned>(obsel & sppu::regs::kObselNameBaseMask));
+  TableRowFmt("Region 0 word base", "$%04X", static_cast<unsigned>(ppu.GetObjRegion0Word()));
+  TableRowFmt("Region 1 word base", "$%04X", static_cast<unsigned>(ppu.GetObjRegion1Word()));
+  TableRowFmt("OAM byte address", "$%03X (reload $%03X)", static_cast<unsigned>(ppu.GetOamByteAddr()),
+              static_cast<unsigned>(ppu.GetOamByteAddrReload()));
+  TableRowText("Priority rotation", ppu.GetOamPriorityRotation() ? "yes" : "no");
+  ImGui::EndTable();
+}
 
-  ImGui::TableNextRow();
-  ImGui::TableSetColumnIndex(0);
-  ImGui::TextUnformatted("VMADD");
-  ImGui::TableSetColumnIndex(1);
-  ImGui::Text("0x%02X%02X", static_cast<unsigned>(ppu.GetShadow(sppu::regs::kVmAddH)),
-              static_cast<unsigned>(ppu.GetShadow(sppu::regs::kVmAddL)));
+void DrawVramSection(const Ppu& ppu) {
+  if (!ImGui::BeginTable("ppu_vram", 2, kKvTableFlags)) return;
+  ImGui::TableSetupColumn("Field");
+  ImGui::TableSetupColumn("Value");
 
-  const uint8_t vmain = ppu.GetShadow(sppu::regs::kVmain);
+  TableRowFmt("VMADD (word)", "$%04X", static_cast<unsigned>(ppu.GetVmadd()));
+  const uint8_t vmain = ppu.GetVmain();
+  TableRowFmt("VMAIN raw", "$%02X", static_cast<unsigned>(vmain));
   TableRowText("VMAIN.step", VmainStepLabel(vmain));
   TableRowText("VMAIN.translate", VmainTranslateLabel(vmain));
-  TableRowText("VMAIN.inc-on", (vmain & sppu::regs::kVmainIncrementOnHighMask) != 0U ? "$2119 (high)" : "$2118 (low)");
-
+  TableRowText("VMAIN.inc-on",
+               (vmain & sppu::regs::kVmainIncrementOnHighMask) != 0U ? "$2119 (high)" : "$2118 (low)");
+  TableRowFmt("Prefetch word", "$%04X", static_cast<unsigned>(ppu.GetVramPrefetch()));
+  TableRowFmt("VRAM size", "%zu bytes", sppu::regs::kVramSize);
   ImGui::EndTable();
+}
+
+void DrawCgramPortSection(const Ppu& ppu) {
+  if (!ImGui::BeginTable("ppu_cgport", 2, kKvTableFlags)) return;
+  ImGui::TableSetupColumn("Field");
+  ImGui::TableSetupColumn("Value");
+
+  TableRowFmt("CGADD (word)", "$%02X", static_cast<unsigned>(ppu.GetCgadd()));
+  TableRowFmt("Write latch", "%s (data $%02X)", ppu.GetCgramWriteLatchHigh() ? "high pending" : "low next",
+              static_cast<unsigned>(ppu.GetCgramWriteLatchData()));
+  TableRowText("Read latch", ppu.GetCgramReadLatchHigh() ? "high pending" : "low next");
+  ImGui::EndTable();
+}
+
+void DrawColorMathSection(const Ppu& ppu) {
+  if (!ImGui::BeginTable("ppu_math", 2, kKvTableFlags)) return;
+  ImGui::TableSetupColumn("Field");
+  ImGui::TableSetupColumn("Value");
+
+  const uint8_t cgwsel = ppu.GetCgwsel();
+  const uint8_t cgadsub = ppu.GetCgadsub();
+  TableRowText("CGWSEL.direct color", (cgwsel & sppu::regs::kCgwselDirectColorMask) != 0U ? "yes" : "no");
+  TableRowText("CGWSEL.sub BG/OBJ", (cgwsel & sppu::regs::kCgwselSubScreenEnableMask) != 0U ? "enabled"
+                                                                                            : "fixed only");
+  TableRowText("CGWSEL.math region",
+               MathRegionLabel((cgwsel & sppu::regs::kCgwselMathEnableRegionMask) >>
+                               sppu::regs::kCgwselMathEnableRegionShift));
+  TableRowText("CGWSEL.force-black region",
+               MathRegionLabel((cgwsel & sppu::regs::kCgwselForceMainBlackRegionMask) >>
+                               sppu::regs::kCgwselForceMainBlackRegionShift));
+
+  char enables[48];
+  std::snprintf(enables, sizeof(enables), "%s%s%s%s%s%s",
+                (cgadsub & sppu::regs::kCgadsubBg1Mask) != 0U ? "BG1 " : "",
+                (cgadsub & sppu::regs::kCgadsubBg2Mask) != 0U ? "BG2 " : "",
+                (cgadsub & sppu::regs::kCgadsubBg3Mask) != 0U ? "BG3 " : "",
+                (cgadsub & sppu::regs::kCgadsubBg4Mask) != 0U ? "BG4 " : "",
+                (cgadsub & sppu::regs::kCgadsubObjMask) != 0U ? "OBJ " : "",
+                (cgadsub & sppu::regs::kCgadsubBackdropMask) != 0U ? "BD" : "");
+  TableRowFmt("CGADSUB enables", "%s", enables[0] != '\0' ? enables : "(none)");
+  TableRowText("CGADSUB.op",
+               (cgadsub & sppu::regs::kCgadsubSubtractMask) != 0U ? "subtract" : "add");
+  TableRowText("CGADSUB.half",
+               (cgadsub & sppu::regs::kCgadsubHalfMask) != 0U ? "yes" : "no");
+
+  const uint16_t fixed_bgr = static_cast<uint16_t>(ppu.GetColdataR() | (ppu.GetColdataG() << 5U) |
+                                                    (ppu.GetColdataB() << 10U));
+  TableRowFmt("COLDATA latches", "R=%u G=%u B=%u", static_cast<unsigned>(ppu.GetColdataR()),
+              static_cast<unsigned>(ppu.GetColdataG()), static_cast<unsigned>(ppu.GetColdataB()));
+  TableRowFmt("Fixed BGR (assembled)", "$%04X", static_cast<unsigned>(fixed_bgr));
+  ImGui::EndTable();
+}
+
+void DrawTimingSection(const Ppu& ppu, uint32_t pending_writes) {
+  if (!ImGui::BeginTable("ppu_timing", 2, kKvTableFlags)) return;
+  ImGui::TableSetupColumn("Field");
+  ImGui::TableSetupColumn("Value");
+
+  TableRowFmt("Dot (H, V)", "(%u, %u)", ppu.GetDotH(), ppu.GetDotV());
+  TableRowText("Field", ppu.GetField() ? "odd" : "even");
+  TableRowText("VBlank NMI latch", ppu.PeekVblankNmiFlag() ? "set" : "clear");
+  TableRowText("/NMI line", ppu.PeekNmiLine() ? "low (asserted)" : "high");
+  TableRowFmt("Pending writes", "%u", pending_writes);
+  ImGui::EndTable();
+}
+
+void DrawCgramPaletteSection(const Ppu& ppu) {
+  const uint16_t* cgram = ppu.GetCgram();
+  if (cgram == nullptr) {
+    ImGui::TextDisabled("(CGRAM unavailable)");
+    return;
+  }
+  const float swatch = ImGui::GetFontSize() + 4.0F;
+  ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(1.0F, 1.0F));
+  for (int i = 0; i < 256; ++i) {
+    if ((i & 0x0F) != 0) ImGui::SameLine();
+    const uint16_t c = cgram[i];
+    const float r = static_cast<float>((c >> 0U) & 0x1FU) / 31.0F;
+    const float g = static_cast<float>((c >> 5U) & 0x1FU) / 31.0F;
+    const float b = static_cast<float>((c >> 10U) & 0x1FU) / 31.0F;
+    char id[16];
+    std::snprintf(id, sizeof(id), "##cg%d", i);
+    ImGui::ColorButton(id, ImVec4(r, g, b, 1.0F),
+                       ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoDragDrop |
+                           ImGuiColorEditFlags_NoBorder,
+                       ImVec2(swatch, swatch));
+    if (ImGui::IsItemHovered()) {
+      ImGui::SetTooltip("[$%02X]  $%04X  R=%u G=%u B=%u", static_cast<unsigned>(i),
+                        static_cast<unsigned>(c), static_cast<unsigned>((c >> 0U) & 0x1FU),
+                        static_cast<unsigned>((c >> 5U) & 0x1FU), static_cast<unsigned>((c >> 10U) & 0x1FU));
+    }
+  }
+  ImGui::PopStyleVar();
 }
 
 // GL texture carrying the last uploaded PPU front buffer. Lazily created,
@@ -266,7 +484,7 @@ void UploadBackOverlayToTexture(const Ppu& ppu) {
   glPixelStorei(GL_UNPACK_ALIGNMENT, previous_unpack_alignment);
 }
 
-void DrawFramebufferPreview(const Ppu& ppu, bool show_in_progress, const char* overlay_note) {
+void DrawFittedFramebuffer(const Ppu& ppu, bool show_in_progress) {
   const FrameBufferView view = ppu.BuildFrontView();
   if (view.pixels == nullptr || view.width == 0 || view.height == 0) {
     ImGui::TextDisabled("(no frame yet)");
@@ -284,27 +502,32 @@ void DrawFramebufferPreview(const Ppu& ppu, bool show_in_progress, const char* o
     return;
   }
 
-  // Preserve aspect; don't down-scale below 1× so pixels stay distinct.
+  // Fit aspect within the available rect (both H and V), then center.
   const float aspect = static_cast<float>(view.width) / static_cast<float>(view.height);
-  const float avail_w = ImGui::GetContentRegionAvail().x;
-  const float w = (avail_w > static_cast<float>(view.width)) ? avail_w : static_cast<float>(view.width);
-  const float h = w / aspect;
+  const ImVec2 avail = ImGui::GetContentRegionAvail();
+  if (avail.x <= 0.0F || avail.y <= 0.0F) {
+    return;
+  }
+  float w = avail.x;
+  float h = w / aspect;
+  if (h > avail.y) {
+    h = avail.y;
+    w = h * aspect;
+  }
+  const ImVec2 origin = ImGui::GetCursorPos();
+  ImGui::SetCursorPos(ImVec2(origin.x + (avail.x - w) * 0.5F, origin.y + (avail.y - h) * 0.5F));
 
-  const ImVec2 cursor = ImGui::GetCursorScreenPos();
+  const ImVec2 cursor_screen = ImGui::GetCursorScreenPos();
   ImGui::Image(static_cast<ImTextureID>(static_cast<intptr_t>(front.id)), ImVec2(w, h));
 
   if (show_in_progress) {
     UploadBackOverlayToTexture(ppu);
     const PreviewTexture& overlay = GetOverlayTexture();
     if (overlay.id != 0) {
-      ImGui::GetWindowDrawList()->AddImage(static_cast<ImTextureID>(static_cast<intptr_t>(overlay.id)), cursor,
-                                           ImVec2(cursor.x + w, cursor.y + h));
+      ImGui::GetWindowDrawList()->AddImage(static_cast<ImTextureID>(static_cast<intptr_t>(overlay.id)), cursor_screen,
+                                           ImVec2(cursor_screen.x + w, cursor_screen.y + h));
     }
   }
-
-  ImGui::Text("%ux%u (%s)%s", view.width, view.height,
-              ppu.IsOverscan() || ppu.GetForceOverscanDraw() ? "overscan" : "standard",
-              show_in_progress ? overlay_note : "");
 }
 
 }  // namespace
@@ -315,23 +538,50 @@ void RenderPpuPanel(DebuggerApp& app) {
 
   Ppu& ppu = app.GetSnes().GetPpu();
 
-  if (ImGui::CollapsingHeader("State", ImGuiTreeNodeFlags_DefaultOpen)) {
-    DrawRegisterTable(ppu);
-    ImGui::Text("Pending writes: %u", ppu.GetPendingWriteCount());
+  if (ImGui::CollapsingHeader("Display", ImGuiTreeNodeFlags_DefaultOpen)) {
+    DrawDisplaySection(ppu);
+  }
+  if (ImGui::CollapsingHeader("Backgrounds", ImGuiTreeNodeFlags_DefaultOpen)) {
+    DrawBackgroundsSection(ppu);
+  }
+  if (ImGui::CollapsingHeader("Sprites (OBJ)")) {
+    DrawSpritesSection(ppu);
+  }
+  if (ImGui::CollapsingHeader("VRAM port")) {
+    DrawVramSection(ppu);
+  }
+  if (ImGui::CollapsingHeader("CGRAM port")) {
+    DrawCgramPortSection(ppu);
+  }
+  if (ImGui::CollapsingHeader("Color math")) {
+    DrawColorMathSection(ppu);
+  }
+  if (ImGui::CollapsingHeader("Timing")) {
+    DrawTimingSection(ppu, ppu.GetPendingWriteCount());
+  }
+  if (ImGui::CollapsingHeader("CGRAM palette")) {
+    DrawCgramPaletteSection(ppu);
+  }
+}
 
-    bool force_overscan = ppu.GetForceOverscanDraw();
-    if (ImGui::Checkbox("Force overscan draw (239 lines)", &force_overscan)) {
-      ppu.SetForceOverscanDraw(force_overscan);
-    }
+void RenderPpuViewerPanel(DebuggerApp& app) {
+  if (!app.GetUiState().show_ppu_viewer_panel) {
+    return;
+  }
+  // Drop padding so the framebuffer fills edge-to-edge.
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0F, 0.0F));
+  const bool open = ImGui::Begin("PPU Viewer", &app.GetUiState().show_ppu_viewer_panel);
+  ImGui::PopStyleVar();
+  if (!open) {
+    ImGui::End();
+    return;
   }
 
-  if (ImGui::CollapsingHeader("Framebuffer", ImGuiTreeNodeFlags_DefaultOpen)) {
-    const bool paused = app.GetRunControl().GetState() == RunState::kPaused;
-    const bool slow_mo = app.GetUiState().speed_multiplier < 0.25F;
-    const char* note = paused ? "  [paused: previous frame dimmed; in-progress highlighted]"
-                              : "  [slow-mo: in-progress frame overlay]";
-    DrawFramebufferPreview(ppu, paused || slow_mo, note);
-  }
+  const Ppu& ppu = app.GetSnes().GetPpu();
+  const bool paused = app.GetRunControl().GetState() == RunState::kPaused;
+  const bool slow_mo = app.GetUiState().speed_multiplier < 0.25F;
+  DrawFittedFramebuffer(ppu, paused || slow_mo);
+  ImGui::End();
 }
 
 }  // namespace pupsnes::debugger

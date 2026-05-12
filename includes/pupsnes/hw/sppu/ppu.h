@@ -143,6 +143,30 @@ class Ppu : public Device {
   [[nodiscard]] uint8_t GetColdataR() const { return coldata_r_; }
   [[nodiscard]] uint8_t GetColdataG() const { return coldata_g_; }
   [[nodiscard]] uint8_t GetColdataB() const { return coldata_b_; }
+  [[nodiscard]] uint8_t GetBgMode() const { return bg_mode_; }
+  [[nodiscard]] bool GetBg3Priority() const { return bg3_priority_; }
+  [[nodiscard]] bool GetBgTile16x16(uint8_t bg) const { return bg < 4U ? bg_tile_16x16_[bg] : false; }
+  [[nodiscard]] uint8_t GetBgTilemapLayout(uint8_t bg) const { return bg < 4U ? bg_tilemap_layout_[bg] : uint8_t{0}; }
+  [[nodiscard]] uint16_t GetBgTilemapWordBase(uint8_t bg) const {
+    return bg < 4U ? bg_tilemap_word_base_[bg] : uint16_t{0};
+  }
+  [[nodiscard]] uint16_t GetBgCharWordBase(uint8_t bg) const {
+    return bg < 4U ? bg_char_word_base_[bg] : uint16_t{0};
+  }
+  [[nodiscard]] uint8_t GetObjSizeSelect() const { return obj_size_select_; }
+  [[nodiscard]] uint16_t GetObjRegion0Word() const { return obj_region0_word_; }
+  [[nodiscard]] uint16_t GetObjRegion1Word() const { return obj_region1_word_; }
+  [[nodiscard]] uint16_t GetVmadd() const { return vmadd_; }
+  [[nodiscard]] uint8_t GetVmain() const { return vmain_; }
+  [[nodiscard]] uint16_t GetVramPrefetch() const { return vram_prefetch_; }
+  [[nodiscard]] uint16_t GetOamByteAddr() const { return oam_byte_addr_; }
+  [[nodiscard]] uint16_t GetOamByteAddrReload() const { return oam_byte_addr_reload_; }
+  [[nodiscard]] bool GetOamPriorityRotation() const { return oam_priority_rotation_; }
+  [[nodiscard]] uint8_t GetCgadd() const { return cgadd_; }
+  [[nodiscard]] bool GetCgramWriteLatchHigh() const { return cgram_write_latch_high_; }
+  [[nodiscard]] uint8_t GetCgramWriteLatchData() const { return cgram_write_latch_data_; }
+  [[nodiscard]] bool GetCgramReadLatchHigh() const { return cgram_read_latch_high_; }
+  [[nodiscard]] const uint16_t* GetCgram() const { return cgram_->data(); }
 
   // Pure timing helpers — exposed for tests and the debugger time display.
   // NTSC non-interlace only in v1; PAL / interlaced long-line support lands

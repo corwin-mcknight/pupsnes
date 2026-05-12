@@ -10,6 +10,7 @@ void RenderDisasmPanel(DebuggerApp& app);
 void RenderMemoryPanel(DebuggerApp& app);
 void RenderStackPanel(DebuggerApp& app);
 void RenderPpuPanel(DebuggerApp& app);
+void RenderPpuViewerPanel(DebuggerApp& app);
 void RenderTracePanel(DebuggerApp& app);
 void RenderTraceRecordPanel(DebuggerApp& app);
 void RenderMicroOpTracePanel(DebuggerApp& app);
