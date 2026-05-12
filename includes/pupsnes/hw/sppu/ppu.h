@@ -241,16 +241,53 @@ class Ppu : public Device {
   };
   [[nodiscard]] BgPixel FetchBgPixel(uint8_t bg, uint8_t bpp, uint32_t screen_x, uint32_t screen_y) const;
 
-  // OBJ pixel at screen-space (x, y). Walks all 128 OAM entries; lowest OAM
-  // index with non-transparent color wins. `cgram_index` is absolute (already
-  // in the OBJ palette region $80-$FF). The 32-OBJ / 34-tile per-line cap is
-  // not enforced.
+  // One BG's cached 8-pixel column. The 4 plane bytes are pre-selected for
+  // the current row of the current (sub-)tile; pixel extraction only reads
+  // the bit at column position within these bytes. Cleared at scanline
+  // boundaries; invalidated mid-line via `bg_row_dirty_[bg]` when a register
+  // write changes the data the cache holds (VRAM write, scroll, tilemap base,
+  // tile size mode, etc.).
+  struct BgRowCache {
+    int32_t key = -1;  // (eff_x >> 3) when valid; -1 forces refetch
+    uint8_t plane0 = 0;
+    uint8_t plane1 = 0;
+    uint8_t plane2 = 0;
+    uint8_t plane3 = 0;
+    uint8_t palette_group = 0;
+    bool priority = false;
+    bool hflip = false;
+    bool is_2bpp = false;  // remembered so extraction skips planes 2/3 in 2bpp
+  };
+
+  // OBJ pixel at screen-space (x, y). Iterates the per-scanline OAM evaluation
+  // list — built lazily by EvaluateObjLine the first time a new scanline asks
+  // for an OBJ pixel — so the 128-sprite walk happens once per line rather
+  // than once per dot. Lowest OAM index with non-transparent color wins.
+  // `cgram_index` is absolute (already in the OBJ palette region $80-$FF).
+  // The hardware 32-OBJ-per-line cap IS enforced (kObjLineCap).
   struct ObjPixel {
     uint8_t cgram_index;
     bool transparent;
     uint8_t priority;
   };
   [[nodiscard]] ObjPixel FetchObjPixel(uint32_t screen_x, uint32_t screen_y) const;
+
+  // One sprite that overlaps the line cached in `obj_line_list_`. Stores the
+  // per-line constants so per-pixel evaluation just iterates X-ranges + fetches
+  // plane bytes. y_internal is `(screen_y - y_raw) & 0xFF` clipped to height —
+  // already known to fall inside the sprite's vertical extent.
+  struct ObjLineEntry {
+    int16_t x;          // signed 9-bit X origin (sign-extended into int16_t)
+    uint8_t y_internal;
+    uint8_t width;
+    uint8_t height;
+    uint16_t base_tile;  // 9-bit tile number (bit 8 = region select)
+    uint8_t attr;        // OAM byte 3: hflip/vflip/palette/priority
+  };
+  static constexpr std::size_t kObjLineCap = 32;
+  // (Re)build `obj_line_list_` for the given visible scanline. Called lazily
+  // by FetchObjPixel when obj_line_v_ doesn't match the current line.
+  void EvaluateObjLine(uint32_t screen_y) const;
 
   // Output of a single-screen (main or sub) pixel resolution. `layer_id` runs
   // 0..3 = BG1..BG4, 4 = OBJ, 5 = backdrop (no opaque layer rendered).
@@ -364,6 +401,24 @@ class Ppu : public Device {
   // Range: [0, DotCost(h_, v_, field_)). Lets one dot span multiple calls
   // when target lands mid-dot — no overshoot permitted.
   TimeMasterDeltaT partial_dot_cycles_ = 0;
+
+  // --- Per-scanline OAM evaluation cache ---
+  // `obj_line_v_` is the screen_y the cache was built for (or -1 to force a
+  // rebuild). `obj_line_count_` is how many entries are populated, capped at
+  // kObjLineCap. Mutable so FetchObjPixel can stay const while lazily
+  // rebuilding — the eval result is pure derived state.
+  mutable std::array<ObjLineEntry, kObjLineCap> obj_line_list_{};
+  mutable uint8_t obj_line_count_ = 0;
+  mutable int32_t obj_line_v_ = -1;
+
+  // --- Per-BG row cache ---
+  // Each FetchBgPixel call serves 8 consecutive pixels from a single decoded
+  // tilemap entry. The cache reuses that decode while pixels stay inside the
+  // same 8-pixel column; bg_row_dirty_ flags register writes that change the
+  // underlying bytes (VRAM, scroll, BGnSC/NBA, BGMODE) and force the next
+  // fetch to refresh. Mutable for the same reason as the OAM cache.
+  mutable std::array<BgRowCache, 4> bg_row_cache_{};
+  mutable std::array<bool, 4> bg_row_dirty_{};
 
   // --- Backing storage ---
   // Heap-allocated via unique_ptr<array> to keep the parent SNES object small

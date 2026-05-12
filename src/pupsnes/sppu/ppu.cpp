@@ -109,6 +109,14 @@ void Ppu::Reset() {
   pending_writes_cursor_ = 0;
   partial_dot_cycles_ = 0;
 
+  // Per-scanline OAM cache: -1 sentinel forces a rebuild on the next OBJ fetch.
+  obj_line_v_ = -1;
+  obj_line_count_ = 0;
+
+  // Per-BG row cache: -1 sentinel + dirty=true forces a refetch.
+  for (auto& c : bg_row_cache_) c = {};
+  bg_row_dirty_.fill(true);
+
   vblank_nmi_flag_ = false;
 
   vram_->fill(0);
@@ -401,6 +409,11 @@ void Ppu::AdvanceHv() {
   if (h_ >= sppu::regs::kDotsPerLine) {
     h_ = 0;
     ++v_;
+    // Scanline transition invalidates both PPU render caches: the OAM list
+    // is rebuilt at the next OBJ fetch, and each BG's row cache is cleared
+    // so the next BG fetch re-reads the tilemap entry for the new pixel_in_y.
+    obj_line_v_ = -1;
+    for (auto& c : bg_row_cache_) c.key = -1;
     if (v_ >= sppu::regs::kLinesPerFrameNtsc) {
       v_ = 0;
     }
@@ -654,6 +667,9 @@ void Ppu::ReplayWrite(uint16_t offset, uint8_t data) {
       const uint16_t byte_addr = static_cast<uint16_t>(static_cast<uint32_t>(TranslateVramAddress(vmadd_)) << 1U);
       (*vram_)[byte_addr] = data;
       MaybeIncrementVmaddOnPort(/*is_high_port=*/false);
+      // VRAM write may touch any BG's tilemap or tile data — conservatively
+      // dirty every BG's row cache so the next fetch re-reads from VRAM.
+      bg_row_dirty_.fill(true);
       break;
     }
     case sppu::regs::kVmDataH: {
@@ -661,6 +677,7 @@ void Ppu::ReplayWrite(uint16_t offset, uint8_t data) {
       const uint16_t byte_addr = static_cast<uint16_t>(word_addr_shifted | 1U);
       (*vram_)[byte_addr] = data;
       MaybeIncrementVmaddOnPort(/*is_high_port=*/true);
+      bg_row_dirty_.fill(true);
       break;
     }
 
@@ -697,6 +714,9 @@ void Ppu::ReplayWrite(uint16_t offset, uint8_t data) {
       obj_region0_word_ = static_cast<uint16_t>((name_base << 13U) & 0x7FFFU);
       obj_region1_word_ =
           static_cast<uint16_t>((static_cast<uint32_t>(obj_region0_word_) + 0x1000U + (name_select << 12U)) & 0x7FFFU);
+      // Size pair / tile-region change affects every cached entry's width,
+      // height, and tile mapping. Force the next OBJ fetch to re-evaluate.
+      obj_line_v_ = -1;
       break;
     }
 
@@ -707,6 +727,8 @@ void Ppu::ReplayWrite(uint16_t offset, uint8_t data) {
       bg_tile_16x16_[1] = (data & sppu::regs::kBgmodeBg2TileSizeMask) != 0U;
       bg_tile_16x16_[2] = (data & sppu::regs::kBgmodeBg3TileSizeMask) != 0U;
       bg_tile_16x16_[3] = (data & sppu::regs::kBgmodeBg4TileSizeMask) != 0U;
+      // Tile-size flip changes tile_w and the bytes_per_char ladder; dirty all.
+      bg_row_dirty_.fill(true);
       break;
 
     case sppu::regs::kBg1Sc:
@@ -717,6 +739,7 @@ void Ppu::ReplayWrite(uint16_t offset, uint8_t data) {
       // Bits 7:2 are the screen base in 1K-word steps → word base = bits<<10.
       bg_tilemap_word_base_[bg] = static_cast<uint16_t>(static_cast<uint16_t>(data & sppu::regs::kBgScBaseMask) << 8);
       bg_tilemap_layout_[bg] = static_cast<uint8_t>(data & sppu::regs::kBgScLayoutMask);
+      bg_row_dirty_[bg] = true;
       break;
     }
 
@@ -724,10 +747,14 @@ void Ppu::ReplayWrite(uint16_t offset, uint8_t data) {
       // Low nibble = BG1, high nibble = BG2. Each nibble × 0x1000 word steps.
       bg_char_word_base_[0] = static_cast<uint16_t>(static_cast<uint16_t>(data & 0x0FU) << 12);
       bg_char_word_base_[1] = static_cast<uint16_t>(static_cast<uint16_t>((data >> 4) & 0x0FU) << 12);
+      bg_row_dirty_[0] = true;
+      bg_row_dirty_[1] = true;
       break;
     case sppu::regs::kBg34Nba:
       bg_char_word_base_[2] = static_cast<uint16_t>(static_cast<uint16_t>(data & 0x0FU) << 12);
       bg_char_word_base_[3] = static_cast<uint16_t>(static_cast<uint16_t>((data >> 4) & 0x0FU) << 12);
+      bg_row_dirty_[2] = true;
+      bg_row_dirty_[3] = true;
       break;
 
     case sppu::regs::kBg1Hofs:
@@ -755,6 +782,11 @@ void Ppu::ReplayWrite(uint16_t offset, uint8_t data) {
       const uint16_t low = static_cast<uint16_t>(bg_scroll_prev_);
       bg_vofs_[bg] = static_cast<uint16_t>((high | low) & sppu::regs::kBgScrollMask);
       bg_scroll_prev_ = data;
+      // V scroll changes pixel_in_y → cached plane bytes are stale. H scroll
+      // intentionally does NOT dirty the cache: the (eff_x >> 3) cache key
+      // naturally re-keys when scroll crosses an 8-pixel boundary, and within
+      // a column hflip + bit-shift still produce the right pixel.
+      bg_row_dirty_[bg] = true;
       break;
     }
 
@@ -853,84 +885,107 @@ Ppu::BgPixel Ppu::FetchBgPixel(uint8_t bg, uint8_t bpp, uint32_t screen_x, uint3
   const uint32_t tile_h = tile_w;  // SNES BG tiles are square.
 
   const uint32_t eff_x = (screen_x + bg_hofs_[bg]) & 0x3FFU;  // 10-bit wrap (covers 64-tile width).
-  const uint32_t eff_y = (screen_y + bg_vofs_[bg]) & 0x3FFU;
+  const int32_t cache_key = static_cast<int32_t>(eff_x >> 3U);
 
-  const uint32_t tile_x = eff_x / tile_w;
-  const uint32_t tile_y = eff_y / tile_h;
+  BgRowCache& cache = bg_row_cache_[bg];
+  if (cache.key != cache_key || bg_row_dirty_[bg]) {
+    // Cache miss: decode the tilemap entry and load the 8-pixel column's
+    // plane bytes. This is the heavy path FetchBgPixel used to walk on every
+    // dot; under the cache it runs at most once per 8 pixels.
+    const uint32_t eff_y = (screen_y + bg_vofs_[bg]) & 0x3FFU;
+    const uint32_t tile_x = eff_x / tile_w;
+    const uint32_t tile_y = eff_y / tile_h;
 
-  // BGxSC layout:
-  //   0 (32x32): single screen
-  //   1 (64x32): SC0|SC1 horizontally, second screen at +0x400 words
-  //   2 (32x64): SC0/SC1 vertically,  second screen at +0x400
-  //   3 (64x64): 2x2, TR=+0x400, BL=+0x800, BR=+0xC00
-  const uint8_t layout = bg_tilemap_layout_[bg];
-  const bool wide = (layout == 1U) || (layout == 3U);
-  const bool tall = (layout == 2U) || (layout == 3U);
-  const uint32_t tile_x_wrapped = tile_x & (wide ? 0x3FU : 0x1FU);
-  const uint32_t tile_y_wrapped = tile_y & (tall ? 0x3FU : 0x1FU);
-  const uint32_t screen_col = (tile_x_wrapped >> 5U) & 0x1U;
-  const uint32_t screen_row = (tile_y_wrapped >> 5U) & 0x1U;
-  const uint32_t local_x = tile_x_wrapped & 0x1FU;
-  const uint32_t local_y = tile_y_wrapped & 0x1FU;
-  uint32_t screen_offset_words = 0;
-  if (layout == 1U) {
-    screen_offset_words = screen_col * 0x400U;
-  } else if (layout == 2U) {
-    screen_offset_words = screen_row * 0x400U;
-  } else if (layout == 3U) {
-    screen_offset_words = (screen_row * 0x800U) + (screen_col * 0x400U);
+    // BGxSC layout:
+    //   0 (32x32): single screen
+    //   1 (64x32): SC0|SC1 horizontally, second screen at +0x400 words
+    //   2 (32x64): SC0/SC1 vertically,  second screen at +0x400
+    //   3 (64x64): 2x2, TR=+0x400, BL=+0x800, BR=+0xC00
+    const uint8_t layout = bg_tilemap_layout_[bg];
+    const bool wide = (layout == 1U) || (layout == 3U);
+    const bool tall = (layout == 2U) || (layout == 3U);
+    const uint32_t tile_x_wrapped = tile_x & (wide ? 0x3FU : 0x1FU);
+    const uint32_t tile_y_wrapped = tile_y & (tall ? 0x3FU : 0x1FU);
+    const uint32_t screen_col = (tile_x_wrapped >> 5U) & 0x1U;
+    const uint32_t screen_row = (tile_y_wrapped >> 5U) & 0x1U;
+    const uint32_t local_x = tile_x_wrapped & 0x1FU;
+    const uint32_t local_y = tile_y_wrapped & 0x1FU;
+    uint32_t screen_offset_words = 0;
+    if (layout == 1U) {
+      screen_offset_words = screen_col * 0x400U;
+    } else if (layout == 2U) {
+      screen_offset_words = screen_row * 0x400U;
+    } else if (layout == 3U) {
+      screen_offset_words = (screen_row * 0x800U) + (screen_col * 0x400U);
+    }
+
+    const uint32_t tilemap_word_addr =
+        static_cast<uint32_t>(bg_tilemap_word_base_[bg]) + screen_offset_words + (local_y * 32U) + local_x;
+    const uint16_t entry = ReadVramWord(static_cast<uint16_t>(tilemap_word_addr));
+
+    uint16_t char_index = static_cast<uint16_t>(entry & sppu::regs::kBgMapEntryCharMask);
+    const uint8_t palette_group =
+        static_cast<uint8_t>((entry >> sppu::regs::kBgMapEntryPaletteShift) & sppu::regs::kBgMapEntryPaletteMask);
+    const bool priority = (entry & sppu::regs::kBgMapEntryPriorityMask) != 0U;
+    const bool hflip = (entry & sppu::regs::kBgMapEntryHflipMask) != 0U;
+    const bool vflip = (entry & sppu::regs::kBgMapEntryVflipMask) != 0U;
+
+    uint32_t pixel_in_y = eff_y % tile_h;
+    if (vflip) pixel_in_y = (tile_h - 1U) - pixel_in_y;
+
+    // 16x16: choose the correct 8x8 sub-tile. The cache key advances every 8
+    // logical pixels so sub_x flips between 0 and 1 inside a 16x16 tile. With
+    // hflip the sub-tile order on the wire reverses.
+    if (tile_w == 16U) {
+      const uint32_t sub_x_logical = (eff_x >> 3U) & 1U;
+      const uint32_t sub_x = hflip ? (1U - sub_x_logical) : sub_x_logical;
+      const uint32_t sub_y = pixel_in_y >> 3U;
+      char_index = static_cast<uint16_t>(char_index + sub_x + (sub_y << 4U));
+      pixel_in_y &= 7U;
+    }
+
+    const uint32_t bytes_per_char = bg_is_2bpp ? 16U : 32U;
+    const uint32_t char_byte_base = static_cast<uint32_t>(bg_char_word_base_[bg]) << 1U;
+    const uint32_t tile_byte_addr =
+        char_byte_base + (static_cast<uint32_t>(char_index) * bytes_per_char) + (pixel_in_y * 2U);
+
+    auto vram_byte = [&](uint32_t addr) { return (*vram_)[addr & 0xFFFFU]; };
+    cache.plane0 = vram_byte(tile_byte_addr + 0U);
+    cache.plane1 = vram_byte(tile_byte_addr + 1U);
+    if (bg_is_2bpp) {
+      cache.plane2 = 0;
+      cache.plane3 = 0;
+    } else {
+      cache.plane2 = vram_byte(tile_byte_addr + 16U);
+      cache.plane3 = vram_byte(tile_byte_addr + 17U);
+    }
+    cache.palette_group = palette_group;
+    cache.priority = priority;
+    cache.hflip = hflip;
+    cache.is_2bpp = bg_is_2bpp;
+    cache.key = cache_key;
+    bg_row_dirty_[bg] = false;
   }
 
-  const uint32_t tilemap_word_addr =
-      static_cast<uint32_t>(bg_tilemap_word_base_[bg]) + screen_offset_words + (local_y * 32U) + local_x;
-  const uint16_t entry = ReadVramWord(static_cast<uint16_t>(tilemap_word_addr));
-
-  uint16_t char_index = static_cast<uint16_t>(entry & sppu::regs::kBgMapEntryCharMask);
-  const uint8_t palette_group =
-      static_cast<uint8_t>((entry >> sppu::regs::kBgMapEntryPaletteShift) & sppu::regs::kBgMapEntryPaletteMask);
-  const bool priority = (entry & sppu::regs::kBgMapEntryPriorityMask) != 0U;
-  const bool hflip = (entry & sppu::regs::kBgMapEntryHflipMask) != 0U;
-  const bool vflip = (entry & sppu::regs::kBgMapEntryVflipMask) != 0U;
-
-  uint32_t pixel_in_x = eff_x % tile_w;
-  uint32_t pixel_in_y = eff_y % tile_h;
-  if (hflip) pixel_in_x = (tile_w - 1U) - pixel_in_x;
-  if (vflip) pixel_in_y = (tile_h - 1U) - pixel_in_y;
-
-  // 16x16: pick one of four 8x8 sub-tiles (TR=+1, BL=+0x10, BR=+0x11). The
-  // hflip/vflip above already mapped pixel_in_x/y to post-flip coords, so the
-  // sub-tile picks naturally.
-  if (tile_w == 16U) {
-    const uint16_t sub_x = static_cast<uint16_t>(pixel_in_x >> 3U);
-    const uint16_t sub_y = static_cast<uint16_t>(pixel_in_y >> 3U);
-    char_index = static_cast<uint16_t>(char_index + sub_x + (sub_y << 4U));
-    pixel_in_x &= 7U;
-    pixel_in_y &= 7U;
-  }
-
-  const uint32_t bytes_per_char = bg_is_2bpp ? 16U : 32U;
-  const uint32_t char_byte_base = static_cast<uint32_t>(bg_char_word_base_[bg]) << 1U;
-  const uint32_t tile_byte_addr =
-      char_byte_base + (static_cast<uint32_t>(char_index) * bytes_per_char) + (pixel_in_y * 2U);
-
-  auto vram_byte = [&](uint32_t addr) { return (*vram_)[addr & 0xFFFFU]; };
-
-  // Planar layout: planes 0/1 interleaved at +0..+15, planes 2/3 at +16..+31.
-  const uint8_t shift = static_cast<uint8_t>(7U - pixel_in_x);
-  const uint8_t p0 = (vram_byte(tile_byte_addr + 0U) >> shift) & 1U;
-  const uint8_t p1 = (vram_byte(tile_byte_addr + 1U) >> shift) & 1U;
+  // Pixel extract — same bit-shift logic as the uncached version, but reading
+  // the four cached plane bytes instead of VRAM directly.
+  uint32_t bit_in_x = eff_x & 7U;
+  if (cache.hflip) bit_in_x = 7U - bit_in_x;
+  const uint8_t shift = static_cast<uint8_t>(7U - bit_in_x);
+  const uint8_t p0 = (cache.plane0 >> shift) & 1U;
+  const uint8_t p1 = (cache.plane1 >> shift) & 1U;
   uint8_t color_index = static_cast<uint8_t>(p0 | (p1 << 1U));
-  if (!bg_is_2bpp) {
-    const uint8_t p2 = (vram_byte(tile_byte_addr + 16U) >> shift) & 1U;
-    const uint8_t p3 = (vram_byte(tile_byte_addr + 17U) >> shift) & 1U;
+  if (!cache.is_2bpp) {
+    const uint8_t p2 = (cache.plane2 >> shift) & 1U;
+    const uint8_t p3 = (cache.plane3 >> shift) & 1U;
     color_index = static_cast<uint8_t>(color_index | (p2 << 2U) | (p3 << 3U));
   }
 
   if (color_index == 0U) {
-    return {0U, true, priority};
+    return {0U, true, cache.priority};
   }
-  const uint8_t cgram_index = static_cast<uint8_t>((static_cast<uint8_t>(palette_group) << bpp) | color_index);
-  return {cgram_index, false, priority};
+  const uint8_t cgram_index = static_cast<uint8_t>((static_cast<uint8_t>(cache.palette_group) << bpp) | color_index);
+  return {cgram_index, false, cache.priority};
 }
 
 namespace {
@@ -956,7 +1011,10 @@ constexpr std::array<ObjSizePair, 8> kObjSizes = {{
 
 }  // namespace
 
-Ppu::ObjPixel Ppu::FetchObjPixel(uint32_t screen_x, uint32_t screen_y) const {
+void Ppu::EvaluateObjLine(uint32_t screen_y) const {
+  obj_line_count_ = 0;
+  obj_line_v_ = static_cast<int32_t>(screen_y);
+
   const ObjSizePair sizes = kObjSizes[obj_size_select_];
 
   for (uint8_t obj = 0; obj < 128U; ++obj) {
@@ -964,7 +1022,7 @@ Ppu::ObjPixel Ppu::FetchObjPixel(uint32_t screen_x, uint32_t screen_y) const {
 
     // High-table byte holds (X-high, size) bit-pair at position (obj%4)*2 for
     // four OBJs at a time. Read it + Y first so the common "no Y overlap"
-    // miss path skips the X/tile/attr reads.
+    // reject path skips the X/tile/attr reads.
     const uint16_t high_byte_addr = static_cast<uint16_t>(sppu::regs::kOamHighTableBase + (obj >> 2U));
     const uint8_t high_byte = ReadOamByte(high_byte_addr);
     const uint8_t high_shift = static_cast<uint8_t>((obj & 3U) << 1U);
@@ -981,19 +1039,45 @@ Ppu::ObjPixel Ppu::FetchObjPixel(uint32_t screen_x, uint32_t screen_y) const {
     const bool x_high_bit = ((high_byte >> high_shift) & 1U) != 0U;
     const uint8_t x_lo = ReadOamByte(low_addr);
     // X is 9-bit signed (sign-extend bit 8). Sprites can sit partly off-screen.
-    int32_t signed_x = static_cast<int32_t>(x_lo) | (x_high_bit ? -256 : 0);
-    const int32_t x_internal = static_cast<int32_t>(screen_x) - signed_x;
-    if (x_internal < 0 || x_internal >= width) continue;
+    int16_t signed_x = static_cast<int16_t>(x_lo);
+    if (x_high_bit) {
+      signed_x = static_cast<int16_t>(signed_x | static_cast<int16_t>(0xFF00));
+    }
 
     const uint8_t tile_lo = ReadOamByte(static_cast<uint16_t>(low_addr + 2U));
     const uint8_t attr = ReadOamByte(static_cast<uint16_t>(low_addr + 3U));
+    const uint16_t base_tile = static_cast<uint16_t>(tile_lo | ((attr & sppu::regs::kObjAttrTileHighMask) << 8U));
 
-    const bool hflip = (attr & sppu::regs::kObjAttrHflipMask) != 0U;
-    const bool vflip = (attr & sppu::regs::kObjAttrVflipMask) != 0U;
+    if (obj_line_count_ < kObjLineCap) {
+      obj_line_list_[obj_line_count_++] = {signed_x, y_internal_8, width, height, base_tile, attr};
+    }
+    // OBJs past the cap are dropped (hardware time-over). The STAT77 bit isn't
+    // surfaced yet (see ReadRegister stub), but the visible-pixel behavior
+    // matches: lowest OAM indices win, anything past 32 doesn't render.
+  }
+}
+
+Ppu::ObjPixel Ppu::FetchObjPixel(uint32_t screen_x, uint32_t screen_y) const {
+  // Lazy-build the per-line sprite list the first time a new scanline asks
+  // for an OBJ pixel. Once latched, mid-line OAM writes don't perturb the
+  // current line — matching hardware where OAM evaluation runs in the tail
+  // of the previous scanline.
+  if (obj_line_v_ != static_cast<int32_t>(screen_y)) {
+    EvaluateObjLine(screen_y);
+  }
+
+  for (uint8_t i = 0; i < obj_line_count_; ++i) {
+    const ObjLineEntry& e = obj_line_list_[i];
+
+    const int32_t x_internal = static_cast<int32_t>(screen_x) - static_cast<int32_t>(e.x);
+    if (x_internal < 0 || x_internal >= static_cast<int32_t>(e.width)) continue;
+
+    const bool hflip = (e.attr & sppu::regs::kObjAttrHflipMask) != 0U;
+    const bool vflip = (e.attr & sppu::regs::kObjAttrVflipMask) != 0U;
     uint32_t pix_x = static_cast<uint32_t>(x_internal);
-    uint32_t pix_y = static_cast<uint32_t>(y_internal_8);
-    if (hflip) pix_x = (static_cast<uint32_t>(width) - 1U) - pix_x;
-    if (vflip) pix_y = (static_cast<uint32_t>(height) - 1U) - pix_y;
+    uint32_t pix_y = static_cast<uint32_t>(e.y_internal);
+    if (hflip) pix_x = (static_cast<uint32_t>(e.width) - 1U) - pix_x;
+    if (vflip) pix_y = (static_cast<uint32_t>(e.height) - 1U) - pix_y;
 
     const uint32_t sub_x = pix_x >> 3U;
     const uint32_t sub_y = pix_y >> 3U;
@@ -1003,10 +1087,9 @@ Ppu::ObjPixel Ppu::FetchObjPixel(uint32_t screen_x, uint32_t screen_y) const {
     // 9-bit tile number (bit 8 from attr.0). Low nibble wraps within its
     // 16-tile row; high nibble wraps within its 16-row page; the region-select
     // bit does NOT carry.
-    const uint16_t base_tile = static_cast<uint16_t>(tile_lo | ((attr & sppu::regs::kObjAttrTileHighMask) << 8U));
-    const uint16_t tile_x_low = static_cast<uint16_t>(((base_tile & 0x0FU) + sub_x) & 0x0FU);
-    const uint16_t tile_y_low = static_cast<uint16_t>((((base_tile >> 4U) & 0x0FU) + sub_y) & 0x0FU);
-    const uint16_t region_bit = static_cast<uint16_t>(base_tile & 0x100U);
+    const uint16_t tile_x_low = static_cast<uint16_t>(((e.base_tile & 0x0FU) + sub_x) & 0x0FU);
+    const uint16_t tile_y_low = static_cast<uint16_t>((((e.base_tile >> 4U) & 0x0FU) + sub_y) & 0x0FU);
+    const uint16_t region_bit = static_cast<uint16_t>(e.base_tile & 0x100U);
     const uint16_t effective_tile = static_cast<uint16_t>(region_bit | (tile_y_low << 4U) | tile_x_low);
 
     const uint16_t region_word_base = (effective_tile & 0x100U) ? obj_region1_word_ : obj_region0_word_;
@@ -1028,11 +1111,11 @@ Ppu::ObjPixel Ppu::FetchObjPixel(uint32_t screen_x, uint32_t screen_y) const {
 
     // OBJ palette region: $80..$FF, eight 16-color groups.
     const unsigned palette_group =
-        (static_cast<unsigned>(attr) >> sppu::regs::kObjAttrPaletteShift) & sppu::regs::kObjAttrPaletteMask;
+        (static_cast<unsigned>(e.attr) >> sppu::regs::kObjAttrPaletteShift) & sppu::regs::kObjAttrPaletteMask;
     const uint8_t cgram_index =
         static_cast<uint8_t>(0x80U | (palette_group << 4U) | static_cast<unsigned>(color_index));
     const uint8_t priority = static_cast<uint8_t>(
-        (static_cast<unsigned>(attr) >> sppu::regs::kObjAttrPriorityShift) & sppu::regs::kObjAttrPriorityMask);
+        (static_cast<unsigned>(e.attr) >> sppu::regs::kObjAttrPriorityShift) & sppu::regs::kObjAttrPriorityMask);
     return {cgram_index, false, priority};
   }
 

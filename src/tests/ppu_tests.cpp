@@ -2097,3 +2097,113 @@ TEST_CASE("SMW title-screen color-math fills the sky region", "[smwbug]") {
   }
   REQUIRE(distinct > 0U);
 }
+
+TEST_CASE("Mid-line VRAM write to BG1 tile data propagates to subsequent pixels", "[unit][ppu]") {
+  // Regression for the BG row cache: even when consecutive pixels stay within
+  // the same tile (so tile_x doesn't change), a VMDATA write that lands
+  // mid-line must invalidate the cached plane bytes — otherwise the cached
+  // copy keeps painting the pre-write color.
+  SNES snes;
+  Ppu& ppu = snes.GetPpu();
+  ppu.Reset();
+  TimeMasterT now = 1;
+
+  BusWrite(snes, sppu::regs::kInidisp, 0x0FU, now++);
+  BusWrite(snes, sppu::regs::kVmain, 0x80U, now++);
+  WriteCgramWord(snes, 0U, 0x0000U, now);     // backdrop = black
+  WriteCgramWord(snes, 1U, 0x001FU, now);     // BG1 palette idx 1 = red
+  WriteCgramWord(snes, 3U, 0x7C00U, now);     // BG1 palette idx 3 = blue
+
+  // Tile 0 starts as solid color-index 1 (red): plane 0 = 0xFF, planes 1/2/3
+  // = 0 on every row. The mid-line write below flips plane 1, row 0 to 0xFF,
+  // promoting that row's pixels to color-index 3 (blue).
+  uint8_t tile_red[64];
+  for (uint16_t i = 0; i < 64; ++i) tile_red[i] = 1U;
+  WriteTile4bpp(snes, 0x1000U, 0U, tile_red, now);
+
+  // Tilemap entry 0 at word base 0: tile index 0, palette group 0, no flip.
+  WriteVramWord(snes, 0x0000U, 0x0000U, now);
+  // Park VMADDR at word 0x1000 so the mid-line VMDATAH write targets byte
+  // 0x2001 (plane-1, row-0) directly — no need to re-set the address mid-line.
+  SetVramAddress(snes, 0x1000U, now);
+
+  BusWrite(snes, sppu::regs::kBg12Nba, 0x01U, now++);
+  BusWrite(snes, sppu::regs::kBg1Sc, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kBgmode, 0x01U, now++);
+  BusWrite(snes, sppu::regs::kTm, sppu::regs::kTmBg1Mask, now++);
+
+  // Render through screen_x=5 of line V=1. Dot H=27 ends at master cycle
+  // 1*1364 + (27 - 0 + 1)*4 = 1476 (each pre-long dot costs 4 mcyc).
+  ppu.CatchUpTo(1476U);
+
+  // Mid-line: one VMDATAH write. With VMAIN.7=1 it lands on byte 0x2001 of
+  // VRAM = plane-1 of tile-0, row-0. Pixel color becomes p0=1, p1=1 → idx 3.
+  TimeMasterT mid = 1477U;
+  BusWrite(snes, sppu::regs::kVmDataH, 0xFFU, mid++);
+
+  ppu.CatchUpTo(kFrameEndNtsc);
+  const FrameBufferView view = ppu.BuildFrontView();
+
+  // Pixels rendered before the VRAM write keep the red color.
+  REQUIRE(view.pixels[0U * view.stride + 0U] == 0x001FU);
+  REQUIRE(view.pixels[0U * view.stride + 5U] == 0x001FU);
+  // Pixel rendered after the VRAM write reads the new plane bytes → blue.
+  // (Same tile_x as screen_x=5 — both inside tile 0 — so this only passes
+  // when the cache notices the VMDATA invalidation.)
+  REQUIRE(view.pixels[0U * view.stride + 7U] == 0x7C00U);
+}
+
+TEST_CASE("OBJ list latched per scanline — mid-line OAM write does not unrender sprite", "[unit][ppu]") {
+  // Per-scanline OAM evaluation invariant: once a line's sprite list is
+  // latched at line start, an OAM write that lands mid-line must NOT alter
+  // the sprite drawn on that line. On hardware the evaluation pass runs in
+  // the tail of the previous scanline, so by the time visible pixels start
+  // emitting the list is fixed.
+  SNES snes;
+  Ppu& ppu = snes.GetPpu();
+  ppu.Reset();
+  TimeMasterT now = 1;
+
+  BusWrite(snes, sppu::regs::kInidisp, 0x0FU, now++);
+  BusWrite(snes, sppu::regs::kVmain, 0x80U, now++);
+  WriteCgramWord(snes, 0U, 0x0000U, now);     // backdrop = black
+  WriteCgramWord(snes, 0x81U, 0x001FU, now);  // OBJ palette 0 color 1 = red
+
+  // Solid red OBJ tile at char index 1 in region 0.
+  uint8_t solid_red[64];
+  for (uint16_t i = 0; i < 64; ++i) solid_red[i] = 1U;
+  WriteTile4bpp(snes, 0x0000U, 1U, solid_red, now);
+
+  BusWrite(snes, sppu::regs::kObsel, 0x00U, now++);
+  // OBJ 0: 8x8 sprite at screen (10, 20). H range of sprite = 32..39 on
+  // dot grid; V = 21 (screen_y=20 → V=1+20=21).
+  WriteOamLowEntry(snes, 0U, 10U, 20U, 1U, 0x00U, now);
+
+  BusWrite(snes, sppu::regs::kBgmode, 0x01U, now++);
+  BusWrite(snes, sppu::regs::kTm, sppu::regs::kTmObjMask, now++);
+
+  // Render through screen_x=12 of V=21. Line 21 starts at cycle 21*1364 =
+  // 28644; H=22 begins visible at 28644+22*4=28732; H=34 (screen_x=12) ends
+  // at 28644+(34-22+1)*4+22*4 — easier: each dot is 4 mcyc and there are 13
+  // dots from H=22..34 inclusive emitted, so target = 28732 + 13*4 = 28784.
+  ppu.CatchUpTo(28784U);
+
+  // Mid-line OAM write to move OBJ 0 to Y=100 (off the current line). All
+  // other fields kept the same. The Y byte (OAM offset 1) commits at the
+  // second OAMDATA write inside WriteOamLowEntry.
+  TimeMasterT mid = 28786U;
+  WriteOamLowEntry(snes, 0U, 10U, 100U, 1U, 0x00U, mid);
+
+  ppu.CatchUpTo(kFrameEndNtsc);
+  const FrameBufferView view = ppu.BuildFrontView();
+
+  // Sprite columns 10..12 emitted before the OAM write — red on any model.
+  REQUIRE(view.pixels[20U * view.stride + 10U] == 0x001FU);
+  REQUIRE(view.pixels[20U * view.stride + 12U] == 0x001FU);
+  // Sprite columns 15..17 emitted after the OAM write. With the per-line
+  // latch they STAY red because the list was already evaluated for line 21.
+  // (Without the latch the per-pixel scan would see Y=100, drop the sprite,
+  // and these pixels would fall through to the black backdrop.)
+  REQUIRE(view.pixels[20U * view.stride + 15U] == 0x001FU);
+  REQUIRE(view.pixels[20U * view.stride + 17U] == 0x001FU);
+}
