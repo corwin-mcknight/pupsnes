@@ -29,6 +29,9 @@ constexpr uint16_t OamByteSlot(uint16_t byte_addr) {
   return static_cast<uint16_t>(0x200U | (addr & 0x1FU));
 }
 
+constexpr std::array<uint8_t, 4> kTmMaskForBg = {sppu::regs::kTmBg1Mask, sppu::regs::kTmBg2Mask,
+                                                 sppu::regs::kTmBg3Mask, sppu::regs::kTmBg4Mask};
+
 }  // namespace
 
 Ppu::Ppu(SNES* snes)
@@ -58,10 +61,24 @@ void Ppu::Reset() {
   shadow_.fill(0);
   // INIDISP power-on: forced blank set, brightness 0. ROMs disable forced
   // blank and ramp brightness in their init code.
-  inidisp_ = 0x80U;
   forced_blank_ = true;
   brightness_ = 0;
   overscan_ = false;
+
+  bg_mode_ = 0;
+  bg3_priority_ = false;
+  bg_tile_16x16_.fill(false);
+  bg_tilemap_word_base_.fill(0);
+  bg_tilemap_layout_.fill(0);
+  bg_char_word_base_.fill(0);
+  bg_hofs_.fill(0);
+  bg_vofs_.fill(0);
+  bg_scroll_prev_ = 0;
+  main_screen_layers_ = 0;
+
+  obj_size_select_ = 0;
+  obj_region0_word_ = 0;
+  obj_region1_word_ = 0;
 
   cgadd_ = 0;
   cgram_write_latch_data_ = 0;
@@ -403,10 +420,112 @@ void Ppu::EmitPixel(uint32_t h, uint32_t v) {
 
   uint16_t color = 0;
   if (in_visible_h && in_visible_v && !forced_blank_) {
-    // v1 scaffold: every visible dot draws the backdrop (CGRAM[0]) scaled by
-    // INIDISP brightness. BG / OBJ / window compositing lands with later
-    // milestones.
-    color = BrightnessScale((*cgram_)[0], brightness_);
+    uint16_t bgr = (*cgram_)[0];
+
+    // Slot is either a BG fetch at a specific priority, or the resolved OBJ
+    // pixel at a specific priority (0..3). is_obj==true uses `priority` as
+    // the OBJ priority level; is_obj==false uses `bg` (0..3) and `priority`
+    // as the BG priority bit (0 or 1).
+    struct Slot {
+      bool is_obj;
+      uint8_t bg;
+      uint8_t priority;
+    };
+
+    const uint32_t screen_x = h - sppu::regs::kVisibleHStart;
+    const uint32_t screen_y = v - sppu::regs::kVisibleVStartNtsc;
+
+    ObjPixel obj_px = {0U, true, 0U};
+    if ((main_screen_layers_ & sppu::regs::kTmObjMask) != 0U) {
+      obj_px = FetchObjPixel(screen_x, screen_y);
+    }
+
+    auto try_resolve = [&](auto order, auto bpp_for, auto cgram_base_for) {
+      for (const Slot slot : order) {
+        if (slot.is_obj) {
+          if (obj_px.transparent) continue;
+          if (obj_px.priority != slot.priority) continue;
+          bgr = (*cgram_)[obj_px.cgram_index];
+          return true;
+        }
+        if ((main_screen_layers_ & kTmMaskForBg[slot.bg]) == 0U) {
+          continue;
+        }
+        const BgPixel px = FetchBgPixel(slot.bg, bpp_for(slot.bg), screen_x, screen_y);
+        if (px.transparent || static_cast<uint8_t>(px.priority) != slot.priority) {
+          continue;
+        }
+        const uint8_t cgram_index = static_cast<uint8_t>(px.cgram_index + cgram_base_for(slot.bg));
+        bgr = (*cgram_)[cgram_index];
+        return true;
+      }
+      return false;
+    };
+
+    if (bg_mode_ == 0U) {
+      // Mode 0 priority order with sprites interleaved (highest first):
+      //   OBJ.3, BG1.h, BG2.h, OBJ.2, BG1.l, BG2.l,
+      //   OBJ.1, BG3.h, BG4.h, OBJ.0, BG3.l, BG4.l, backdrop.
+      // BG palette regions: BG1=0, BG2=+32, BG3=+64, BG4=+96.
+      static constexpr std::array<Slot, 12> kOrder = {{
+          {true, 0U, 3U},
+          {false, 0U, 1U},
+          {false, 1U, 1U},
+          {true, 0U, 2U},
+          {false, 0U, 0U},
+          {false, 1U, 0U},
+          {true, 0U, 1U},
+          {false, 2U, 1U},
+          {false, 3U, 1U},
+          {true, 0U, 0U},
+          {false, 2U, 0U},
+          {false, 3U, 0U},
+      }};
+      try_resolve(
+          kOrder, [](uint8_t /*bg*/) -> uint8_t { return 2U; },
+          [](uint8_t bg) -> uint8_t { return static_cast<uint8_t>(bg * 32U); });
+    } else if (bg_mode_ == 1U) {
+      // Mode 1 priority orders with sprites:
+      //   bg3_priority_ off:
+      //     OBJ.3, BG1.h, BG2.h, OBJ.2, BG1.l, BG2.l,
+      //     OBJ.1, BG3.h, OBJ.0, BG3.l, backdrop.
+      //   bg3_priority_ on (BGMODE bit 3):
+      //     BG3.h, OBJ.3, BG1.h, BG2.h, OBJ.2, BG1.l, BG2.l,
+      //     OBJ.1, OBJ.0, BG3.l, backdrop.
+      static constexpr std::array<Slot, 10> kOrderNormal = {{
+          {true, 0U, 3U},
+          {false, 0U, 1U},
+          {false, 1U, 1U},
+          {true, 0U, 2U},
+          {false, 0U, 0U},
+          {false, 1U, 0U},
+          {true, 0U, 1U},
+          {false, 2U, 1U},
+          {true, 0U, 0U},
+          {false, 2U, 0U},
+      }};
+      static constexpr std::array<Slot, 10> kOrderBg3High = {{
+          {false, 2U, 1U},
+          {true, 0U, 3U},
+          {false, 0U, 1U},
+          {false, 1U, 1U},
+          {true, 0U, 2U},
+          {false, 0U, 0U},
+          {false, 1U, 0U},
+          {true, 0U, 1U},
+          {true, 0U, 0U},
+          {false, 2U, 0U},
+      }};
+      auto bpp_for = [](uint8_t bg) -> uint8_t { return (bg == 2U) ? 2U : 4U; };
+      auto cgram_base_for = [](uint8_t /*bg*/) -> uint8_t { return 0U; };
+      if (bg3_priority_) {
+        try_resolve(kOrderBg3High, bpp_for, cgram_base_for);
+      } else {
+        try_resolve(kOrderNormal, bpp_for, cgram_base_for);
+      }
+    }
+
+    color = BrightnessScale(bgr, brightness_);
   }
   // Outside the visible window and under forced-blank, the PPU drives black.
   (*back_buffer_)[static_cast<std::size_t>(v) * sppu::regs::kFrameBufferWidth + h] = color;
@@ -422,7 +541,6 @@ void Ppu::OnEndOfFrame() {
 void Ppu::ReplayWrite(uint16_t offset, uint8_t data) {
   switch (offset) {
     case sppu::regs::kInidisp:
-      inidisp_ = data;
       forced_blank_ = (data & sppu::regs::kInidispForcedBlankMask) != 0U;
       brightness_ = data & sppu::regs::kInidispBrightnessMask;
       break;
@@ -512,6 +630,79 @@ void Ppu::ReplayWrite(uint16_t offset, uint8_t data) {
 
     case sppu::regs::kSetini: overscan_ = (data & sppu::regs::kSetiniOverscanMask) != 0U; break;
 
+    case sppu::regs::kObsel: {
+      obj_size_select_ = static_cast<uint8_t>((data & sppu::regs::kObselSizeMask) >> sppu::regs::kObselSizeShift);
+      const uint32_t name_select =
+          static_cast<uint32_t>((data & sppu::regs::kObselNameSelectMask) >> sppu::regs::kObselNameSelectShift);
+      const uint32_t name_base = static_cast<uint32_t>(data & sppu::regs::kObselNameBaseMask);
+      // Region 0 base = name_base * 0x2000 words. Region 1 = region0 + 0x1000
+      // + name_select * 0x1000. Both wrap modulo 32K word VRAM.
+      obj_region0_word_ = static_cast<uint16_t>((name_base << 13U) & 0x7FFFU);
+      obj_region1_word_ =
+          static_cast<uint16_t>((static_cast<uint32_t>(obj_region0_word_) + 0x1000U + (name_select << 12U)) & 0x7FFFU);
+      break;
+    }
+
+    case sppu::regs::kBgmode:
+      bg_mode_ = data & sppu::regs::kBgmodeModeMask;
+      bg3_priority_ = (data & sppu::regs::kBgmodeBg3PriorityMask) != 0U;
+      bg_tile_16x16_[0] = (data & sppu::regs::kBgmodeBg1TileSizeMask) != 0U;
+      bg_tile_16x16_[1] = (data & sppu::regs::kBgmodeBg2TileSizeMask) != 0U;
+      bg_tile_16x16_[2] = (data & sppu::regs::kBgmodeBg3TileSizeMask) != 0U;
+      bg_tile_16x16_[3] = (data & sppu::regs::kBgmodeBg4TileSizeMask) != 0U;
+      break;
+
+    case sppu::regs::kBg1Sc:
+    case sppu::regs::kBg2Sc:
+    case sppu::regs::kBg3Sc:
+    case sppu::regs::kBg4Sc: {
+      const std::size_t bg = static_cast<std::size_t>(offset - sppu::regs::kBg1Sc);
+      // Bits 7:2 are the screen base in 1K-word steps → word base = bits<<10.
+      bg_tilemap_word_base_[bg] = static_cast<uint16_t>(static_cast<uint16_t>(data & sppu::regs::kBgScBaseMask) << 8);
+      bg_tilemap_layout_[bg] = static_cast<uint8_t>(data & sppu::regs::kBgScLayoutMask);
+      break;
+    }
+
+    case sppu::regs::kBg12Nba:
+      // Low nibble = BG1, high nibble = BG2. Each nibble × 0x1000 word steps.
+      bg_char_word_base_[0] = static_cast<uint16_t>(static_cast<uint16_t>(data & 0x0FU) << 12);
+      bg_char_word_base_[1] = static_cast<uint16_t>(static_cast<uint16_t>((data >> 4) & 0x0FU) << 12);
+      break;
+    case sppu::regs::kBg34Nba:
+      bg_char_word_base_[2] = static_cast<uint16_t>(static_cast<uint16_t>(data & 0x0FU) << 12);
+      bg_char_word_base_[3] = static_cast<uint16_t>(static_cast<uint16_t>((data >> 4) & 0x0FU) << 12);
+      break;
+
+    case sppu::regs::kBg1Hofs:
+    case sppu::regs::kBg2Hofs:
+    case sppu::regs::kBg3Hofs:
+    case sppu::regs::kBg4Hofs: {
+      // BG_old shared latch + this BG's old high byte for low 3 bits. Per
+      // fullsnes: BGnHOFS = (Curr<<8) | (Prev & ~7) | ((Reg_old>>8) & 7).
+      const std::size_t bg = static_cast<std::size_t>((offset - sppu::regs::kBg1Hofs) >> 1U);
+      const uint16_t old_value = bg_hofs_[bg];
+      const uint16_t high = static_cast<uint16_t>(static_cast<uint16_t>(data) << 8);
+      const uint16_t mid = static_cast<uint16_t>(bg_scroll_prev_ & 0xF8U);  // Prev & ~7
+      const uint16_t low = static_cast<uint16_t>((old_value >> 8) & 0x07U);
+      bg_hofs_[bg] = static_cast<uint16_t>((high | mid | low) & sppu::regs::kBgScrollMask);
+      bg_scroll_prev_ = data;
+      break;
+    }
+    case sppu::regs::kBg1Vofs:
+    case sppu::regs::kBg2Vofs:
+    case sppu::regs::kBg3Vofs:
+    case sppu::regs::kBg4Vofs: {
+      // V scroll: (Curr<<8) | Prev. No old-register feedback term.
+      const std::size_t bg = static_cast<std::size_t>((offset - sppu::regs::kBg1Vofs) >> 1U);
+      const uint16_t high = static_cast<uint16_t>(static_cast<uint16_t>(data) << 8);
+      const uint16_t low = static_cast<uint16_t>(bg_scroll_prev_);
+      bg_vofs_[bg] = static_cast<uint16_t>((high | low) & sppu::regs::kBgScrollMask);
+      bg_scroll_prev_ = data;
+      break;
+    }
+
+    case sppu::regs::kTm: main_screen_layers_ = data; break;
+
     default:
       // Every other $2100-$213F write is shadow-only in v1. The shadow was
       // already updated at enqueue time, so nothing to do here.
@@ -558,12 +749,7 @@ uint16_t Ppu::VmainIncrementStep() const {
   }
 }
 
-void Ppu::PrefetchVram() {
-  const uint16_t byte_addr = static_cast<uint16_t>(TranslateVramAddress(vmadd_) << 1);
-  const uint8_t lo = (*vram_)[byte_addr];
-  const uint8_t hi = (*vram_)[static_cast<uint16_t>(byte_addr | 1U)];
-  vram_prefetch_ = PackWord(lo, hi);
-}
+void Ppu::PrefetchVram() { vram_prefetch_ = ReadVramWord(TranslateVramAddress(vmadd_)); }
 
 void Ppu::MaybeIncrementVmaddOnPort(bool is_high_port) {
   const bool increment_on_high = (vmain_ & sppu::regs::kVmainIncrementOnHighMask) != 0U;
@@ -575,5 +761,211 @@ void Ppu::MaybeIncrementVmaddOnPort(bool is_high_port) {
 void Ppu::WriteOamByte(uint16_t byte_addr, uint8_t data) { (*oam_)[OamByteSlot(byte_addr)] = data; }
 
 uint8_t Ppu::ReadOamByte(uint16_t byte_addr) const { return (*oam_)[OamByteSlot(byte_addr)]; }
+
+uint16_t Ppu::ReadVramWord(uint16_t word_addr) const {
+  // VRAM is 32K words = 64K bytes; word index wraps at 15 bits. Low byte at
+  // 2*word_addr, high byte at +1.
+  const uint16_t masked = static_cast<uint16_t>(word_addr & 0x7FFFU);
+  const std::size_t lo_idx = static_cast<std::size_t>(masked) << 1U;
+  const uint8_t lo = (*vram_)[lo_idx];
+  const uint8_t hi = (*vram_)[lo_idx | 1U];
+  return PackWord(lo, hi);
+}
+
+Ppu::BgPixel Ppu::FetchBgPixel(uint8_t bg, uint8_t bpp, uint32_t screen_x, uint32_t screen_y) const {
+  if (bg >= 4U) {
+    return {0U, true, false};
+  }
+  const bool bg_is_2bpp = (bpp == 2U);
+
+  const uint32_t tile_w = bg_tile_16x16_[bg] ? 16U : 8U;
+  const uint32_t tile_h = tile_w;  // SNES BG tiles are square.
+
+  const uint32_t eff_x = (screen_x + bg_hofs_[bg]) & 0x3FFU;  // 10-bit wrap (covers 64-tile width).
+  const uint32_t eff_y = (screen_y + bg_vofs_[bg]) & 0x3FFU;
+
+  const uint32_t tile_x = eff_x / tile_w;
+  const uint32_t tile_y = eff_y / tile_h;
+
+  // BGxSC layout:
+  //   0 (32x32): single screen
+  //   1 (64x32): SC0|SC1 horizontally, second screen at +0x400 words
+  //   2 (32x64): SC0/SC1 vertically,  second screen at +0x400
+  //   3 (64x64): 2x2, TR=+0x400, BL=+0x800, BR=+0xC00
+  const uint8_t layout = bg_tilemap_layout_[bg];
+  const bool wide = (layout == 1U) || (layout == 3U);
+  const bool tall = (layout == 2U) || (layout == 3U);
+  const uint32_t tile_x_wrapped = tile_x & (wide ? 0x3FU : 0x1FU);
+  const uint32_t tile_y_wrapped = tile_y & (tall ? 0x3FU : 0x1FU);
+  const uint32_t screen_col = (tile_x_wrapped >> 5U) & 0x1U;
+  const uint32_t screen_row = (tile_y_wrapped >> 5U) & 0x1U;
+  const uint32_t local_x = tile_x_wrapped & 0x1FU;
+  const uint32_t local_y = tile_y_wrapped & 0x1FU;
+  uint32_t screen_offset_words = 0;
+  if (layout == 1U) {
+    screen_offset_words = screen_col * 0x400U;
+  } else if (layout == 2U) {
+    screen_offset_words = screen_row * 0x400U;
+  } else if (layout == 3U) {
+    screen_offset_words = (screen_row * 0x800U) + (screen_col * 0x400U);
+  }
+
+  const uint32_t tilemap_word_addr =
+      static_cast<uint32_t>(bg_tilemap_word_base_[bg]) + screen_offset_words + (local_y * 32U) + local_x;
+  const uint16_t entry = ReadVramWord(static_cast<uint16_t>(tilemap_word_addr));
+
+  uint16_t char_index = static_cast<uint16_t>(entry & sppu::regs::kBgMapEntryCharMask);
+  const uint8_t palette_group =
+      static_cast<uint8_t>((entry >> sppu::regs::kBgMapEntryPaletteShift) & sppu::regs::kBgMapEntryPaletteMask);
+  const bool priority = (entry & sppu::regs::kBgMapEntryPriorityMask) != 0U;
+  const bool hflip = (entry & sppu::regs::kBgMapEntryHflipMask) != 0U;
+  const bool vflip = (entry & sppu::regs::kBgMapEntryVflipMask) != 0U;
+
+  uint32_t pixel_in_x = eff_x % tile_w;
+  uint32_t pixel_in_y = eff_y % tile_h;
+  if (hflip) pixel_in_x = (tile_w - 1U) - pixel_in_x;
+  if (vflip) pixel_in_y = (tile_h - 1U) - pixel_in_y;
+
+  // 16x16: pick one of four 8x8 sub-tiles (TR=+1, BL=+0x10, BR=+0x11). The
+  // hflip/vflip above already mapped pixel_in_x/y to post-flip coords, so the
+  // sub-tile picks naturally.
+  if (tile_w == 16U) {
+    const uint16_t sub_x = static_cast<uint16_t>(pixel_in_x >> 3U);
+    const uint16_t sub_y = static_cast<uint16_t>(pixel_in_y >> 3U);
+    char_index = static_cast<uint16_t>(char_index + sub_x + (sub_y << 4U));
+    pixel_in_x &= 7U;
+    pixel_in_y &= 7U;
+  }
+
+  const uint32_t bytes_per_char = bg_is_2bpp ? 16U : 32U;
+  const uint32_t char_byte_base = static_cast<uint32_t>(bg_char_word_base_[bg]) << 1U;
+  const uint32_t tile_byte_addr =
+      char_byte_base + (static_cast<uint32_t>(char_index) * bytes_per_char) + (pixel_in_y * 2U);
+
+  auto vram_byte = [&](uint32_t addr) { return (*vram_)[addr & 0xFFFFU]; };
+
+  // Planar layout: planes 0/1 interleaved at +0..+15, planes 2/3 at +16..+31.
+  const uint8_t shift = static_cast<uint8_t>(7U - pixel_in_x);
+  const uint8_t p0 = (vram_byte(tile_byte_addr + 0U) >> shift) & 1U;
+  const uint8_t p1 = (vram_byte(tile_byte_addr + 1U) >> shift) & 1U;
+  uint8_t color_index = static_cast<uint8_t>(p0 | (p1 << 1U));
+  if (!bg_is_2bpp) {
+    const uint8_t p2 = (vram_byte(tile_byte_addr + 16U) >> shift) & 1U;
+    const uint8_t p3 = (vram_byte(tile_byte_addr + 17U) >> shift) & 1U;
+    color_index = static_cast<uint8_t>(color_index | (p2 << 2U) | (p3 << 3U));
+  }
+
+  if (color_index == 0U) {
+    return {0U, true, priority};
+  }
+  const uint8_t cgram_index = static_cast<uint8_t>((static_cast<uint8_t>(palette_group) << bpp) | color_index);
+  return {cgram_index, false, priority};
+}
+
+namespace {
+
+// OBSEL size pairs (small, large) per fullsnes table at $2101. Codes 6/7 are
+// "undocumented" but present on real hardware.
+struct ObjSizePair {
+  uint8_t small_w;
+  uint8_t small_h;
+  uint8_t large_w;
+  uint8_t large_h;
+};
+constexpr std::array<ObjSizePair, 8> kObjSizes = {{
+    {8, 8, 16, 16},    // 0
+    {8, 8, 32, 32},    // 1
+    {8, 8, 64, 64},    // 2
+    {16, 16, 32, 32},  // 3
+    {16, 16, 64, 64},  // 4
+    {32, 32, 64, 64},  // 5
+    {16, 32, 32, 64},  // 6 (undocumented)
+    {16, 32, 32, 32},  // 7 (undocumented)
+}};
+
+}  // namespace
+
+Ppu::ObjPixel Ppu::FetchObjPixel(uint32_t screen_x, uint32_t screen_y) const {
+  const ObjSizePair sizes = kObjSizes[obj_size_select_];
+
+  for (uint8_t obj = 0; obj < 128U; ++obj) {
+    const uint16_t low_addr = static_cast<uint16_t>(obj * 4U);
+
+    // High-table byte holds (X-high, size) bit-pair at position (obj%4)*2 for
+    // four OBJs at a time. Read it + Y first so the common "no Y overlap"
+    // miss path skips the X/tile/attr reads.
+    const uint16_t high_byte_addr = static_cast<uint16_t>(sppu::regs::kOamHighTableBase + (obj >> 2U));
+    const uint8_t high_byte = ReadOamByte(high_byte_addr);
+    const uint8_t high_shift = static_cast<uint8_t>((obj & 3U) << 1U);
+    const bool large = ((high_byte >> (high_shift + 1U)) & 1U) != 0U;
+
+    const uint8_t width = large ? sizes.large_w : sizes.small_w;
+    const uint8_t height = large ? sizes.large_h : sizes.small_h;
+
+    const uint8_t y_raw = ReadOamByte(static_cast<uint16_t>(low_addr + 1U));
+    // Y range with 8-bit wrap (sprites can wrap bottom→top).
+    const uint8_t y_internal_8 = static_cast<uint8_t>(static_cast<uint8_t>(screen_y) - y_raw);
+    if (y_internal_8 >= height) continue;
+
+    const bool x_high_bit = ((high_byte >> high_shift) & 1U) != 0U;
+    const uint8_t x_lo = ReadOamByte(low_addr);
+    // X is 9-bit signed (sign-extend bit 8). Sprites can sit partly off-screen.
+    int32_t signed_x = static_cast<int32_t>(x_lo) | (x_high_bit ? -256 : 0);
+    const int32_t x_internal = static_cast<int32_t>(screen_x) - signed_x;
+    if (x_internal < 0 || x_internal >= width) continue;
+
+    const uint8_t tile_lo = ReadOamByte(static_cast<uint16_t>(low_addr + 2U));
+    const uint8_t attr = ReadOamByte(static_cast<uint16_t>(low_addr + 3U));
+
+    const bool hflip = (attr & sppu::regs::kObjAttrHflipMask) != 0U;
+    const bool vflip = (attr & sppu::regs::kObjAttrVflipMask) != 0U;
+    uint32_t pix_x = static_cast<uint32_t>(x_internal);
+    uint32_t pix_y = static_cast<uint32_t>(y_internal_8);
+    if (hflip) pix_x = (static_cast<uint32_t>(width) - 1U) - pix_x;
+    if (vflip) pix_y = (static_cast<uint32_t>(height) - 1U) - pix_y;
+
+    const uint32_t sub_x = pix_x >> 3U;
+    const uint32_t sub_y = pix_y >> 3U;
+    const uint32_t in_x = pix_x & 7U;
+    const uint32_t in_y = pix_y & 7U;
+
+    // 9-bit tile number (bit 8 from attr.0). Low nibble wraps within its
+    // 16-tile row; high nibble wraps within its 16-row page; the region-select
+    // bit does NOT carry.
+    const uint16_t base_tile = static_cast<uint16_t>(tile_lo | ((attr & sppu::regs::kObjAttrTileHighMask) << 8U));
+    const uint16_t tile_x_low = static_cast<uint16_t>(((base_tile & 0x0FU) + sub_x) & 0x0FU);
+    const uint16_t tile_y_low = static_cast<uint16_t>((((base_tile >> 4U) & 0x0FU) + sub_y) & 0x0FU);
+    const uint16_t region_bit = static_cast<uint16_t>(base_tile & 0x100U);
+    const uint16_t effective_tile = static_cast<uint16_t>(region_bit | (tile_y_low << 4U) | tile_x_low);
+
+    const uint16_t region_word_base = (effective_tile & 0x100U) ? obj_region1_word_ : obj_region0_word_;
+    const uint16_t tile_in_region = static_cast<uint16_t>(effective_tile & 0xFFU);
+    const uint32_t tile_byte_addr =
+        (static_cast<uint32_t>(region_word_base) << 1U) + (static_cast<uint32_t>(tile_in_region) * 32U) + (in_y * 2U);
+
+    auto vram_byte = [&](uint32_t addr) { return (*vram_)[addr & 0xFFFFU]; };
+
+    const uint8_t shift = static_cast<uint8_t>(7U - in_x);
+    const uint8_t p0 = (vram_byte(tile_byte_addr + 0U) >> shift) & 1U;
+    const uint8_t p1 = (vram_byte(tile_byte_addr + 1U) >> shift) & 1U;
+    const uint8_t p2 = (vram_byte(tile_byte_addr + 16U) >> shift) & 1U;
+    const uint8_t p3 = (vram_byte(tile_byte_addr + 17U) >> shift) & 1U;
+    const uint8_t color_index = static_cast<uint8_t>(p0 | (p1 << 1U) | (p2 << 2U) | (p3 << 3U));
+    if (color_index == 0U) {
+      continue;
+    }
+
+    // OBJ palette region: $80..$FF, eight 16-color groups.
+    const unsigned palette_group =
+        (static_cast<unsigned>(attr) >> sppu::regs::kObjAttrPaletteShift) & sppu::regs::kObjAttrPaletteMask;
+    const uint8_t cgram_index =
+        static_cast<uint8_t>(0x80U | (palette_group << 4U) | static_cast<unsigned>(color_index));
+    const uint8_t priority = static_cast<uint8_t>(
+        (static_cast<unsigned>(attr) >> sppu::regs::kObjAttrPriorityShift) & sppu::regs::kObjAttrPriorityMask);
+    return {cgram_index, false, priority};
+  }
+
+  return {0U, true, 0U};
+}
 
 }  // namespace pupsnes

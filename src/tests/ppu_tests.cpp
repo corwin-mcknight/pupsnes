@@ -102,8 +102,8 @@ TEST_CASE("CGDATA write-twice stores 15-bit word and auto-increments CGADD", "[u
 
   // Target CGRAM word #5. Two CGDATA writes (low then high) commit one word.
   BusWrite(snes, sppu::regs::kCgAdd, 5, /*now=*/0);
-  BusWrite(snes, sppu::regs::kCgData, 0x34, /*now=*/1);          // low byte
-  BusWrite(snes, sppu::regs::kCgData, 0xFF, /*now=*/2);          // high byte; bit 7 dropped
+  BusWrite(snes, sppu::regs::kCgData, 0x34, /*now=*/1);  // low byte
+  BusWrite(snes, sppu::regs::kCgData, 0xFF, /*now=*/2);  // high byte; bit 7 dropped
 
   // Drain via any read.
   (void)BusRead(snes, sppu::regs::kStat77, /*now=*/3);
@@ -365,8 +365,8 @@ TEST_CASE("PPU runs a full NTSC frame, fires onFrameReady, emits backdrop pixels
   // Seed CGRAM[0] with pure red (BGR555: R=31, G=0, B=0) and disable forced
   // blank with full brightness. Writes arrive before any dot emits.
   BusWrite(snes, sppu::regs::kCgAdd, 0, /*now=*/0);
-  BusWrite(snes, sppu::regs::kCgData, 0x1F, /*now=*/1);  // low byte: R=0x1F
-  BusWrite(snes, sppu::regs::kCgData, 0x00, /*now=*/2);  // high byte: G=B=0
+  BusWrite(snes, sppu::regs::kCgData, 0x1F, /*now=*/1);   // low byte: R=0x1F
+  BusWrite(snes, sppu::regs::kCgData, 0x00, /*now=*/2);   // high byte: G=B=0
   BusWrite(snes, sppu::regs::kInidisp, 0x0F, /*now=*/3);  // brightness=15, forced_blank=0
 
   // One full NTSC non-interlace frame = 262 * 1364 = 357368 cycles.
@@ -425,8 +425,7 @@ TEST_CASE("PPU frame output is deterministic across runs", "[unit][ppu][integrat
     constexpr TimeMasterT kFrameEnd = 262U * 1364U;
     ppu.CatchUpTo(kFrameEnd);
 
-    std::memcpy(dest, ppu.GetFrontBuffer(),
-                sppu::regs::kFrameBufferPixels * sizeof(uint16_t));
+    std::memcpy(dest, ppu.GetFrontBuffer(), sppu::regs::kFrameBufferPixels * sizeof(uint16_t));
   };
 
   std::array<uint16_t, sppu::regs::kFrameBufferPixels> a{};
@@ -457,7 +456,6 @@ TEST_CASE("Forced blank keeps the backbuffer black inside the visible window", "
   const uint16_t center = ppu.GetFrontBuffer()[100U * sppu::regs::kFrameBufferWidth + 100U];
   REQUIRE(center == 0x0000);
 }
-
 
 TEST_CASE("PPU drawn mask tracks pixels emitted since last frame start", "[unit][ppu]") {
   // After Reset, drawn_mask is all-zero. Each call to CatchUpTo advances the
@@ -567,8 +565,8 @@ TEST_CASE("VMAIN address translation modes rotate the low address bits", "[unit]
     Ppu& ppu = snes.GetPpu();
     ppu.Reset();
 
-    const uint8_t vmain = static_cast<uint8_t>(
-        sppu::regs::kVmainIncrementOnHighMask | (mode_bits << sppu::regs::kVmainTranslateShift));
+    const uint8_t vmain =
+        static_cast<uint8_t>(sppu::regs::kVmainIncrementOnHighMask | (mode_bits << sppu::regs::kVmainTranslateShift));
     BusWrite(snes, sppu::regs::kVmain, vmain, /*now=*/0);
     BusWrite(snes, sppu::regs::kVmAddL, static_cast<uint8_t>(raw_word_addr & 0xFFU), /*now=*/1);
     BusWrite(snes, sppu::regs::kVmAddH, static_cast<uint8_t>((raw_word_addr >> 8U) & 0xFFU), /*now=*/2);
@@ -754,8 +752,7 @@ TEST_CASE("PPU VBlank NMI latch honors overscan start line", "[unit][ppu]") {
   REQUIRE(ppu.QueryAndClearVblankNmiFlag(240U * 1364U));
 }
 
-TEST_CASE("PPU QueryHvbStatus honors SETINI overscan for VBlank start line",
-          "[unit][ppu]") {
+TEST_CASE("PPU QueryHvbStatus honors SETINI overscan for VBlank start line", "[unit][ppu]") {
   SNES snes;
   snes.Reset();
   Ppu& ppu = snes.GetPpu();
@@ -773,4 +770,1022 @@ TEST_CASE("PPU QueryHvbStatus honors SETINI overscan for VBlank start line",
   constexpr TimeMasterT kStartOfV240 = 240U * 1364U;
   status = ppu.QueryHvbStatus(kStartOfV240);
   REQUIRE(status.vblank);
+}
+
+// ---------------------------------------------------------------------------
+// Mode 1 BG rendering tests.
+// ---------------------------------------------------------------------------
+// All Mode 1 tests share a small set of helpers that drive VRAM/CGRAM via the
+// real ports (through SystemBus, so the lazy-replay log is exercised end-to-
+// end). Each test sets up state at low cycle counts (well before the first
+// visible dot at master cycle 1452 = V=1 H=22) and then calls CatchUpTo past
+// the end of the NTSC frame to render and swap buffers. After swap, the
+// rendered frame is in the front buffer; BuildFrontView() points at the
+// visible (256x224) sub-region.
+
+namespace {
+
+constexpr TimeMasterT kFrameEndNtsc = 262U * 1364U + 100U;
+
+void SetVramAddress(SNES& snes, uint16_t word_addr, TimeMasterT& now) {
+  BusWrite(snes, sppu::regs::kVmAddL, static_cast<uint8_t>(word_addr & 0xFFU), now++);
+  BusWrite(snes, sppu::regs::kVmAddH, static_cast<uint8_t>((word_addr >> 8) & 0xFFU), now++);
+}
+
+void WriteVramWord(SNES& snes, uint16_t word_addr, uint16_t value, TimeMasterT& now) {
+  SetVramAddress(snes, word_addr, now);
+  BusWrite(snes, sppu::regs::kVmDataL, static_cast<uint8_t>(value & 0xFFU), now++);
+  BusWrite(snes, sppu::regs::kVmDataH, static_cast<uint8_t>((value >> 8) & 0xFFU), now++);
+}
+
+void WriteCgramWord(SNES& snes, uint8_t cgadd, uint16_t color, TimeMasterT& now) {
+  BusWrite(snes, sppu::regs::kCgAdd, cgadd, now++);
+  BusWrite(snes, sppu::regs::kCgData, static_cast<uint8_t>(color & 0xFFU), now++);
+  BusWrite(snes, sppu::regs::kCgData, static_cast<uint8_t>((color >> 8) & 0x7FU), now++);
+}
+
+// Write a 4bpp 8x8 tile pattern to VRAM at `char_word_base + char_index*16`
+// (in words, since each 4bpp 8x8 tile is 16 words = 32 bytes). `pixels` is
+// row-major, 8 bytes per row, each byte a 4-bit palette index in the LOW
+// nibble (high nibble ignored). `pixels[r*8+c]` becomes column c of row r.
+void WriteTile4bpp(SNES& snes, uint16_t char_word_base, uint16_t char_index, const uint8_t (&pixels)[64],
+                   TimeMasterT& now) {
+  const uint16_t base = static_cast<uint16_t>(char_word_base + char_index * 16U);
+  // Planes 0/1 in words [0..7], planes 2/3 in words [8..15]. Bit 7 of each
+  // plane byte is the leftmost pixel.
+  for (uint16_t row = 0; row < 8; ++row) {
+    uint8_t p0 = 0, p1 = 0, p2 = 0, p3 = 0;
+    for (uint16_t col = 0; col < 8; ++col) {
+      const uint8_t v = pixels[row * 8 + col] & 0x0FU;
+      const uint8_t shift = static_cast<uint8_t>(7U - col);
+      p0 |= static_cast<uint8_t>((v & 1U) << shift);
+      p1 |= static_cast<uint8_t>(((v >> 1) & 1U) << shift);
+      p2 |= static_cast<uint8_t>(((v >> 2) & 1U) << shift);
+      p3 |= static_cast<uint8_t>(((v >> 3) & 1U) << shift);
+    }
+    WriteVramWord(snes, static_cast<uint16_t>(base + row), static_cast<uint16_t>(p0 | (p1 << 8U)), now);
+    WriteVramWord(snes, static_cast<uint16_t>(base + 8U + row), static_cast<uint16_t>(p2 | (p3 << 8U)), now);
+  }
+}
+
+// Set the OAM byte address. byte_addr must be even (the OAMADDL latch only
+// captures bits 1..8 of byte_addr; bit 0 is implicitly 0). For odd-byte access
+// in the high table, set the next-lower even byte and let port-side
+// auto-increment carry you across.
+void SetOamByteAddress(SNES& snes, uint16_t byte_addr, TimeMasterT& now) {
+  BusWrite(snes, sppu::regs::kOamAddH, static_cast<uint8_t>((byte_addr >> 9U) & 0x01U), now++);
+  BusWrite(snes, sppu::regs::kOamAddL, static_cast<uint8_t>((byte_addr >> 1U) & 0xFFU), now++);
+}
+
+// Configure OBJ N's 4-byte low-table entry (X low, Y, tile low, attributes).
+// Other OBJs' bytes are not touched.
+void WriteOamLowEntry(SNES& snes, uint8_t obj_index, uint8_t x_lo, uint8_t y, uint8_t tile_lo, uint8_t attr,
+                      TimeMasterT& now) {
+  SetOamByteAddress(snes, static_cast<uint16_t>(obj_index * 4U), now);
+  BusWrite(snes, sppu::regs::kOamData, x_lo, now++);
+  BusWrite(snes, sppu::regs::kOamData, y, now++);
+  BusWrite(snes, sppu::regs::kOamData, tile_lo, now++);
+  BusWrite(snes, sppu::regs::kOamData, attr, now++);
+}
+
+// Replace the entire byte at OAM high-table offset $200 + N (where N=0..31).
+// Bit (obj%4)*2 holds X-high, bit (obj%4)*2 + 1 holds size (0=small, 1=large)
+// for OBJs (group*4)..(group*4 + 3) where group = N. Use this when you need
+// to set bits for a single OBJ's group; other OBJs in the same group get
+// reset to 0/0 unless you set those bits explicitly.
+void WriteOamHighGroupByte(SNES& snes, uint8_t group_index, uint8_t value, TimeMasterT& now) {
+  SetOamByteAddress(snes, static_cast<uint16_t>(0x200U + group_index), now);
+  BusWrite(snes, sppu::regs::kOamData, value, now++);
+}
+
+// Same shape, 2bpp variant — 8 words per tile.
+void WriteTile2bpp(SNES& snes, uint16_t char_word_base, uint16_t char_index, const uint8_t (&pixels)[64],
+                   TimeMasterT& now) {
+  const uint16_t base = static_cast<uint16_t>(char_word_base + char_index * 8U);
+  for (uint16_t row = 0; row < 8; ++row) {
+    uint8_t p0 = 0, p1 = 0;
+    for (uint16_t col = 0; col < 8; ++col) {
+      const uint8_t v = pixels[row * 8 + col] & 0x03U;
+      const uint8_t shift = static_cast<uint8_t>(7U - col);
+      p0 |= static_cast<uint8_t>((v & 1U) << shift);
+      p1 |= static_cast<uint8_t>(((v >> 1) & 1U) << shift);
+    }
+    WriteVramWord(snes, static_cast<uint16_t>(base + row), static_cast<uint16_t>(p0 | (p1 << 8U)), now);
+  }
+}
+
+}  // namespace
+
+TEST_CASE("Mode 1 BG1 4bpp tile renders to the framebuffer with palette colors", "[unit][ppu]") {
+  SNES snes;
+  Ppu& ppu = snes.GetPpu();
+  ppu.Reset();
+  TimeMasterT now = 1;
+
+  // Drop forced blank, full brightness so BrightnessScale is identity.
+  BusWrite(snes, sppu::regs::kInidisp, 0x0FU, now++);
+  // VMAIN: word increment (+1), no translation, increment after VMDATAH.
+  BusWrite(snes, sppu::regs::kVmain, 0x80U, now++);
+
+  // Palette: backdrop=black, color1=red, color2=green, color5=white.
+  WriteCgramWord(snes, 0U, 0x0000U, now);
+  WriteCgramWord(snes, 1U, 0x001FU, now);  // BGR555 red
+  WriteCgramWord(snes, 2U, 0x03E0U, now);  // green
+  WriteCgramWord(snes, 5U, 0x7FFFU, now);  // white
+
+  // Tile 0: row 0 alternates between color 1 and color 2; rest is color 5.
+  uint8_t tile0[64] = {};
+  for (uint16_t c = 0; c < 8; ++c) tile0[c] = (c & 1U) ? 2U : 1U;
+  for (uint16_t i = 8; i < 64; ++i) tile0[i] = 5U;
+  // Char base 0x1000 words = 0x2000 bytes (BG1 nibble = 1).
+  WriteTile4bpp(snes, /*char_word_base=*/0x1000U, /*char_index=*/0, tile0, now);
+
+  // Tilemap entry (0,0): char 0, palette 0, no flip, no priority.
+  WriteVramWord(snes, /*word_addr=*/0x0000U, /*value=*/0x0000U, now);
+
+  // BGMODE=1, BG1 8x8. BG1SC: tilemap base 0x0000, layout 32x32.
+  BusWrite(snes, sppu::regs::kBgmode, 0x01U, now++);
+  BusWrite(snes, sppu::regs::kBg1Sc, 0x00U, now++);
+  // BG12NBA: BG1 char base nibble = 1 → 0x1000 words.
+  BusWrite(snes, sppu::regs::kBg12Nba, 0x01U, now++);
+  // Scroll = 0 on both axes (write twice for the latch).
+  BusWrite(snes, sppu::regs::kBg1Hofs, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kBg1Hofs, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kBg1Vofs, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kBg1Vofs, 0x00U, now++);
+  // TM: enable BG1 only.
+  BusWrite(snes, sppu::regs::kTm, sppu::regs::kTmBg1Mask, now++);
+
+  ppu.CatchUpTo(kFrameEndNtsc);
+  const FrameBufferView view = ppu.BuildFrontView();
+
+  // Row 0 columns 0..7 alternate red / green per tile0 pattern.
+  REQUIRE(view.pixels[0] == 0x001FU);
+  REQUIRE(view.pixels[1] == 0x03E0U);
+  REQUIRE(view.pixels[2] == 0x001FU);
+  REQUIRE(view.pixels[3] == 0x03E0U);
+  REQUIRE(view.pixels[6] == 0x001FU);
+  REQUIRE(view.pixels[7] == 0x03E0U);
+  // Row 1+ should be white (color 5).
+  REQUIRE(view.pixels[1U * view.stride + 0U] == 0x7FFFU);
+  REQUIRE(view.pixels[7U * view.stride + 7U] == 0x7FFFU);
+}
+
+TEST_CASE("Mode 1 BG1 hflip + vflip mirror the 8x8 tile pattern", "[unit][ppu]") {
+  SNES snes;
+  Ppu& ppu = snes.GetPpu();
+  ppu.Reset();
+  TimeMasterT now = 1;
+
+  BusWrite(snes, sppu::regs::kInidisp, 0x0FU, now++);
+  BusWrite(snes, sppu::regs::kVmain, 0x80U, now++);
+  WriteCgramWord(snes, 0U, 0x0000U, now);
+  WriteCgramWord(snes, 1U, 0x001FU, now);  // red
+  WriteCgramWord(snes, 2U, 0x03E0U, now);  // green
+  WriteCgramWord(snes, 3U, 0x7C00U, now);  // blue
+
+  // Tile pattern marks (col=0,row=0)=red, (col=7,row=0)=green, (col=0,row=7)=blue.
+  uint8_t tile[64] = {};
+  tile[0 * 8 + 0] = 1;
+  tile[0 * 8 + 7] = 2;
+  tile[7 * 8 + 0] = 3;
+  WriteTile4bpp(snes, 0x1000U, 0, tile, now);
+
+  // Tilemap (0,0) = char 0, hflip + vflip set (bits 14, 15).
+  WriteVramWord(snes, 0x0000U, 0xC000U, now);
+
+  BusWrite(snes, sppu::regs::kBgmode, 0x01U, now++);
+  BusWrite(snes, sppu::regs::kBg1Sc, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kBg12Nba, 0x01U, now++);
+  BusWrite(snes, sppu::regs::kBg1Hofs, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kBg1Hofs, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kBg1Vofs, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kBg1Vofs, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kBg2Sc, 0x00U, now++);  // disable BG2 (default tile 0 → backdrop via TM)
+  BusWrite(snes, sppu::regs::kTm, sppu::regs::kTmBg1Mask, now++);
+
+  ppu.CatchUpTo(kFrameEndNtsc);
+  const FrameBufferView view = ppu.BuildFrontView();
+
+  // After hflip+vflip, (col=0,row=0) source maps to rendered (col=7,row=7).
+  REQUIRE(view.pixels[7U * view.stride + 7U] == 0x001FU);  // red, was source (0,0)
+  REQUIRE(view.pixels[7U * view.stride + 0U] == 0x03E0U);  // green, was source (7,0)
+  REQUIRE(view.pixels[0U * view.stride + 7U] == 0x7C00U);  // blue, was source (0,7)
+}
+
+TEST_CASE("Mode 1 BG1 16x16 tile picks the right 8x8 sub-tile", "[unit][ppu]") {
+  SNES snes;
+  Ppu& ppu = snes.GetPpu();
+  ppu.Reset();
+  TimeMasterT now = 1;
+
+  BusWrite(snes, sppu::regs::kInidisp, 0x0FU, now++);
+  BusWrite(snes, sppu::regs::kVmain, 0x80U, now++);
+  WriteCgramWord(snes, 0U, 0x0000U, now);
+  WriteCgramWord(snes, 1U, 0x001FU, now);  // red    (TL filler)
+  WriteCgramWord(snes, 2U, 0x03E0U, now);  // green  (TR filler)
+  WriteCgramWord(snes, 3U, 0x7C00U, now);  // blue   (BL filler)
+  WriteCgramWord(snes, 4U, 0x7FFFU, now);  // white  (BR filler)
+
+  // Sub-tile char indices: TL=0, TR=1, BL=0x10, BR=0x11.
+  auto write_solid = [&](uint16_t char_idx, uint8_t color) {
+    uint8_t buf[64];
+    for (uint16_t i = 0; i < 64; ++i) buf[i] = color;
+    WriteTile4bpp(snes, 0x1000U, char_idx, buf, now);
+  };
+  write_solid(0x0000U, 1U);  // TL = red
+  write_solid(0x0001U, 2U);  // TR = green
+  write_solid(0x0010U, 3U);  // BL = blue
+  write_solid(0x0011U, 4U);  // BR = white
+
+  // Tilemap (0,0) = char 0, no flip.
+  WriteVramWord(snes, 0x0000U, 0x0000U, now);
+
+  // BGMODE=1, BG1 16x16 tile size (bit 4 set).
+  BusWrite(snes, sppu::regs::kBgmode, static_cast<uint8_t>(0x01U | sppu::regs::kBgmodeBg1TileSizeMask), now++);
+  BusWrite(snes, sppu::regs::kBg1Sc, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kBg12Nba, 0x01U, now++);
+  BusWrite(snes, sppu::regs::kBg1Hofs, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kBg1Hofs, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kBg1Vofs, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kBg1Vofs, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kTm, sppu::regs::kTmBg1Mask, now++);
+
+  ppu.CatchUpTo(kFrameEndNtsc);
+  const FrameBufferView view = ppu.BuildFrontView();
+
+  // TL quadrant (cols 0..7, rows 0..7) = red.
+  REQUIRE(view.pixels[0U * view.stride + 0U] == 0x001FU);
+  REQUIRE(view.pixels[7U * view.stride + 7U] == 0x001FU);
+  // TR (cols 8..15, rows 0..7) = green.
+  REQUIRE(view.pixels[0U * view.stride + 8U] == 0x03E0U);
+  REQUIRE(view.pixels[7U * view.stride + 15U] == 0x03E0U);
+  // BL (cols 0..7, rows 8..15) = blue.
+  REQUIRE(view.pixels[8U * view.stride + 0U] == 0x7C00U);
+  REQUIRE(view.pixels[15U * view.stride + 7U] == 0x7C00U);
+  // BR (cols 8..15, rows 8..15) = white.
+  REQUIRE(view.pixels[8U * view.stride + 8U] == 0x7FFFU);
+  REQUIRE(view.pixels[15U * view.stride + 15U] == 0x7FFFU);
+}
+
+TEST_CASE("Mode 1 64x32 layout fetches second tilemap screen past the seam", "[unit][ppu]") {
+  SNES snes;
+  Ppu& ppu = snes.GetPpu();
+  ppu.Reset();
+  TimeMasterT now = 1;
+
+  BusWrite(snes, sppu::regs::kInidisp, 0x0FU, now++);
+  BusWrite(snes, sppu::regs::kVmain, 0x80U, now++);
+  WriteCgramWord(snes, 0U, 0x0000U, now);
+  WriteCgramWord(snes, 1U, 0x001FU, now);  // red    (tile 0)
+  WriteCgramWord(snes, 2U, 0x03E0U, now);  // green  (tile 1)
+
+  // Tile 0 = solid red, Tile 1 = solid green.
+  uint8_t solid_red[64];
+  for (uint16_t i = 0; i < 64; ++i) solid_red[i] = 1U;
+  uint8_t solid_green[64];
+  for (uint16_t i = 0; i < 64; ++i) solid_green[i] = 2U;
+  WriteTile4bpp(snes, 0x1000U, 0, solid_red, now);
+  WriteTile4bpp(snes, 0x1000U, 1, solid_green, now);
+
+  // Left screen at word 0x0000 — fill row 0 entries with char 0 (red).
+  // Right screen at word 0x0400 — fill row 0 entries with char 1 (green).
+  // Only need entry 0 of each, but write a couple to be sure.
+  for (uint16_t c = 0; c < 4; ++c) {
+    WriteVramWord(snes, static_cast<uint16_t>(0x0000U + c), 0x0000U, now);  // char 0
+    WriteVramWord(snes, static_cast<uint16_t>(0x0400U + c), 0x0001U, now);  // char 1
+  }
+
+  // BGMODE=1, BG1 8x8.
+  BusWrite(snes, sppu::regs::kBgmode, 0x01U, now++);
+  // BG1SC: tilemap base 0, layout = 64x32 (bits 1:0 = 1).
+  BusWrite(snes, sppu::regs::kBg1Sc, 0x01U, now++);
+  BusWrite(snes, sppu::regs::kBg12Nba, 0x01U, now++);
+
+  // Set BG1 H scroll = 32*8 = 256 so the visible window starts in the right
+  // (second) screen. Scroll value 256 = 0x100; write low=0x00, high=0x01.
+  BusWrite(snes, sppu::regs::kBg1Hofs, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kBg1Hofs, 0x01U, now++);
+  BusWrite(snes, sppu::regs::kBg1Vofs, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kBg1Vofs, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kTm, sppu::regs::kTmBg1Mask, now++);
+
+  ppu.CatchUpTo(kFrameEndNtsc);
+  const FrameBufferView view = ppu.BuildFrontView();
+
+  // With H scroll = 256, screen column 0 maps to tile column 32 (in the
+  // second 32-wide screen, char 1 = green).
+  REQUIRE(view.pixels[0U * view.stride + 0U] == 0x03E0U);
+}
+
+TEST_CASE("BG scroll write-twice latch matches the fullsnes BG_old formula", "[unit][ppu]") {
+  SNES snes;
+  Ppu& ppu = snes.GetPpu();
+  ppu.Reset();
+  TimeMasterT now = 1;
+
+  // BG1HOFS first write 0x80 (Curr=0x80, Prev_old=0, Reg_old=0):
+  //   BG1HOFS = (0x80<<8) | (0&~7) | ((0>>8)&7) = 0x8000 → masked to 10 bits = 0x000.
+  //   Prev = 0x80.
+  BusWrite(snes, sppu::regs::kBg1Hofs, 0x80U, now++);
+
+  // BG1HOFS second write 0x05 (Curr=0x05, Prev_old=0x80, Reg_old=0x000):
+  //   BG1HOFS = (0x05<<8) | (0x80 & ~7) | ((0x000>>8)&7)
+  //           = 0x0500 | 0x80 | 0 = 0x0580 → masked = 0x180.
+  //   Prev = 0x05.
+  BusWrite(snes, sppu::regs::kBg1Hofs, 0x05U, now++);
+
+  // BG1VOFS first write 0x12 (Curr=0x12, Prev_old=0x05):
+  //   BG1VOFS = (0x12<<8) | 0x05 = 0x1205 → masked = 0x005.
+  //   Prev = 0x12.
+  BusWrite(snes, sppu::regs::kBg1Vofs, 0x12U, now++);
+
+  // BG1VOFS second write 0x07 (Curr=0x07, Prev_old=0x12):
+  //   BG1VOFS = (0x07<<8) | 0x12 = 0x0712 → masked = 0x312.
+  //   Prev = 0x07.
+  BusWrite(snes, sppu::regs::kBg1Vofs, 0x07U, now++);
+
+  // Force a catch-up so the log replays.
+  (void)BusRead(snes, sppu::regs::kStat77, now++);
+
+  REQUIRE(ppu.GetBgHofs(0) == 0x180U);
+  REQUIRE(ppu.GetBgVofs(0) == 0x312U);
+}
+
+TEST_CASE("Mode 1 BG3 priority bit sends BG3 prio-1 above BG1 prio-1", "[unit][ppu]") {
+  SNES snes;
+  Ppu& ppu = snes.GetPpu();
+  ppu.Reset();
+  TimeMasterT now = 1;
+
+  BusWrite(snes, sppu::regs::kInidisp, 0x0FU, now++);
+  BusWrite(snes, sppu::regs::kVmain, 0x80U, now++);
+  WriteCgramWord(snes, 0U, 0x0000U, now);
+  WriteCgramWord(snes, 1U, 0x001FU, now);   // red    (BG1)
+  WriteCgramWord(snes, 16U, 0x03E0U, now);  // BG3 palette group 0, color... actually
+  // For BG3 (2bpp), palette group N color C → CGRAM index (N << 2) | C.
+  // We want palette group 4 (so index = 4*4 = 16) color 1 → green at CGRAM[17].
+  WriteCgramWord(snes, 17U, 0x03E0U, now);  // green (BG3 palette 4 color 1)
+
+  // BG1 char base 0x1000 words; BG3 char base 0x2000 words.
+  // BG1 tile 0 = solid color 1 (red).
+  uint8_t solid_red[64];
+  for (uint16_t i = 0; i < 64; ++i) solid_red[i] = 1U;
+  WriteTile4bpp(snes, 0x1000U, 0, solid_red, now);
+  // BG3 tile 0 = solid 2bpp color 1.
+  uint8_t solid_2bpp_1[64];
+  for (uint16_t i = 0; i < 64; ++i) solid_2bpp_1[i] = 1U;
+  WriteTile2bpp(snes, 0x2000U, 0, solid_2bpp_1, now);
+
+  // BG1 tilemap at word 0x3000 — char 0, palette 0, priority=1.
+  WriteVramWord(snes, 0x3000U, 0x2000U, now);  // bit 13 = priority
+  // BG3 tilemap at word 0x3400 — char 0, palette 4, priority=1.
+  // palette_group field = bits 10..12 = 4 → 4 << 10 = 0x1000.
+  WriteVramWord(snes, 0x3400U, static_cast<uint16_t>(0x2000U | 0x1000U), now);
+
+  // BGMODE=1, BG3 priority bit set.
+  BusWrite(snes, sppu::regs::kBgmode, static_cast<uint8_t>(0x01U | sppu::regs::kBgmodeBg3PriorityMask), now++);
+  // BG1SC tilemap base = 0x3000 → (data & 0xFC) << 8 = 0x3000 → data = 0x30.
+  BusWrite(snes, sppu::regs::kBg1Sc, 0x30U, now++);
+  // BG3SC tilemap base = 0x3400 → data = 0x34.
+  BusWrite(snes, sppu::regs::kBg3Sc, 0x34U, now++);
+  // BG12NBA: BG1 char base nibble = 1.
+  BusWrite(snes, sppu::regs::kBg12Nba, 0x01U, now++);
+  // BG34NBA: BG3 char base nibble = 2.
+  BusWrite(snes, sppu::regs::kBg34Nba, 0x02U, now++);
+  // No scroll.
+  BusWrite(snes, sppu::regs::kBg1Hofs, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kBg1Hofs, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kBg1Vofs, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kBg1Vofs, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kBg3Hofs, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kBg3Hofs, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kBg3Vofs, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kBg3Vofs, 0x00U, now++);
+  // TM: enable BG1 + BG3.
+  BusWrite(snes, sppu::regs::kTm, static_cast<uint8_t>(sppu::regs::kTmBg1Mask | sppu::regs::kTmBg3Mask), now++);
+
+  ppu.CatchUpTo(kFrameEndNtsc);
+  const FrameBufferView view = ppu.BuildFrontView();
+
+  // With BG3 priority bit set, BG3 prio-1 wins over BG1 prio-1 → green.
+  REQUIRE(view.pixels[0U * view.stride + 0U] == 0x03E0U);
+}
+
+TEST_CASE("Mode 1 TM mask disables BG1, exposes BG2 contribution", "[unit][ppu]") {
+  SNES snes;
+  Ppu& ppu = snes.GetPpu();
+  ppu.Reset();
+  TimeMasterT now = 1;
+
+  BusWrite(snes, sppu::regs::kInidisp, 0x0FU, now++);
+  BusWrite(snes, sppu::regs::kVmain, 0x80U, now++);
+  WriteCgramWord(snes, 0U, 0x0000U, now);
+  WriteCgramWord(snes, 1U, 0x001FU, now);  // red   (BG1)
+  WriteCgramWord(snes, 2U, 0x03E0U, now);  // green (BG2)
+
+  // BG1 char base 0x1000 (nibble 1), BG2 char base 0x2000 (nibble 2). Both 4bpp.
+  uint8_t bg1_red[64];
+  for (uint16_t i = 0; i < 64; ++i) bg1_red[i] = 1U;
+  uint8_t bg2_green[64];
+  for (uint16_t i = 0; i < 64; ++i) bg2_green[i] = 2U;
+  WriteTile4bpp(snes, 0x1000U, 0, bg1_red, now);
+  WriteTile4bpp(snes, 0x2000U, 0, bg2_green, now);
+
+  // BG1 tilemap at word 0x3000, char 0 priority 0.
+  WriteVramWord(snes, 0x3000U, 0x0000U, now);
+  // BG2 tilemap at word 0x3400, char 0 priority 0.
+  WriteVramWord(snes, 0x3400U, 0x0000U, now);
+
+  BusWrite(snes, sppu::regs::kBgmode, 0x01U, now++);
+  BusWrite(snes, sppu::regs::kBg1Sc, 0x30U, now++);  // 0x3000 word base
+  BusWrite(snes, sppu::regs::kBg2Sc, 0x34U, now++);  // 0x3400 word base
+  // BG12NBA: BG1 nibble=1 → 0x1000, BG2 nibble=2 → 0x2000.
+  BusWrite(snes, sppu::regs::kBg12Nba, static_cast<uint8_t>(0x01U | (0x02U << 4U)), now++);
+  // No scroll for either BG.
+  for (uint16_t reg : {sppu::regs::kBg1Hofs, sppu::regs::kBg1Hofs, sppu::regs::kBg1Vofs, sppu::regs::kBg1Vofs,
+                       sppu::regs::kBg2Hofs, sppu::regs::kBg2Hofs, sppu::regs::kBg2Vofs, sppu::regs::kBg2Vofs}) {
+    BusWrite(snes, reg, 0x00U, now++);
+  }
+  // TM: disable BG1, enable BG2.
+  BusWrite(snes, sppu::regs::kTm, sppu::regs::kTmBg2Mask, now++);
+
+  ppu.CatchUpTo(kFrameEndNtsc);
+  const FrameBufferView view = ppu.BuildFrontView();
+
+  // BG1 disabled in TM → BG2's green wins.
+  REQUIRE(view.pixels[0U * view.stride + 0U] == 0x03E0U);
+}
+
+TEST_CASE("Mode 1 transparent BG pixels fall through to backdrop", "[unit][ppu]") {
+  SNES snes;
+  Ppu& ppu = snes.GetPpu();
+  ppu.Reset();
+  TimeMasterT now = 1;
+
+  BusWrite(snes, sppu::regs::kInidisp, 0x0FU, now++);
+  BusWrite(snes, sppu::regs::kVmain, 0x80U, now++);
+  WriteCgramWord(snes, 0U, 0x7C1FU, now);  // backdrop = magenta
+  WriteCgramWord(snes, 1U, 0x001FU, now);  // (unused) red
+
+  // BG1 tile 0 = all transparent (color index 0 everywhere).
+  uint8_t empty[64] = {};
+  WriteTile4bpp(snes, 0x1000U, 0, empty, now);
+  WriteVramWord(snes, 0x0000U, 0x0000U, now);
+
+  BusWrite(snes, sppu::regs::kBgmode, 0x01U, now++);
+  BusWrite(snes, sppu::regs::kBg1Sc, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kBg12Nba, 0x01U, now++);
+  BusWrite(snes, sppu::regs::kBg1Hofs, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kBg1Hofs, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kBg1Vofs, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kBg1Vofs, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kTm, sppu::regs::kTmBg1Mask, now++);
+
+  ppu.CatchUpTo(kFrameEndNtsc);
+  const FrameBufferView view = ppu.BuildFrontView();
+
+  // BG1 transparent everywhere → backdrop magenta.
+  REQUIRE(view.pixels[0U * view.stride + 0U] == 0x7C1FU);
+  REQUIRE(view.pixels[10U * view.stride + 200U] == 0x7C1FU);
+}
+
+TEST_CASE("Mode 0 BG1 2bpp tile uses CGRAM region 0", "[unit][ppu]") {
+  SNES snes;
+  Ppu& ppu = snes.GetPpu();
+  ppu.Reset();
+  TimeMasterT now = 1;
+
+  BusWrite(snes, sppu::regs::kInidisp, 0x0FU, now++);
+  BusWrite(snes, sppu::regs::kVmain, 0x80U, now++);
+  WriteCgramWord(snes, 0U, 0x0000U, now);  // backdrop
+  WriteCgramWord(snes, 1U, 0x001FU, now);  // BG1 color 1 = red
+
+  // BG1 char base 0x1000 words. Solid 2bpp color 1 tile.
+  uint8_t solid_1[64];
+  for (uint16_t i = 0; i < 64; ++i) solid_1[i] = 1U;
+  WriteTile2bpp(snes, 0x1000U, 0, solid_1, now);
+  WriteVramWord(snes, 0x0000U, 0x0000U, now);  // tilemap (0,0)=char 0
+
+  BusWrite(snes, sppu::regs::kBgmode, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kBg1Sc, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kBg12Nba, 0x01U, now++);
+  BusWrite(snes, sppu::regs::kBg1Hofs, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kBg1Hofs, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kBg1Vofs, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kBg1Vofs, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kTm, sppu::regs::kTmBg1Mask, now++);
+
+  ppu.CatchUpTo(kFrameEndNtsc);
+  const FrameBufferView view = ppu.BuildFrontView();
+  REQUIRE(view.pixels[0U * view.stride + 0U] == 0x001FU);
+}
+
+TEST_CASE("Mode 0 BG2 reads palette from CGRAM region +32", "[unit][ppu]") {
+  SNES snes;
+  Ppu& ppu = snes.GetPpu();
+  ppu.Reset();
+  TimeMasterT now = 1;
+
+  BusWrite(snes, sppu::regs::kInidisp, 0x0FU, now++);
+  BusWrite(snes, sppu::regs::kVmain, 0x80U, now++);
+  WriteCgramWord(snes, 0U, 0x0000U, now);
+  // BG2 base = 32. Color 1 in palette group 0 lives at CGRAM[33].
+  WriteCgramWord(snes, 33U, 0x03E0U, now);  // green
+
+  // BG2 char base 0x2000 words.
+  uint8_t solid_1[64];
+  for (uint16_t i = 0; i < 64; ++i) solid_1[i] = 1U;
+  WriteTile2bpp(snes, 0x2000U, 0, solid_1, now);
+  // BG2 tilemap at word 0x0400.
+  WriteVramWord(snes, 0x0400U, 0x0000U, now);
+
+  BusWrite(snes, sppu::regs::kBgmode, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kBg2Sc, 0x04U, now++);                            // tilemap base 0x0400
+  BusWrite(snes, sppu::regs::kBg12Nba, static_cast<uint8_t>(2U << 4), now++);  // BG2 nibble = 2
+  BusWrite(snes, sppu::regs::kBg2Hofs, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kBg2Hofs, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kBg2Vofs, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kBg2Vofs, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kTm, sppu::regs::kTmBg2Mask, now++);
+
+  ppu.CatchUpTo(kFrameEndNtsc);
+  const FrameBufferView view = ppu.BuildFrontView();
+  REQUIRE(view.pixels[0U * view.stride + 0U] == 0x03E0U);
+}
+
+TEST_CASE("Mode 0 BG3 reads palette from CGRAM region +64", "[unit][ppu]") {
+  SNES snes;
+  Ppu& ppu = snes.GetPpu();
+  ppu.Reset();
+  TimeMasterT now = 1;
+
+  BusWrite(snes, sppu::regs::kInidisp, 0x0FU, now++);
+  BusWrite(snes, sppu::regs::kVmain, 0x80U, now++);
+  WriteCgramWord(snes, 0U, 0x0000U, now);
+  WriteCgramWord(snes, 65U, 0x7C00U, now);  // BG3 color 1 = blue at CGRAM[64+1]
+
+  uint8_t solid_1[64];
+  for (uint16_t i = 0; i < 64; ++i) solid_1[i] = 1U;
+  WriteTile2bpp(snes, 0x3000U, 0, solid_1, now);
+  WriteVramWord(snes, 0x0800U, 0x0000U, now);
+
+  BusWrite(snes, sppu::regs::kBgmode, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kBg3Sc, 0x08U, now++);                       // tilemap base 0x0800
+  BusWrite(snes, sppu::regs::kBg34Nba, static_cast<uint8_t>(3U), now++);  // BG3 nibble = 3
+  BusWrite(snes, sppu::regs::kBg3Hofs, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kBg3Hofs, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kBg3Vofs, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kBg3Vofs, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kTm, sppu::regs::kTmBg3Mask, now++);
+
+  ppu.CatchUpTo(kFrameEndNtsc);
+  const FrameBufferView view = ppu.BuildFrontView();
+  REQUIRE(view.pixels[0U * view.stride + 0U] == 0x7C00U);
+}
+
+TEST_CASE("Mode 0 BG4 reads palette from CGRAM region +96", "[unit][ppu]") {
+  SNES snes;
+  Ppu& ppu = snes.GetPpu();
+  ppu.Reset();
+  TimeMasterT now = 1;
+
+  BusWrite(snes, sppu::regs::kInidisp, 0x0FU, now++);
+  BusWrite(snes, sppu::regs::kVmain, 0x80U, now++);
+  WriteCgramWord(snes, 0U, 0x0000U, now);
+  WriteCgramWord(snes, 97U, 0x7FFFU, now);  // BG4 color 1 = white at CGRAM[96+1]
+
+  uint8_t solid_1[64];
+  for (uint16_t i = 0; i < 64; ++i) solid_1[i] = 1U;
+  WriteTile2bpp(snes, 0x4000U, 0, solid_1, now);
+  WriteVramWord(snes, 0x0C00U, 0x0000U, now);
+
+  BusWrite(snes, sppu::regs::kBgmode, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kBg4Sc, 0x0CU, now++);                            // tilemap base 0x0C00
+  BusWrite(snes, sppu::regs::kBg34Nba, static_cast<uint8_t>(4U << 4), now++);  // BG4 nibble = 4
+  BusWrite(snes, sppu::regs::kBg4Hofs, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kBg4Hofs, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kBg4Vofs, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kBg4Vofs, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kTm, sppu::regs::kTmBg4Mask, now++);
+
+  ppu.CatchUpTo(kFrameEndNtsc);
+  const FrameBufferView view = ppu.BuildFrontView();
+  REQUIRE(view.pixels[0U * view.stride + 0U] == 0x7FFFU);
+}
+
+TEST_CASE("Mode 0 priority: BG2 prio-1 wins over BG1 prio-0", "[unit][ppu]") {
+  SNES snes;
+  Ppu& ppu = snes.GetPpu();
+  ppu.Reset();
+  TimeMasterT now = 1;
+
+  BusWrite(snes, sppu::regs::kInidisp, 0x0FU, now++);
+  BusWrite(snes, sppu::regs::kVmain, 0x80U, now++);
+  WriteCgramWord(snes, 0U, 0x0000U, now);
+  WriteCgramWord(snes, 1U, 0x001FU, now);   // BG1 color 1 = red
+  WriteCgramWord(snes, 33U, 0x03E0U, now);  // BG2 color 1 = green (CGRAM[33] = +32 + 1)
+
+  uint8_t solid_1[64];
+  for (uint16_t i = 0; i < 64; ++i) solid_1[i] = 1U;
+  WriteTile2bpp(snes, 0x1000U, 0, solid_1, now);  // BG1 tile
+  WriteTile2bpp(snes, 0x2000U, 0, solid_1, now);  // BG2 tile
+
+  // BG1 tilemap at 0x0000, char 0, priority 0.
+  WriteVramWord(snes, 0x0000U, 0x0000U, now);
+  // BG2 tilemap at 0x0400, char 0, priority 1.
+  WriteVramWord(snes, 0x0400U, 0x2000U, now);
+
+  BusWrite(snes, sppu::regs::kBgmode, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kBg1Sc, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kBg2Sc, 0x04U, now++);
+  BusWrite(snes, sppu::regs::kBg12Nba, static_cast<uint8_t>(0x01U | (0x02U << 4)), now++);
+  for (uint16_t reg : {sppu::regs::kBg1Hofs, sppu::regs::kBg1Hofs, sppu::regs::kBg1Vofs, sppu::regs::kBg1Vofs,
+                       sppu::regs::kBg2Hofs, sppu::regs::kBg2Hofs, sppu::regs::kBg2Vofs, sppu::regs::kBg2Vofs}) {
+    BusWrite(snes, reg, 0x00U, now++);
+  }
+  BusWrite(snes, sppu::regs::kTm, static_cast<uint8_t>(sppu::regs::kTmBg1Mask | sppu::regs::kTmBg2Mask), now++);
+
+  ppu.CatchUpTo(kFrameEndNtsc);
+  const FrameBufferView view = ppu.BuildFrontView();
+  // BG2 prio-1 sits above BG1 prio-0 in Mode 0's eight-slot order → green.
+  REQUIRE(view.pixels[0U * view.stride + 0U] == 0x03E0U);
+}
+
+TEST_CASE("Mode 0 priority: BG1 prio-0 wins over BG2 prio-0", "[unit][ppu]") {
+  // Within the same priority class, BG1 sits above BG2 (slot order:
+  // BG1.h, BG2.h, BG3.h, BG4.h, BG1.l, BG2.l, BG3.l, BG4.l).
+  SNES snes;
+  Ppu& ppu = snes.GetPpu();
+  ppu.Reset();
+  TimeMasterT now = 1;
+
+  BusWrite(snes, sppu::regs::kInidisp, 0x0FU, now++);
+  BusWrite(snes, sppu::regs::kVmain, 0x80U, now++);
+  WriteCgramWord(snes, 0U, 0x0000U, now);
+  WriteCgramWord(snes, 1U, 0x001FU, now);   // BG1 red
+  WriteCgramWord(snes, 33U, 0x03E0U, now);  // BG2 green
+
+  uint8_t solid_1[64];
+  for (uint16_t i = 0; i < 64; ++i) solid_1[i] = 1U;
+  WriteTile2bpp(snes, 0x1000U, 0, solid_1, now);
+  WriteTile2bpp(snes, 0x2000U, 0, solid_1, now);
+  WriteVramWord(snes, 0x0000U, 0x0000U, now);  // BG1 prio 0
+  WriteVramWord(snes, 0x0400U, 0x0000U, now);  // BG2 prio 0
+
+  BusWrite(snes, sppu::regs::kBgmode, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kBg1Sc, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kBg2Sc, 0x04U, now++);
+  BusWrite(snes, sppu::regs::kBg12Nba, static_cast<uint8_t>(0x01U | (0x02U << 4)), now++);
+  for (uint16_t reg : {sppu::regs::kBg1Hofs, sppu::regs::kBg1Hofs, sppu::regs::kBg1Vofs, sppu::regs::kBg1Vofs,
+                       sppu::regs::kBg2Hofs, sppu::regs::kBg2Hofs, sppu::regs::kBg2Vofs, sppu::regs::kBg2Vofs}) {
+    BusWrite(snes, reg, 0x00U, now++);
+  }
+  BusWrite(snes, sppu::regs::kTm, static_cast<uint8_t>(sppu::regs::kTmBg1Mask | sppu::regs::kTmBg2Mask), now++);
+
+  ppu.CatchUpTo(kFrameEndNtsc);
+  const FrameBufferView view = ppu.BuildFrontView();
+  REQUIRE(view.pixels[0U * view.stride + 0U] == 0x001FU);  // BG1 red wins
+}
+
+TEST_CASE("Unimplemented BG modes still emit backdrop only", "[unit][ppu]") {
+  // Modes 2..7 don't have renderers yet — they should always fall through
+  // to the backdrop path regardless of how BG state is configured.
+  SNES snes;
+  Ppu& ppu = snes.GetPpu();
+  ppu.Reset();
+  TimeMasterT now = 1;
+
+  BusWrite(snes, sppu::regs::kInidisp, 0x0FU, now++);
+  BusWrite(snes, sppu::regs::kVmain, 0x80U, now++);
+  WriteCgramWord(snes, 0U, 0x03E0U, now);  // backdrop = green
+  WriteCgramWord(snes, 1U, 0x001FU, now);  // (would-be BG color)
+
+  uint8_t solid_red[64];
+  for (uint16_t i = 0; i < 64; ++i) solid_red[i] = 1U;
+  WriteTile4bpp(snes, 0x1000U, 0, solid_red, now);
+  WriteVramWord(snes, 0x0000U, 0x0000U, now);
+
+  // BGMODE = 2 (offset-per-tile mode, not yet implemented).
+  BusWrite(snes, sppu::regs::kBgmode, 0x02U, now++);
+  BusWrite(snes, sppu::regs::kBg1Sc, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kBg12Nba, 0x01U, now++);
+  BusWrite(snes, sppu::regs::kBg1Hofs, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kBg1Hofs, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kBg1Vofs, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kBg1Vofs, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kTm, sppu::regs::kTmBg1Mask, now++);
+
+  ppu.CatchUpTo(kFrameEndNtsc);
+  const FrameBufferView view = ppu.BuildFrontView();
+
+  REQUIRE(view.pixels[0U * view.stride + 0U] == 0x03E0U);
+  REQUIRE(view.pixels[100U * view.stride + 100U] == 0x03E0U);
+}
+
+// ---------------------------------------------------------------------------
+// OBJ (sprite) tests.
+// ---------------------------------------------------------------------------
+// All OBJ tests follow the same shape: enable Mode 1 with no BGs (so OBJ
+// rendering is the only contribution above backdrop), set up OBSEL, write
+// sprite tile graphics into VRAM, populate OAM, enable OBJ in TM, and assert
+// pixels in the framebuffer match expected sprite output.
+//
+// v1 walks every OAM entry per pixel; the 32-OBJ / 34-tile per-line cap is
+// deferred. Tests can rely on default-zero OBJs being effectively transparent
+// when their tile index is set to a tile whose VRAM data is zero.
+
+TEST_CASE("OBJ basic 8x8 sprite renders at sprite position", "[unit][ppu]") {
+  SNES snes;
+  Ppu& ppu = snes.GetPpu();
+  ppu.Reset();
+  TimeMasterT now = 1;
+
+  BusWrite(snes, sppu::regs::kInidisp, 0x0FU, now++);
+  BusWrite(snes, sppu::regs::kVmain, 0x80U, now++);
+  WriteCgramWord(snes, 0U, 0x0000U, now);     // backdrop = black
+  WriteCgramWord(snes, 0x81U, 0x001FU, now);  // OBJ palette 0 color 1 = red
+
+  // OBJ tile graphics at region 0 (OBSEL name base = 0). Use tile index 1 so
+  // OBJs 1..127 (defaulting to tile 0 with zero VRAM) stay transparent.
+  uint8_t solid_red[64];
+  for (uint16_t i = 0; i < 64; ++i) solid_red[i] = 1U;
+  WriteTile4bpp(snes, 0x0000U, 1U, solid_red, now);
+
+  // OBSEL: size pair 0 (small=8x8, large=16x16), name base 0, no gap.
+  BusWrite(snes, sppu::regs::kObsel, 0x00U, now++);
+  // OBJ 0: x=10, y=20, tile=1, attr palette=0, no flip, priority=0.
+  WriteOamLowEntry(snes, 0U, 10U, 20U, 1U, 0x00U, now);
+
+  BusWrite(snes, sppu::regs::kBgmode, 0x01U, now++);
+  BusWrite(snes, sppu::regs::kTm, sppu::regs::kTmObjMask, now++);
+
+  ppu.CatchUpTo(kFrameEndNtsc);
+  const FrameBufferView view = ppu.BuildFrontView();
+
+  // Sprite covers screen rows 20..27, cols 10..17.
+  REQUIRE(view.pixels[20U * view.stride + 10U] == 0x001FU);
+  REQUIRE(view.pixels[27U * view.stride + 17U] == 0x001FU);
+  // Just outside the sprite → backdrop.
+  REQUIRE(view.pixels[19U * view.stride + 10U] == 0x0000U);
+  REQUIRE(view.pixels[20U * view.stride + 9U] == 0x0000U);
+  REQUIRE(view.pixels[28U * view.stride + 10U] == 0x0000U);
+  REQUIRE(view.pixels[20U * view.stride + 18U] == 0x0000U);
+}
+
+TEST_CASE("OBJ hflip + vflip mirror the 8x8 sprite", "[unit][ppu]") {
+  SNES snes;
+  Ppu& ppu = snes.GetPpu();
+  ppu.Reset();
+  TimeMasterT now = 1;
+
+  BusWrite(snes, sppu::regs::kInidisp, 0x0FU, now++);
+  BusWrite(snes, sppu::regs::kVmain, 0x80U, now++);
+  WriteCgramWord(snes, 0U, 0x0000U, now);
+  WriteCgramWord(snes, 0x81U, 0x001FU, now);  // red
+  WriteCgramWord(snes, 0x82U, 0x03E0U, now);  // green
+  WriteCgramWord(snes, 0x83U, 0x7C00U, now);  // blue
+
+  // Sprite tile 1: top-left=red(1), top-right=green(2), bottom-left=blue(3).
+  uint8_t tile[64] = {};
+  tile[0 * 8 + 0] = 1;
+  tile[0 * 8 + 7] = 2;
+  tile[7 * 8 + 0] = 3;
+  WriteTile4bpp(snes, 0x0000U, 1U, tile, now);
+
+  BusWrite(snes, sppu::regs::kObsel, 0x00U, now++);
+  // attr bit 6 = X-flip, bit 7 = Y-flip → 0xC0.
+  WriteOamLowEntry(snes, 0U, 30U, 40U, 1U, 0xC0U, now);
+
+  BusWrite(snes, sppu::regs::kBgmode, 0x01U, now++);
+  BusWrite(snes, sppu::regs::kTm, sppu::regs::kTmObjMask, now++);
+
+  ppu.CatchUpTo(kFrameEndNtsc);
+  const FrameBufferView view = ppu.BuildFrontView();
+
+  // After hflip+vflip, source (0,0) maps to rendered (7,7) within the sprite.
+  REQUIRE(view.pixels[(40U + 7U) * view.stride + (30U + 7U)] == 0x001FU);  // red
+  REQUIRE(view.pixels[(40U + 7U) * view.stride + (30U + 0U)] == 0x03E0U);  // green
+  REQUIRE(view.pixels[(40U + 0U) * view.stride + (30U + 7U)] == 0x7C00U);  // blue
+}
+
+TEST_CASE("OBJ 16x16 large sprite picks the right 8x8 sub-tile", "[unit][ppu]") {
+  // Size pair 0: small=8x8, large=16x16. Set OBJ 0 large=1.
+  SNES snes;
+  Ppu& ppu = snes.GetPpu();
+  ppu.Reset();
+  TimeMasterT now = 1;
+
+  BusWrite(snes, sppu::regs::kInidisp, 0x0FU, now++);
+  BusWrite(snes, sppu::regs::kVmain, 0x80U, now++);
+  WriteCgramWord(snes, 0U, 0x0000U, now);
+  WriteCgramWord(snes, 0x81U, 0x001FU, now);  // TL = red
+  WriteCgramWord(snes, 0x82U, 0x03E0U, now);  // TR = green
+  WriteCgramWord(snes, 0x83U, 0x7C00U, now);  // BL = blue
+  WriteCgramWord(snes, 0x84U, 0x7FFFU, now);  // BR = white
+
+  // Sub-tile char indices for OBJ tile N=2: TL=2, TR=3, BL=2+0x10=0x12, BR=0x13.
+  // (OBJ tile arithmetic carries within row low nibble only; with tile 2
+  // there's plenty of room before any wrap.)
+  auto fill_solid = [&](uint16_t char_idx, uint8_t color) {
+    uint8_t buf[64];
+    for (uint16_t i = 0; i < 64; ++i) buf[i] = color;
+    WriteTile4bpp(snes, 0x0000U, char_idx, buf, now);
+  };
+  fill_solid(0x02U, 1U);  // TL = red
+  fill_solid(0x03U, 2U);  // TR = green
+  fill_solid(0x12U, 3U);  // BL = blue
+  fill_solid(0x13U, 4U);  // BR = white
+
+  BusWrite(snes, sppu::regs::kObsel, 0x00U, now++);
+  WriteOamLowEntry(snes, 0U, 50U, 60U, 0x02U, 0x00U, now);
+  // Set OBJ 0 large bit (size = 1 in high table).
+  WriteOamHighGroupByte(snes, 0U, 0x02U, now);  // bit 1 = OBJ 0 size
+
+  BusWrite(snes, sppu::regs::kBgmode, 0x01U, now++);
+  BusWrite(snes, sppu::regs::kTm, sppu::regs::kTmObjMask, now++);
+
+  ppu.CatchUpTo(kFrameEndNtsc);
+  const FrameBufferView view = ppu.BuildFrontView();
+
+  // Expect a 16x16 sprite at (50, 60). Quadrants:
+  REQUIRE(view.pixels[60U * view.stride + 50U] == 0x001FU);                  // TL red
+  REQUIRE(view.pixels[60U * view.stride + 58U] == 0x03E0U);                  // TR green
+  REQUIRE(view.pixels[68U * view.stride + 50U] == 0x7C00U);                  // BL blue
+  REQUIRE(view.pixels[68U * view.stride + 58U] == 0x7FFFU);                  // BR white
+  REQUIRE(view.pixels[(60U + 15U) * view.stride + (50U + 15U)] == 0x7FFFU);  // bottom-right corner
+}
+
+TEST_CASE("OBJ priority 3 renders above BG1 priority-1 tile in Mode 1", "[unit][ppu]") {
+  SNES snes;
+  Ppu& ppu = snes.GetPpu();
+  ppu.Reset();
+  TimeMasterT now = 1;
+
+  BusWrite(snes, sppu::regs::kInidisp, 0x0FU, now++);
+  BusWrite(snes, sppu::regs::kVmain, 0x80U, now++);
+  WriteCgramWord(snes, 0U, 0x0000U, now);
+  WriteCgramWord(snes, 1U, 0x001FU, now);     // BG1 color 1 = red
+  WriteCgramWord(snes, 0x81U, 0x03E0U, now);  // OBJ palette 0 color 1 = green
+
+  uint8_t solid_red[64];
+  for (uint16_t i = 0; i < 64; ++i) solid_red[i] = 1U;
+  uint8_t solid_green[64];
+  for (uint16_t i = 0; i < 64; ++i) solid_green[i] = 1U;
+  WriteTile4bpp(snes, 0x1000U, 0U, solid_red, now);    // BG1 char 0 = red
+  WriteTile4bpp(snes, 0x4000U, 1U, solid_green, now);  // OBJ tile 1 = green (will use OBJ palette)
+
+  // BG1 tilemap (0,0): char 0, palette 0, priority=1 (bit 13).
+  WriteVramWord(snes, 0x0000U, 0x2000U, now);
+
+  // OBSEL: name base 4 → OBJ region 0 starts at word 4*0x2000 = 0x8000... wait,
+  // (OBSEL & 7) << 13 with OBSEL=4 → 4<<13 = 0x8000, masked to 15 bits = 0.
+  // Try OBSEL=2: 2<<13 = 0x4000. ✓
+  BusWrite(snes, sppu::regs::kObsel, 0x02U, now++);
+  // OBJ 0: x=20, y=30, tile=1, attr priority=3 (bits 5:4 = 0b11), palette 0.
+  WriteOamLowEntry(snes, 0U, 20U, 30U, 1U, 0x30U, now);
+
+  BusWrite(snes, sppu::regs::kBgmode, 0x01U, now++);
+  BusWrite(snes, sppu::regs::kBg1Sc, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kBg12Nba, 0x01U, now++);
+  BusWrite(snes, sppu::regs::kBg1Hofs, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kBg1Hofs, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kBg1Vofs, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kBg1Vofs, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kTm, static_cast<uint8_t>(sppu::regs::kTmBg1Mask | sppu::regs::kTmObjMask), now++);
+
+  ppu.CatchUpTo(kFrameEndNtsc);
+  const FrameBufferView view = ppu.BuildFrontView();
+
+  // At (20, 30): both BG1.h (red) and OBJ.3 (green) cover this pixel.
+  // Mode 1 priority order starts with OBJ.3 → green wins.
+  REQUIRE(view.pixels[30U * view.stride + 20U] == 0x03E0U);
+  // Outside sprite, BG1 is everywhere → red.
+  REQUIRE(view.pixels[100U * view.stride + 100U] == 0x001FU);
+}
+
+TEST_CASE("OBJ priority 0 renders below BG1 priority-1 tile in Mode 1", "[unit][ppu]") {
+  SNES snes;
+  Ppu& ppu = snes.GetPpu();
+  ppu.Reset();
+  TimeMasterT now = 1;
+
+  BusWrite(snes, sppu::regs::kInidisp, 0x0FU, now++);
+  BusWrite(snes, sppu::regs::kVmain, 0x80U, now++);
+  WriteCgramWord(snes, 0U, 0x0000U, now);
+  WriteCgramWord(snes, 1U, 0x001FU, now);     // BG1 red
+  WriteCgramWord(snes, 0x81U, 0x03E0U, now);  // OBJ green
+
+  uint8_t solid_1[64];
+  for (uint16_t i = 0; i < 64; ++i) solid_1[i] = 1U;
+  WriteTile4bpp(snes, 0x1000U, 0U, solid_1, now);
+  WriteTile4bpp(snes, 0x4000U, 1U, solid_1, now);
+
+  // BG1 tilemap (0,0): char 0, priority 1.
+  WriteVramWord(snes, 0x0000U, 0x2000U, now);
+
+  BusWrite(snes, sppu::regs::kObsel, 0x02U, now++);
+  // OBJ 0: priority 0 (attr bits 5:4 = 0).
+  WriteOamLowEntry(snes, 0U, 20U, 30U, 1U, 0x00U, now);
+
+  BusWrite(snes, sppu::regs::kBgmode, 0x01U, now++);
+  BusWrite(snes, sppu::regs::kBg1Sc, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kBg12Nba, 0x01U, now++);
+  BusWrite(snes, sppu::regs::kBg1Hofs, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kBg1Hofs, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kBg1Vofs, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kBg1Vofs, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kTm, static_cast<uint8_t>(sppu::regs::kTmBg1Mask | sppu::regs::kTmObjMask), now++);
+
+  ppu.CatchUpTo(kFrameEndNtsc);
+  const FrameBufferView view = ppu.BuildFrontView();
+
+  // BG1 prio-1 sits above OBJ.0 → red wins where they overlap.
+  REQUIRE(view.pixels[30U * view.stride + 20U] == 0x001FU);
+}
+
+TEST_CASE("OBJ overlap: lowest OAM index wins among covering sprites", "[unit][ppu]") {
+  SNES snes;
+  Ppu& ppu = snes.GetPpu();
+  ppu.Reset();
+  TimeMasterT now = 1;
+
+  BusWrite(snes, sppu::regs::kInidisp, 0x0FU, now++);
+  BusWrite(snes, sppu::regs::kVmain, 0x80U, now++);
+  WriteCgramWord(snes, 0U, 0x0000U, now);
+  WriteCgramWord(snes, 0x81U, 0x001FU, now);  // OBJ 0 → red
+  WriteCgramWord(snes, 0x91U, 0x03E0U, now);  // OBJ 1 → green (palette group 1, color 1 → 0x80 + 16 + 1 = 0x91)
+
+  uint8_t solid_1[64];
+  for (uint16_t i = 0; i < 64; ++i) solid_1[i] = 1U;
+  WriteTile4bpp(snes, 0x0000U, 1U, solid_1, now);
+
+  BusWrite(snes, sppu::regs::kObsel, 0x00U, now++);
+  // OBJ 0 (lower index, should win): position (40,40), palette 0.
+  WriteOamLowEntry(snes, 0U, 40U, 40U, 1U, 0x00U, now);
+  // OBJ 1 (higher index, same position): palette 1 (attr bits 3:1 = 0b001 → 0x02).
+  WriteOamLowEntry(snes, 1U, 40U, 40U, 1U, 0x02U, now);
+
+  BusWrite(snes, sppu::regs::kBgmode, 0x01U, now++);
+  BusWrite(snes, sppu::regs::kTm, sppu::regs::kTmObjMask, now++);
+
+  ppu.CatchUpTo(kFrameEndNtsc);
+  const FrameBufferView view = ppu.BuildFrontView();
+
+  // OBJ 0 (red) wins by virtue of lower OAM index.
+  REQUIRE(view.pixels[40U * view.stride + 40U] == 0x001FU);
+}
+
+TEST_CASE("OBJ TM bit 4 disables sprites globally", "[unit][ppu]") {
+  SNES snes;
+  Ppu& ppu = snes.GetPpu();
+  ppu.Reset();
+  TimeMasterT now = 1;
+
+  BusWrite(snes, sppu::regs::kInidisp, 0x0FU, now++);
+  BusWrite(snes, sppu::regs::kVmain, 0x80U, now++);
+  WriteCgramWord(snes, 0U, 0x7FFFU, now);     // backdrop = white
+  WriteCgramWord(snes, 0x81U, 0x001FU, now);  // would-be OBJ red
+
+  uint8_t solid_1[64];
+  for (uint16_t i = 0; i < 64; ++i) solid_1[i] = 1U;
+  WriteTile4bpp(snes, 0x0000U, 1U, solid_1, now);
+
+  BusWrite(snes, sppu::regs::kObsel, 0x00U, now++);
+  WriteOamLowEntry(snes, 0U, 60U, 60U, 1U, 0x00U, now);
+
+  BusWrite(snes, sppu::regs::kBgmode, 0x01U, now++);
+  // TM = 0 → no main-screen layers, including OBJ.
+  BusWrite(snes, sppu::regs::kTm, 0x00U, now++);
+
+  ppu.CatchUpTo(kFrameEndNtsc);
+  const FrameBufferView view = ppu.BuildFrontView();
+  // Sprite suppressed → backdrop everywhere.
+  REQUIRE(view.pixels[60U * view.stride + 60U] == 0x7FFFU);
+}
+
+TEST_CASE("OBJ color index 0 is transparent and falls through to backdrop", "[unit][ppu]") {
+  SNES snes;
+  Ppu& ppu = snes.GetPpu();
+  ppu.Reset();
+  TimeMasterT now = 1;
+
+  BusWrite(snes, sppu::regs::kInidisp, 0x0FU, now++);
+  BusWrite(snes, sppu::regs::kVmain, 0x80U, now++);
+  WriteCgramWord(snes, 0U, 0x7C1FU, now);     // backdrop magenta
+  WriteCgramWord(snes, 0x81U, 0x001FU, now);  // OBJ color 1 (unused)
+
+  // OBJ tile 1 entirely color 0 (transparent for sprites too).
+  uint8_t empty[64] = {};
+  WriteTile4bpp(snes, 0x0000U, 1U, empty, now);
+
+  BusWrite(snes, sppu::regs::kObsel, 0x00U, now++);
+  WriteOamLowEntry(snes, 0U, 70U, 70U, 1U, 0x00U, now);
+
+  BusWrite(snes, sppu::regs::kBgmode, 0x01U, now++);
+  BusWrite(snes, sppu::regs::kTm, sppu::regs::kTmObjMask, now++);
+
+  ppu.CatchUpTo(kFrameEndNtsc);
+  const FrameBufferView view = ppu.BuildFrontView();
+  REQUIRE(view.pixels[70U * view.stride + 70U] == 0x7C1FU);
 }

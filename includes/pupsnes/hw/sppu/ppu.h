@@ -41,19 +41,11 @@ struct PpuHvbStatus {
   bool hblank;
 };
 
-// SPPU — Super Nintendo Picture Processing Unit (v1 scaffold).
-//
-// v1 scope (backdrop-only rendering):
-//   * Own the B-bus window at $2100-$213F, mapped across banks $00-$3F / $80-$BF.
-//   * Advance through time with a dot-major Tick (populated in Phase D).
-//   * Maintain VRAM/OAM/CGRAM backing plus real port protocols (write-twice,
-//     auto-increment, read-prefetch) so Phase-C ports behave correctly before
-//     the renderer catches up in later milestones.
-//   * Emit one backdrop pixel per visible dot (`cgram[0]` × INIDISP brightness,
-//     or 0 under forced-blank).
-//
-// Out of scope for v1: BG/OBJ/windows/mode-7, NMI, HIRQ/VIRQ, color math,
-// H/V-counter latching, state-block migration.
+// SPPU — Super Nintendo Picture Processing Unit. Owns the B-bus PPU window
+// ($2100-$213F) mirrored across banks $00-$3F / $80-$BF, advances via a
+// dot-major Tick, and renders Mode 1 per-dot (so per-line HDMA scroll
+// modulation needs no extra plumbing — the dot loop drains pending writes up
+// to the dot's start cycle before fetching).
 //
 // Synchronization model — "writes queue, reads catch up":
 //   * WriteRegister appends to `pending_writes_` and returns immediately.
@@ -73,8 +65,7 @@ class Ppu : public Device {
   void MapSystemBus(SystemBus& bus);
 
   // Drop all PPU state back to power-on defaults. Does not re-map the bus;
-  // callers run MapSystemBus before the first Reset. Future Phase D will also
-  // prime the first scanline-end scheduler event from here.
+  // callers run MapSystemBus before the first Reset.
   void Reset();
 
   void CatchUpTo(TimeMasterT target) override;
@@ -131,6 +122,8 @@ class Ppu : public Device {
   [[nodiscard]] bool IsForcedBlank() const { return forced_blank_; }
   [[nodiscard]] uint8_t GetBrightness() const { return brightness_; }
   [[nodiscard]] bool IsOverscan() const { return overscan_; }
+  [[nodiscard]] uint16_t GetBgHofs(uint8_t bg) const { return bg < 4U ? bg_hofs_[bg] : uint16_t{0}; }
+  [[nodiscard]] uint16_t GetBgVofs(uint8_t bg) const { return bg < 4U ? bg_vofs_[bg] : uint16_t{0}; }
   [[nodiscard]] uint32_t GetPendingWriteCount() const { return pending_writes_count_ - pending_writes_cursor_; }
   void SetForceOverscanDraw(bool v) { force_overscan_draw_ = v; }
   [[nodiscard]] bool GetForceOverscanDraw() const { return force_overscan_draw_; }
@@ -172,7 +165,7 @@ class Ppu : public Device {
  private:
   // Append a same-clock MMIO write to the pending log. Returns true on
   // success, false when the log is full (caller triggers an internal flush via
-  // Tick in that case; Phase D fills this in).
+  // Tick in that case).
   bool EnqueueWrite(uint16_t offset, uint8_t data, TimeMasterT cycle);
 
   // Drain the pending-write log up to `cutoff` (inclusive). Writes at later
@@ -224,13 +217,61 @@ class Ppu : public Device {
   void WriteOamByte(uint16_t byte_addr, uint8_t data);
   [[nodiscard]] uint8_t ReadOamByte(uint16_t byte_addr) const;
 
+  // Read a 16-bit word from VRAM (low byte at 2*word_addr, high at +1).
+  // Word addresses wrap modulo 32K (mask &0x7FFF on the word index).
+  [[nodiscard]] uint16_t ReadVramWord(uint16_t word_addr) const;
+
+  // BG pixel fetch result. `cgram_index` is the BG-local palette index
+  // ((palette_group << bpp) | color_index); the caller adds any per-mode
+  // CGRAM region offset. Caller must have drained the lazy-replay log to
+  // the dot's start cycle before calling FetchBgPixel.
+  struct BgPixel {
+    uint8_t cgram_index;
+    bool transparent;
+    bool priority;
+  };
+  [[nodiscard]] BgPixel FetchBgPixel(uint8_t bg, uint8_t bpp, uint32_t screen_x, uint32_t screen_y) const;
+
+  // OBJ pixel at screen-space (x, y). Walks all 128 OAM entries; lowest OAM
+  // index with non-transparent color wins. `cgram_index` is absolute (already
+  // in the OBJ palette region $80-$FF). The 32-OBJ / 34-tile per-line cap is
+  // not enforced.
+  struct ObjPixel {
+    uint8_t cgram_index;
+    bool transparent;
+    uint8_t priority;
+  };
+  [[nodiscard]] ObjPixel FetchObjPixel(uint32_t screen_x, uint32_t screen_y) const;
+
   // --- Register shadow + decoded fields ---
   std::array<uint8_t, sppu::regs::kShadowSize> shadow_{};
 
-  // Decoded INIDISP ($2100) — updated during log replay.
-  uint8_t inidisp_ = 0x80;  // power-on: forced blank set.
+  // Decoded INIDISP ($2100). Power-on: forced blank set, brightness 0.
   bool forced_blank_ = true;
-  uint8_t brightness_ = 0x0F;
+  uint8_t brightness_ = 0;
+
+  // Decoded BGMODE ($2105) + BGxSC / BGxNBA / BGxOFS / TM. Indices run
+  // BG1=0..BG4=3; only BG1..BG3 participate in Mode 1.
+  uint8_t bg_mode_ = 0;
+  bool bg3_priority_ = false;
+  std::array<bool, 4> bg_tile_16x16_{};
+  std::array<uint16_t, 4> bg_tilemap_word_base_{};
+  std::array<uint8_t, 4> bg_tilemap_layout_{};  // 0=32x32, 1=64x32, 2=32x64, 3=64x64
+  std::array<uint16_t, 4> bg_char_word_base_{};
+  std::array<uint16_t, 4> bg_hofs_{};  // 10-bit (masked by kBgScrollMask)
+  std::array<uint16_t, 4> bg_vofs_{};
+  // Shared "BG_old" latch byte. Per fullsnes: BGxHOFS = (Curr<<8) | (Prev&~7) |
+  // ((BGxHOFS_old>>8)&7); BGxVOFS = (Curr<<8) | Prev. Prev = Curr after either.
+  uint8_t bg_scroll_prev_ = 0;
+  uint8_t main_screen_layers_ = 0;  // TM ($212C)
+
+  // Decoded OBSEL ($2101). `obj_size_select_` chooses one of eight (small,
+  // large) size pairs per fullsnes. `obj_region0_word_` / `obj_region1_word_`
+  // are the precomputed tile-region word bases — region 0 from name_base
+  // (8K-word steps), region 1 = region0 + 0x1000 + (name_select * 0x1000).
+  uint8_t obj_size_select_ = 0;
+  uint16_t obj_region0_word_ = 0;
+  uint16_t obj_region1_word_ = 0;
 
   // Decoded SETINI ($2133).
   bool overscan_ = false;
@@ -257,8 +298,8 @@ class Ppu : public Device {
   uint16_t vram_prefetch_ = 0;
 
   // OAM addressing. Live state is a 10-bit byte address; $2102/$2103 writes
-  // update both the live pointer and the reload latch that Phase D will copy
-  // back at start-of-frame (or during forced blank).
+  // update both the live pointer and the reload latch (copied back at
+  // start-of-frame / during forced blank).
   uint16_t oam_byte_addr_ = 0;
   uint16_t oam_byte_addr_reload_ = 0;
   bool oam_priority_rotation_ = false;
@@ -295,7 +336,7 @@ class Ppu : public Device {
   // --- Pending-write log ---
   // Fixed-size to avoid allocation on the hot write path. DMA bursts and
   // HDMA can enqueue thousands of entries per frame; 16K covers the worst
-  // case. Overflow triggers an internal flush via Tick (Phase D).
+  // case. Overflow triggers an internal flush via EnqueueWrite.
   static constexpr std::size_t kPendingWriteLogSize = 16384;
   std::unique_ptr<std::array<PpuPokeLogEntry, kPendingWriteLogSize>> pending_writes_;
   uint32_t pending_writes_count_ = 0;
