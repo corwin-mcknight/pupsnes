@@ -130,6 +130,15 @@ class Ppu : public Device {
   [[nodiscard]] uint32_t GetDotH() const { return h_; }
   [[nodiscard]] uint32_t GetDotV() const { return v_; }
   [[nodiscard]] bool GetField() const { return field_; }
+  [[nodiscard]] uint8_t GetMainScreenLayers() const { return main_screen_layers_; }
+  [[nodiscard]] uint8_t GetSubScreenLayers() const { return sub_screen_layers_; }
+  [[nodiscard]] uint8_t GetCgwsel() const { return cgwsel_; }
+  [[nodiscard]] uint8_t GetCgadsub() const { return cgadsub_; }
+  // Live COLDATA latches — independent per channel; assembled to a BGR555
+  // word at math time.
+  [[nodiscard]] uint8_t GetColdataR() const { return coldata_r_; }
+  [[nodiscard]] uint8_t GetColdataG() const { return coldata_g_; }
+  [[nodiscard]] uint8_t GetColdataB() const { return coldata_b_; }
 
   // Pure timing helpers — exposed for tests and the debugger time display.
   // NTSC non-interlace only in v1; PAL / interlaced long-line support lands
@@ -243,6 +252,30 @@ class Ppu : public Device {
   };
   [[nodiscard]] ObjPixel FetchObjPixel(uint32_t screen_x, uint32_t screen_y) const;
 
+  // Output of a single-screen (main or sub) pixel resolution. `layer_id` runs
+  // 0..3 = BG1..BG4, 4 = OBJ, 5 = backdrop (no opaque layer rendered).
+  // `obj_palette_high` is meaningful only when layer_id == 4 — set when the
+  // winning OBJ uses palette group 4..7 (the math-eligible OBJ palettes).
+  struct ResolvedPixel {
+    uint16_t bgr;
+    uint8_t layer_id;
+    bool obj_palette_high;
+  };
+  // Walk the active priority ladder for the current BGMODE/BG3-priority and
+  // return the first opaque pixel whose layer is in `layer_mask`. The
+  // pre-computed OBJ pixel is passed in so main + sub resolution share one
+  // FetchObjPixel call per dot. Returns {backdrop colour, layer_id=5} when
+  // nothing opaque renders.
+  [[nodiscard]] ResolvedPixel ResolveScreenPixel(uint8_t layer_mask, uint32_t screen_x,
+                                                  uint32_t screen_y, const ObjPixel& obj_px) const;
+
+  // Apply $2131 CGADSUB math to the resolved main pixel. Sub source is the
+  // sub-screen resolution when CGWSEL.1 is set and a sub-screen layer renders
+  // here; otherwise the COLDATA fixed colour fills in. Returns BGR555.
+  [[nodiscard]] uint16_t ApplyColorMath(uint16_t main_bgr, uint8_t main_layer, bool main_obj_high,
+                                        uint32_t screen_x, uint32_t screen_y,
+                                        const ObjPixel& obj_px) const;
+
   // --- Register shadow + decoded fields ---
   std::array<uint8_t, sppu::regs::kShadowSize> shadow_{};
 
@@ -264,6 +297,19 @@ class Ppu : public Device {
   // ((BGxHOFS_old>>8)&7); BGxVOFS = (Curr<<8) | Prev. Prev = Curr after either.
   uint8_t bg_scroll_prev_ = 0;
   uint8_t main_screen_layers_ = 0;  // TM ($212C)
+  uint8_t sub_screen_layers_ = 0;   // TS ($212D)
+
+  // Decoded color math state.
+  //   cgwsel_ / cgadsub_  — raw shadow of $2130 / $2131.
+  //   coldata_r/g/b_      — accumulating per-channel intensity latches behind
+  //                          $2132 (5-bit values). Each $2132 write updates
+  //                          whichever channels it selects via bits 5/6/7;
+  //                          unselected channels persist.
+  uint8_t cgwsel_ = 0;
+  uint8_t cgadsub_ = 0;
+  uint8_t coldata_r_ = 0;
+  uint8_t coldata_g_ = 0;
+  uint8_t coldata_b_ = 0;
 
   // Decoded OBSEL ($2101). `obj_size_select_` chooses one of eight (small,
   // large) size pairs per fullsnes. `obj_region0_word_` / `obj_region1_word_`

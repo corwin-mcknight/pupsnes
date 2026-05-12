@@ -75,6 +75,12 @@ void Ppu::Reset() {
   bg_vofs_.fill(0);
   bg_scroll_prev_ = 0;
   main_screen_layers_ = 0;
+  sub_screen_layers_ = 0;
+  cgwsel_ = 0;
+  cgadsub_ = 0;
+  coldata_r_ = 0;
+  coldata_g_ = 0;
+  coldata_b_ = 0;
 
   obj_size_select_ = 0;
   obj_region0_word_ = 0;
@@ -412,6 +418,147 @@ void Ppu::AdvanceHv() {
   }
 }
 
+namespace {
+
+// Priority ladder for one BG mode. Each Slot is either an OBJ slot at a
+// specific OBJ priority (0..3), or a BG slot for (bg index, BG priority bit).
+struct Slot {
+  bool is_obj;
+  uint8_t bg;
+  uint8_t priority;
+};
+
+// Mode 0 priority (highest first): BG palette regions stagger by 32 entries.
+constexpr std::array<Slot, 12> kOrderMode0 = {{
+    {true, 0U, 3U},  {false, 0U, 1U}, {false, 1U, 1U}, {true, 0U, 2U},
+    {false, 0U, 0U}, {false, 1U, 0U}, {true, 0U, 1U},  {false, 2U, 1U},
+    {false, 3U, 1U}, {true, 0U, 0U},  {false, 2U, 0U}, {false, 3U, 0U},
+}};
+
+// Mode 1, BGMODE.3 clear — BG3 priority "normal".
+constexpr std::array<Slot, 10> kOrderMode1Normal = {{
+    {true, 0U, 3U},  {false, 0U, 1U}, {false, 1U, 1U}, {true, 0U, 2U},
+    {false, 0U, 0U}, {false, 1U, 0U}, {true, 0U, 1U},  {false, 2U, 1U},
+    {true, 0U, 0U},  {false, 2U, 0U},
+}};
+
+// Mode 1, BGMODE.3 set — BG3 priority-1 tiles climb above BG1/BG2.
+constexpr std::array<Slot, 10> kOrderMode1Bg3High = {{
+    {false, 2U, 1U}, {true, 0U, 3U},  {false, 0U, 1U}, {false, 1U, 1U},
+    {true, 0U, 2U},  {false, 0U, 0U}, {false, 1U, 0U}, {true, 0U, 1U},
+    {true, 0U, 0U},  {false, 2U, 0U},
+}};
+
+// 5-bit per-channel saturating add (0..31).
+constexpr uint8_t SatAdd5(uint8_t a, uint8_t b) {
+  const uint32_t sum = static_cast<uint32_t>(a) + static_cast<uint32_t>(b);
+  return static_cast<uint8_t>(sum > 31U ? 31U : sum);
+}
+// 5-bit per-channel saturating subtract (clamped to 0).
+constexpr uint8_t SatSub5(uint8_t a, uint8_t b) { return static_cast<uint8_t>(a > b ? a - b : 0U); }
+
+}  // namespace
+
+Ppu::ResolvedPixel Ppu::ResolveScreenPixel(uint8_t layer_mask, uint32_t screen_x, uint32_t screen_y,
+                                            const ObjPixel& obj_px) const {
+  ResolvedPixel result = {(*cgram_)[0], 5U, false};
+
+  auto try_resolve = [&](auto order, auto bpp_for, auto cgram_base_for) -> bool {
+    for (const Slot slot : order) {
+      if (slot.is_obj) {
+        if ((layer_mask & sppu::regs::kTmObjMask) == 0U) continue;
+        if (obj_px.transparent) continue;
+        if (obj_px.priority != slot.priority) continue;
+        result.bgr = (*cgram_)[obj_px.cgram_index];
+        result.layer_id = 4U;
+        // OBJ palette 4..7 occupy CGRAM $C0..$FF — bit 6 of the absolute
+        // CGRAM index disambiguates the math-eligible "high" palettes.
+        result.obj_palette_high = (obj_px.cgram_index & 0x40U) != 0U;
+        return true;
+      }
+      if ((layer_mask & kTmMaskForBg[slot.bg]) == 0U) continue;
+      const BgPixel px = FetchBgPixel(slot.bg, bpp_for(slot.bg), screen_x, screen_y);
+      if (px.transparent || static_cast<uint8_t>(px.priority) != slot.priority) continue;
+      const uint8_t cgram_index = static_cast<uint8_t>(px.cgram_index + cgram_base_for(slot.bg));
+      result.bgr = (*cgram_)[cgram_index];
+      result.layer_id = slot.bg;
+      return true;
+    }
+    return false;
+  };
+
+  if (bg_mode_ == 0U) {
+    try_resolve(
+        kOrderMode0, [](uint8_t /*bg*/) -> uint8_t { return 2U; },
+        [](uint8_t bg) -> uint8_t { return static_cast<uint8_t>(bg * 32U); });
+  } else if (bg_mode_ == 1U) {
+    auto bpp_for = [](uint8_t bg) -> uint8_t { return (bg == 2U) ? 2U : 4U; };
+    auto cgram_base_for = [](uint8_t /*bg*/) -> uint8_t { return 0U; };
+    if (bg3_priority_) {
+      try_resolve(kOrderMode1Bg3High, bpp_for, cgram_base_for);
+    } else {
+      try_resolve(kOrderMode1Normal, bpp_for, cgram_base_for);
+    }
+  }
+  return result;
+}
+
+uint16_t Ppu::ApplyColorMath(uint16_t main_bgr, uint8_t main_layer, bool main_obj_high,
+                              uint32_t screen_x, uint32_t screen_y,
+                              const ObjPixel& obj_px) const {
+  // Determine if the main layer at this pixel is included in CGADSUB. The
+  // OBJ case adds a "palette >= 4" gate per fullsnes.
+  uint8_t layer_bit = 0;
+  if (main_layer < 4U) {
+    layer_bit = static_cast<uint8_t>(1U << main_layer);  // BG1..BG4
+  } else if (main_layer == 4U) {
+    layer_bit = main_obj_high ? sppu::regs::kCgadsubObjMask : 0U;
+  } else {
+    layer_bit = sppu::regs::kCgadsubBackdropMask;  // backdrop
+  }
+  if ((cgadsub_ & layer_bit) == 0U) {
+    return main_bgr;
+  }
+
+  // Build the sub-screen contribution. With CGWSEL.1 set the TS layer ladder
+  // is resolved; if nothing renders there, the sub-screen pixel falls back to
+  // the COLDATA fixed colour. CGWSEL.1 clear short-circuits to fixed.
+  const uint16_t coldata_fixed =
+      static_cast<uint16_t>(coldata_r_ | (static_cast<uint16_t>(coldata_g_) << 5U) |
+                            (static_cast<uint16_t>(coldata_b_) << 10U));
+  uint16_t sub_bgr = coldata_fixed;
+  if ((cgwsel_ & sppu::regs::kCgwselSubScreenEnableMask) != 0U) {
+    const ResolvedPixel sub = ResolveScreenPixel(sub_screen_layers_, screen_x, screen_y, obj_px);
+    if (sub.layer_id != 5U) {
+      sub_bgr = sub.bgr;
+    }
+  }
+
+  // Split BGR555 into per-channel intensities, apply add or subtract with
+  // saturation, then optionally halve the final per channel.
+  const uint8_t m_r = static_cast<uint8_t>(main_bgr & 0x1FU);
+  const uint8_t m_g = static_cast<uint8_t>((main_bgr >> 5U) & 0x1FU);
+  const uint8_t m_b = static_cast<uint8_t>((main_bgr >> 10U) & 0x1FU);
+  const uint8_t s_r = static_cast<uint8_t>(sub_bgr & 0x1FU);
+  const uint8_t s_g = static_cast<uint8_t>((sub_bgr >> 5U) & 0x1FU);
+  const uint8_t s_b = static_cast<uint8_t>((sub_bgr >> 10U) & 0x1FU);
+
+  const bool subtract = (cgadsub_ & sppu::regs::kCgadsubSubtractMask) != 0U;
+  uint8_t r = subtract ? SatSub5(m_r, s_r) : SatAdd5(m_r, s_r);
+  uint8_t g = subtract ? SatSub5(m_g, s_g) : SatAdd5(m_g, s_g);
+  uint8_t b = subtract ? SatSub5(m_b, s_b) : SatAdd5(m_b, s_b);
+
+  if ((cgadsub_ & sppu::regs::kCgadsubHalfMask) != 0U) {
+    // Per-channel right shift. fullsnes also documents a "skip halve when the
+    // sub-screen is the fixed-COLDATA fallback" quirk; v1 doesn't model that
+    // and applies the halve unconditionally when the bit is set.
+    r >>= 1U;
+    g >>= 1U;
+    b >>= 1U;
+  }
+  return static_cast<uint16_t>(r | (g << 5U) | (b << 10U));
+}
+
 void Ppu::EmitPixel(uint32_t h, uint32_t v) {
   const bool in_visible_h = (h >= sppu::regs::kVisibleHStart && h < sppu::regs::kVisibleHEnd);
   const uint32_t v_end =
@@ -420,112 +567,22 @@ void Ppu::EmitPixel(uint32_t h, uint32_t v) {
 
   uint16_t color = 0;
   if (in_visible_h && in_visible_v && !forced_blank_) {
-    uint16_t bgr = (*cgram_)[0];
-
-    // Slot is either a BG fetch at a specific priority, or the resolved OBJ
-    // pixel at a specific priority (0..3). is_obj==true uses `priority` as
-    // the OBJ priority level; is_obj==false uses `bg` (0..3) and `priority`
-    // as the BG priority bit (0 or 1).
-    struct Slot {
-      bool is_obj;
-      uint8_t bg;
-      uint8_t priority;
-    };
-
     const uint32_t screen_x = h - sppu::regs::kVisibleHStart;
     const uint32_t screen_y = v - sppu::regs::kVisibleVStartNtsc;
 
+    // FetchObjPixel is gated on either TM or TS enabling OBJ, since the same
+    // resolved sprite pixel feeds both main and sub resolutions.
+    const uint8_t obj_enable_mask =
+        static_cast<uint8_t>(main_screen_layers_ | sub_screen_layers_);
     ObjPixel obj_px = {0U, true, 0U};
-    if ((main_screen_layers_ & sppu::regs::kTmObjMask) != 0U) {
+    if ((obj_enable_mask & sppu::regs::kTmObjMask) != 0U) {
       obj_px = FetchObjPixel(screen_x, screen_y);
     }
 
-    auto try_resolve = [&](auto order, auto bpp_for, auto cgram_base_for) {
-      for (const Slot slot : order) {
-        if (slot.is_obj) {
-          if (obj_px.transparent) continue;
-          if (obj_px.priority != slot.priority) continue;
-          bgr = (*cgram_)[obj_px.cgram_index];
-          return true;
-        }
-        if ((main_screen_layers_ & kTmMaskForBg[slot.bg]) == 0U) {
-          continue;
-        }
-        const BgPixel px = FetchBgPixel(slot.bg, bpp_for(slot.bg), screen_x, screen_y);
-        if (px.transparent || static_cast<uint8_t>(px.priority) != slot.priority) {
-          continue;
-        }
-        const uint8_t cgram_index = static_cast<uint8_t>(px.cgram_index + cgram_base_for(slot.bg));
-        bgr = (*cgram_)[cgram_index];
-        return true;
-      }
-      return false;
-    };
-
-    if (bg_mode_ == 0U) {
-      // Mode 0 priority order with sprites interleaved (highest first):
-      //   OBJ.3, BG1.h, BG2.h, OBJ.2, BG1.l, BG2.l,
-      //   OBJ.1, BG3.h, BG4.h, OBJ.0, BG3.l, BG4.l, backdrop.
-      // BG palette regions: BG1=0, BG2=+32, BG3=+64, BG4=+96.
-      static constexpr std::array<Slot, 12> kOrder = {{
-          {true, 0U, 3U},
-          {false, 0U, 1U},
-          {false, 1U, 1U},
-          {true, 0U, 2U},
-          {false, 0U, 0U},
-          {false, 1U, 0U},
-          {true, 0U, 1U},
-          {false, 2U, 1U},
-          {false, 3U, 1U},
-          {true, 0U, 0U},
-          {false, 2U, 0U},
-          {false, 3U, 0U},
-      }};
-      try_resolve(
-          kOrder, [](uint8_t /*bg*/) -> uint8_t { return 2U; },
-          [](uint8_t bg) -> uint8_t { return static_cast<uint8_t>(bg * 32U); });
-    } else if (bg_mode_ == 1U) {
-      // Mode 1 priority orders with sprites:
-      //   bg3_priority_ off:
-      //     OBJ.3, BG1.h, BG2.h, OBJ.2, BG1.l, BG2.l,
-      //     OBJ.1, BG3.h, OBJ.0, BG3.l, backdrop.
-      //   bg3_priority_ on (BGMODE bit 3):
-      //     BG3.h, OBJ.3, BG1.h, BG2.h, OBJ.2, BG1.l, BG2.l,
-      //     OBJ.1, OBJ.0, BG3.l, backdrop.
-      static constexpr std::array<Slot, 10> kOrderNormal = {{
-          {true, 0U, 3U},
-          {false, 0U, 1U},
-          {false, 1U, 1U},
-          {true, 0U, 2U},
-          {false, 0U, 0U},
-          {false, 1U, 0U},
-          {true, 0U, 1U},
-          {false, 2U, 1U},
-          {true, 0U, 0U},
-          {false, 2U, 0U},
-      }};
-      static constexpr std::array<Slot, 10> kOrderBg3High = {{
-          {false, 2U, 1U},
-          {true, 0U, 3U},
-          {false, 0U, 1U},
-          {false, 1U, 1U},
-          {true, 0U, 2U},
-          {false, 0U, 0U},
-          {false, 1U, 0U},
-          {true, 0U, 1U},
-          {true, 0U, 0U},
-          {false, 2U, 0U},
-      }};
-      auto bpp_for = [](uint8_t bg) -> uint8_t { return (bg == 2U) ? 2U : 4U; };
-      auto cgram_base_for = [](uint8_t /*bg*/) -> uint8_t { return 0U; };
-      if (bg3_priority_) {
-        try_resolve(kOrderBg3High, bpp_for, cgram_base_for);
-      } else {
-        try_resolve(kOrderNormal, bpp_for, cgram_base_for);
-      }
-    }
-
-    color = BrightnessScale(bgr, brightness_);
+    const ResolvedPixel main = ResolveScreenPixel(main_screen_layers_, screen_x, screen_y, obj_px);
+    const uint16_t composed = ApplyColorMath(main.bgr, main.layer_id, main.obj_palette_high,
+                                              screen_x, screen_y, obj_px);
+    color = BrightnessScale(composed, brightness_);
   }
   // Outside the visible window and under forced-blank, the PPU drives black.
   (*back_buffer_)[static_cast<std::size_t>(v) * sppu::regs::kFrameBufferWidth + h] = color;
@@ -702,6 +759,20 @@ void Ppu::ReplayWrite(uint16_t offset, uint8_t data) {
     }
 
     case sppu::regs::kTm: main_screen_layers_ = data; break;
+    case sppu::regs::kTs: sub_screen_layers_ = data; break;
+
+    case sppu::regs::kCgwsel: cgwsel_ = data; break;
+    case sppu::regs::kCgadsub: cgadsub_ = data; break;
+    case sppu::regs::kColdata: {
+      // Each write may set R, G, B independently (bits 5, 6, 7). Bits 4..0
+      // hold the 5-bit intensity applied to whichever channels are selected.
+      // Channels not selected retain their previous latch value.
+      const uint8_t intensity = static_cast<uint8_t>(data & sppu::regs::kColdataIntensityMask);
+      if ((data & sppu::regs::kColdataApplyRedMask) != 0U) coldata_r_ = intensity;
+      if ((data & sppu::regs::kColdataApplyGreenMask) != 0U) coldata_g_ = intensity;
+      if ((data & sppu::regs::kColdataApplyBlueMask) != 0U) coldata_b_ = intensity;
+      break;
+    }
 
     default:
       // Every other $2100-$213F write is shadow-only in v1. The shadow was

@@ -1789,3 +1789,311 @@ TEST_CASE("OBJ color index 0 is transparent and falls through to backdrop", "[un
   const FrameBufferView view = ppu.BuildFrontView();
   REQUIRE(view.pixels[70U * view.stride + 70U] == 0x7C1FU);
 }
+
+// ---------------------------------------------------------------------------
+// Color-math tests.
+// ---------------------------------------------------------------------------
+// Anchor: SMW title screen produces a black sky without color math because the
+// PPU never adds the COLDATA fixed colour to the backdrop. These tests cover
+// each leg of the math path (register decoding, layer participation gating,
+// add/subtract/halve, saturation, sub-screen fallback to COLDATA).
+
+TEST_CASE("COLDATA writes accumulate R/G/B latches independently", "[unit][ppu]") {
+  SNES snes;
+  Ppu& ppu = snes.GetPpu();
+  ppu.Reset();
+  TimeMasterT now = 1;
+
+  // Each write specifies which channel(s) to update via bits 5/6/7. Channels
+  // not selected by a write keep their prior value, so three single-channel
+  // writes assemble a 15-bit BGR triple.
+  BusWrite(snes, sppu::regs::kColdata, 0x25U, now++);  // R = 5
+  BusWrite(snes, sppu::regs::kColdata, 0x4AU, now++);  // G = 10
+  BusWrite(snes, sppu::regs::kColdata, 0x8FU, now++);  // B = 15
+  // Drain the lazy-replay log via a read.
+  (void)BusRead(snes, sppu::regs::kStat77, now++);
+
+  REQUIRE(ppu.GetColdataR() == 5);
+  REQUIRE(ppu.GetColdataG() == 10);
+  REQUIRE(ppu.GetColdataB() == 15);
+
+  // A multi-channel write overwrites all selected channels with the same
+  // intensity; unselected channels persist.
+  BusWrite(snes, sppu::regs::kColdata, 0xE0U | 7U, now++);  // R+G+B = 7
+  (void)BusRead(snes, sppu::regs::kStat77, now++);
+  REQUIRE(ppu.GetColdataR() == 7);
+  REQUIRE(ppu.GetColdataG() == 7);
+  REQUIRE(ppu.GetColdataB() == 7);
+}
+
+TEST_CASE("Backdrop + fixed COLDATA: math adds COLDATA to backdrop", "[unit][ppu]") {
+  // Mode 1, all BG layers disabled and OBJ disabled, so every visible pixel
+  // resolves to the backdrop (CGRAM[0]). With CGADSUB.5 set and CGWSEL.1
+  // clear, the sub-screen source is fixed COLDATA — final = CGRAM[0] +
+  // COLDATA per channel.
+  SNES snes;
+  Ppu& ppu = snes.GetPpu();
+  ppu.Reset();
+  TimeMasterT now = 1;
+
+  BusWrite(snes, sppu::regs::kInidisp, 0x0FU, now++);  // brightness=15
+  BusWrite(snes, sppu::regs::kBgmode, 0x01U, now++);   // Mode 1
+  // CGRAM[0] = dark blue R=2 G=2 B=5.
+  WriteCgramWord(snes, 0U, static_cast<uint16_t>(2U | (2U << 5U) | (5U << 10U)), now);
+  // COLDATA fixed = R=10 G=10 B=10.
+  BusWrite(snes, sppu::regs::kColdata, 0x20U | 10U, now++);
+  BusWrite(snes, sppu::regs::kColdata, 0x40U | 10U, now++);
+  BusWrite(snes, sppu::regs::kColdata, 0x80U | 10U, now++);
+  // Enable color math for backdrop, source = fixed (CGWSEL.1 clear), add.
+  BusWrite(snes, sppu::regs::kCgwsel, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kCgadsub, sppu::regs::kCgadsubBackdropMask, now++);
+  // TM = 0 (nothing renders) — entire visible area resolves to backdrop.
+  BusWrite(snes, sppu::regs::kTm, 0x00U, now++);
+
+  ppu.CatchUpTo(kFrameEndNtsc);
+  const FrameBufferView view = ppu.BuildFrontView();
+  // Expected: R = 2+10 = 12, G = 2+10 = 12, B = 5+10 = 15.
+  const uint16_t expected = static_cast<uint16_t>(12U | (12U << 5U) | (15U << 10U));
+  REQUIRE(view.pixels[100U * view.stride + 100U] == expected);
+}
+
+TEST_CASE("Color math add saturates per channel at 31", "[unit][ppu]") {
+  SNES snes;
+  Ppu& ppu = snes.GetPpu();
+  ppu.Reset();
+  TimeMasterT now = 1;
+
+  BusWrite(snes, sppu::regs::kInidisp, 0x0FU, now++);
+  BusWrite(snes, sppu::regs::kBgmode, 0x01U, now++);
+  // Backdrop = R=25 G=0 B=0; COLDATA = R=10 G=0 B=0 → 25+10 should clip to 31.
+  WriteCgramWord(snes, 0U, static_cast<uint16_t>(25U), now);
+  BusWrite(snes, sppu::regs::kColdata, 0x20U | 10U, now++);
+  BusWrite(snes, sppu::regs::kCgwsel, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kCgadsub, sppu::regs::kCgadsubBackdropMask, now++);
+  BusWrite(snes, sppu::regs::kTm, 0x00U, now++);
+
+  ppu.CatchUpTo(kFrameEndNtsc);
+  const FrameBufferView view = ppu.BuildFrontView();
+  REQUIRE((view.pixels[100U * view.stride + 100U] & 0x1FU) == 31U);
+}
+
+TEST_CASE("Color math subtract saturates per channel at 0", "[unit][ppu]") {
+  SNES snes;
+  Ppu& ppu = snes.GetPpu();
+  ppu.Reset();
+  TimeMasterT now = 1;
+
+  BusWrite(snes, sppu::regs::kInidisp, 0x0FU, now++);
+  BusWrite(snes, sppu::regs::kBgmode, 0x01U, now++);
+  WriteCgramWord(snes, 0U, static_cast<uint16_t>(5U | (5U << 5U) | (5U << 10U)), now);
+  // COLDATA = R=10 G=10 B=10. Subtract → all channels clip to 0.
+  BusWrite(snes, sppu::regs::kColdata, 0x20U | 10U, now++);
+  BusWrite(snes, sppu::regs::kColdata, 0x40U | 10U, now++);
+  BusWrite(snes, sppu::regs::kColdata, 0x80U | 10U, now++);
+  BusWrite(snes, sppu::regs::kCgwsel, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kCgadsub,
+           static_cast<uint8_t>(sppu::regs::kCgadsubBackdropMask | sppu::regs::kCgadsubSubtractMask), now++);
+  BusWrite(snes, sppu::regs::kTm, 0x00U, now++);
+
+  ppu.CatchUpTo(kFrameEndNtsc);
+  const FrameBufferView view = ppu.BuildFrontView();
+  REQUIRE(view.pixels[100U * view.stride + 100U] == 0U);
+}
+
+TEST_CASE("Color math half divides each channel of the final by two", "[unit][ppu]") {
+  SNES snes;
+  Ppu& ppu = snes.GetPpu();
+  ppu.Reset();
+  TimeMasterT now = 1;
+
+  BusWrite(snes, sppu::regs::kInidisp, 0x0FU, now++);
+  BusWrite(snes, sppu::regs::kBgmode, 0x01U, now++);
+  WriteCgramWord(snes, 0U, static_cast<uint16_t>(10U | (10U << 5U) | (10U << 10U)), now);
+  BusWrite(snes, sppu::regs::kColdata, 0x20U | 10U, now++);
+  BusWrite(snes, sppu::regs::kColdata, 0x40U | 10U, now++);
+  BusWrite(snes, sppu::regs::kColdata, 0x80U | 10U, now++);
+  BusWrite(snes, sppu::regs::kCgwsel, 0x00U, now++);
+  // Add + halve: result per channel = (10+10) / 2 = 10.
+  BusWrite(snes, sppu::regs::kCgadsub,
+           static_cast<uint8_t>(sppu::regs::kCgadsubBackdropMask | sppu::regs::kCgadsubHalfMask), now++);
+  BusWrite(snes, sppu::regs::kTm, 0x00U, now++);
+
+  ppu.CatchUpTo(kFrameEndNtsc);
+  const FrameBufferView view = ppu.BuildFrontView();
+  const uint16_t expected = static_cast<uint16_t>(10U | (10U << 5U) | (10U << 10U));
+  REQUIRE(view.pixels[100U * view.stride + 100U] == expected);
+}
+
+TEST_CASE("Sub-screen BG2 pixel is the math source when CGWSEL.1 is set", "[unit][ppu]") {
+  // Full path: backdrop math-enabled, sub-screen BG2 enabled, CGWSEL.1 set so
+  // BG2 pixels (where rendered) feed the sub-screen instead of COLDATA.
+  // Replicates SMW title's "BG2 cloud silhouettes visible inside the
+  // backdrop region".
+  SNES snes;
+  Ppu& ppu = snes.GetPpu();
+  ppu.Reset();
+  TimeMasterT now = 1;
+
+  BusWrite(snes, sppu::regs::kInidisp, 0x0FU, now++);
+  BusWrite(snes, sppu::regs::kVmain, 0x80U, now++);
+  // CGRAM[0] = black backdrop. CGRAM[1] = bright green (BG2 palette 0 colour 1).
+  WriteCgramWord(snes, 0U, 0x0000U, now);
+  WriteCgramWord(snes, 1U, static_cast<uint16_t>(0U | (31U << 5U) | 0U), now);
+
+  // BG2 tile 0: leftmost pixel of row 0 is palette index 1, rest transparent.
+  uint8_t tile[64] = {};
+  tile[0] = 1U;
+  WriteTile4bpp(snes, /*char_word_base=*/0x2000U, /*char_index=*/0, tile, now);
+  // BG2 tilemap entry (0,0) → char 0, palette 0, no flip.
+  WriteVramWord(snes, /*word_addr=*/0x1000U, /*value=*/0x0000U, now);
+  // BG2SC: tilemap base $1000 words = data byte $10 << 2 = $40; layout 32x32.
+  BusWrite(snes, sppu::regs::kBg2Sc, 0x40U, now++);
+  // BG12NBA high nibble = BG2 char base = 2 → $2000 words.
+  BusWrite(snes, sppu::regs::kBg12Nba, 0x20U, now++);
+  BusWrite(snes, sppu::regs::kBgmode, 0x01U, now++);
+
+  // TM = 0 (everything resolves to backdrop on main).
+  BusWrite(snes, sppu::regs::kTm, 0x00U, now++);
+  // TS = BG2 only — BG2 renders on sub-screen.
+  BusWrite(snes, sppu::regs::kTs, sppu::regs::kTmBg2Mask, now++);
+  // CGWSEL.1 set: sub-screen BG/OBJ participate. COLDATA = 0 so backdrop +
+  // BG2 pixel = BG2 pixel.
+  BusWrite(snes, sppu::regs::kCgwsel, sppu::regs::kCgwselSubScreenEnableMask, now++);
+  BusWrite(snes, sppu::regs::kCgadsub, sppu::regs::kCgadsubBackdropMask, now++);
+
+  ppu.CatchUpTo(kFrameEndNtsc);
+  const FrameBufferView view = ppu.BuildFrontView();
+  // Pixel (0, 0) should show BG2's green; pixel (4, 0) is still BG2-transparent
+  // → falls back to COLDATA (0) → backdrop + 0 = backdrop = black.
+  const uint16_t green = static_cast<uint16_t>(0U | (31U << 5U) | 0U);
+  REQUIRE(view.pixels[0U * view.stride + 0U] == green);
+  REQUIRE(view.pixels[0U * view.stride + 4U] == 0U);
+}
+
+TEST_CASE("CGADSUB layer mask gates math per-layer", "[unit][ppu]") {
+  // Confirm a foreground layer (BG1) that ISN'T in CGADSUB stays untouched
+  // while backdrop pixels still get math applied. Strategy: BG1 tile 0 has
+  // exactly one opaque pixel (top-left of the 8×8); the rest is transparent
+  // and falls through to the backdrop. With the BG1 tilemap left zeroed,
+  // every BG cell points to char 0 — so the visible result is a tight grid
+  // of opaque dots over a backdrop field.
+  SNES snes;
+  Ppu& ppu = snes.GetPpu();
+  ppu.Reset();
+  TimeMasterT now = 1;
+
+  BusWrite(snes, sppu::regs::kInidisp, 0x0FU, now++);
+  BusWrite(snes, sppu::regs::kVmain, 0x80U, now++);
+  WriteCgramWord(snes, 0U, 0x0000U, now);  // backdrop = black
+  WriteCgramWord(snes, 1U, 0x7C00U, now);  // BG1 palette 0 colour 1 = blue
+  // Tile 0: only pixel (0,0) is palette index 1; all others are 0 (transparent).
+  uint8_t tile[64] = {};
+  tile[0] = 1U;
+  WriteTile4bpp(snes, /*char_word_base=*/0x1000U, /*char_index=*/0, tile, now);
+  BusWrite(snes, sppu::regs::kBg12Nba, 0x01U, now++);  // low nibble = BG1 base = 1 ($1000 words)
+  BusWrite(snes, sppu::regs::kBgmode, 0x01U, now++);
+  BusWrite(snes, sppu::regs::kTm, sppu::regs::kTmBg1Mask, now++);
+
+  // COLDATA = R=15 only; CGWSEL.1 = 0 so sub source = fixed.
+  BusWrite(snes, sppu::regs::kColdata, 0x20U | 15U, now++);
+  BusWrite(snes, sppu::regs::kCgwsel, 0x00U, now++);
+  // CGADSUB: backdrop only (BG1 NOT included).
+  BusWrite(snes, sppu::regs::kCgadsub, sppu::regs::kCgadsubBackdropMask, now++);
+
+  ppu.CatchUpTo(kFrameEndNtsc);
+  const FrameBufferView view = ppu.BuildFrontView();
+  // Pixel (0,0): BG1 opaque dot — math doesn't apply because BG1 isn't in
+  // CGADSUB, so we see the raw palette colour.
+  REQUIRE(view.pixels[0U * view.stride + 0U] == 0x7C00U);
+  // Pixel (1,0): BG1 transparent at this tile-local position → backdrop.
+  // Backdrop is in CGADSUB and gets `0 + 15` on R = 15.
+  REQUIRE(view.pixels[0U * view.stride + 1U] == 15U);
+}
+
+// ---------------------------------------------------------------------------
+// SMW end-to-end visual check ([smwbug]). Boots the ROM and verifies that the
+// "far background" in the middle of the title screen is no longer the black
+// backdrop — it should resolve through color math to a non-zero blue derived
+// from COLDATA (and BG2 cloud silhouettes where they paint on the sub-screen).
+// Tagged [smwbug] so the diagnostic dump can also be invoked in isolation.
+// ---------------------------------------------------------------------------
+
+#include <filesystem>
+#include <fstream>
+#include <iterator>
+
+#include "pupsnes/hw/5a22/cpu.h"
+#include "pupsnes/rom_format.h"
+
+namespace {
+std::vector<uint8_t> ReadRomFile(const std::filesystem::path& p) {
+  std::ifstream in(p, std::ios::binary);
+  return {std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+}
+}  // namespace
+
+TEST_CASE("SMW title-screen color-math fills the sky region", "[smwbug]") {
+  using namespace pupsnes;
+  std::filesystem::path rom_path = "roms/Super Mario World (U) [!].smc";
+  auto rom = ReadRomFile(rom_path);
+  if (rom.empty()) {
+    // Commercial ROM not present in this checkout — skip rather than fail so
+    // contributors without the file can still pull and build cleanly. The
+    // unit tests above cover the color-math logic itself.
+    SKIP("Super Mario World ROM not present at " << rom_path);
+  }
+  StripSmcCopierHeader(rom);
+
+  SNES snes;
+  snes.LoadLoRom(rom);
+  snes.Reset();
+
+  const uint32_t kFrames = 600;
+  const TimeMasterT cycles_per_frame = 262U * 1364U;
+  const TimeMasterT target = static_cast<TimeMasterT>(kFrames) * cycles_per_frame;
+  while (snes.GetMasterTime() < target) {
+    TimeMasterT next_event = snes.GetScheduler().NextEventMasterTime();
+    TimeMasterT tick_target = next_event > target ? target : next_event;
+    (void)snes.GetCpu().TickToTarget(tick_target);
+    TimeMasterT after = snes.GetMasterTime();
+    snes.MachineSync(after);
+    snes.GetScheduler().FireEventsThrough(after);
+  }
+
+  Ppu& ppu = snes.GetPpu();
+  ppu.CatchUpTo(snes.GetMasterTime());
+
+  // Dump a PPM snapshot for visual inspection of the rendered title screen.
+  FrameBufferView view = ppu.BuildFrontView();
+  {
+    std::ofstream ppm("/tmp/smw_dump.ppm", std::ios::binary);
+    ppm << "P6\n" << view.width << " " << view.height << "\n255\n";
+    for (uint32_t y = 0; y < view.height; ++y) {
+      for (uint32_t x = 0; x < view.width; ++x) {
+        const uint16_t px = view.pixels[y * view.stride + x];
+        ppm.put(static_cast<char>((px & 0x1FU) << 3));
+        ppm.put(static_cast<char>(((px >> 5) & 0x1FU) << 3));
+        ppm.put(static_cast<char>(((px >> 10) & 0x1FU) << 3));
+      }
+    }
+  }
+
+  // The pre-fix bug was: middle rows (where SMW's "far background" lives)
+  // dropped to pure $0000 black because the backdrop never went through
+  // color math. With math wired up, row 64 column 128 must no longer be
+  // raw black — it should pick up COLDATA's accumulated sky-blue.
+  const uint16_t mid_pixel = view.pixels[64U * view.stride + 128U];
+  REQUIRE(mid_pixel != 0U);
+
+  // Sanity: the same row should have at least one non-backdrop pixel from
+  // BG2 sub-screen compositing if the cloud silhouettes hit there.
+  uint32_t distinct = 0;
+  uint16_t first = view.pixels[64U * view.stride + 0U];
+  for (uint32_t x = 0; x < view.width; ++x) {
+    if (view.pixels[64U * view.stride + x] != first) {
+      ++distinct;
+      break;
+    }
+  }
+  REQUIRE(distinct > 0U);
+}

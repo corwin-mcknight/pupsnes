@@ -106,12 +106,59 @@ inline constexpr uint8_t kObjAttrVflipMask = 0x80;
 inline constexpr uint16_t kOamHighTableBase = 0x200;
 
 // $212C TM — main-screen layer enable mask.
+// $212D TS — sub-screen layer enable mask. Same bit layout as TM; the layer
+// resolves via the same priority ladder but only the bits set here count.
 inline constexpr uint16_t kTm = 0x212C;
+inline constexpr uint16_t kTs = 0x212D;
 inline constexpr uint8_t kTmBg1Mask = 0x01;
 inline constexpr uint8_t kTmBg2Mask = 0x02;
 inline constexpr uint8_t kTmBg3Mask = 0x04;
 inline constexpr uint8_t kTmBg4Mask = 0x08;
 inline constexpr uint8_t kTmObjMask = 0x10;
+
+// $2130 CGWSEL — Color math control A.
+//   bit 0   = Direct Color mode (256-color BG). Not modeled (out of scope).
+//   bit 1   = Sub-screen BG/OBJ Enable. 0=sub-screen is COLDATA only,
+//             1=sub-screen also renders BG/OBJ from TS, falling back to
+//             COLDATA where transparent.
+//   bits 5:4 = Color Math Enable region (0=always, 1=math-window,
+//             2=outside math-window, 3=never). Math windows are out of scope
+//             in v1; bits 1/2 are treated as "always" with a TODO.
+//   bits 7:6 = Force Main-Screen Black region (same encoding). Treated as
+//             "never force" (mode 0) in v1.
+inline constexpr uint16_t kCgwsel = 0x2130;
+inline constexpr uint8_t kCgwselDirectColorMask = 0x01;
+inline constexpr uint8_t kCgwselSubScreenEnableMask = 0x02;
+inline constexpr uint8_t kCgwselMathEnableRegionMask = 0x30;
+inline constexpr uint8_t kCgwselMathEnableRegionShift = 4;
+inline constexpr uint8_t kCgwselForceMainBlackRegionMask = 0xC0;
+inline constexpr uint8_t kCgwselForceMainBlackRegionShift = 6;
+
+// $2131 CGADSUB — Color math control B.
+//   bits 0..3 = per-BG enable (BG1, BG2, BG3, BG4)
+//   bit  4    = OBJ enable; only OBJ palettes 4..7 participate
+//   bit  5    = backdrop enable
+//   bit  6    = half-color math (1=halve final result per channel)
+//   bit  7    = 0=add main+sub, 1=subtract main-sub
+inline constexpr uint16_t kCgadsub = 0x2131;
+inline constexpr uint8_t kCgadsubBg1Mask = 0x01;
+inline constexpr uint8_t kCgadsubBg2Mask = 0x02;
+inline constexpr uint8_t kCgadsubBg3Mask = 0x04;
+inline constexpr uint8_t kCgadsubBg4Mask = 0x08;
+inline constexpr uint8_t kCgadsubObjMask = 0x10;
+inline constexpr uint8_t kCgadsubBackdropMask = 0x20;
+inline constexpr uint8_t kCgadsubHalfMask = 0x40;
+inline constexpr uint8_t kCgadsubSubtractMask = 0x80;
+
+// $2132 COLDATA — fixed-color latches. Write-only; each write specifies
+// which channels to update (bits 5/6/7 = R/G/B respectively) and the
+// 5-bit intensity (bits 0..4). Channels are independent latches; the live
+// 15-bit BGR fixed colour is assembled from the three latches at math time.
+inline constexpr uint16_t kColdata = 0x2132;
+inline constexpr uint8_t kColdataIntensityMask = 0x1F;
+inline constexpr uint8_t kColdataApplyRedMask = 0x20;
+inline constexpr uint8_t kColdataApplyGreenMask = 0x40;
+inline constexpr uint8_t kColdataApplyBlueMask = 0x80;
 
 // $2101 OBSEL — OBJ size + sprite tile name base/select.
 //   bits 7:5 = OBJ size pair (0..5 documented + 6,7 undocumented; see fullsnes)
