@@ -1112,6 +1112,33 @@ TEST_CASE("BG scroll write-twice latch matches the fullsnes BG_old formula", "[u
   REQUIRE(ppu.GetBgVofs(0) == 0x312U);
 }
 
+TEST_CASE("BG1HOFS smooth-scroll preserves bit 2 of the low byte", "[unit][ppu]") {
+  // Regression: SMW writes BG1HOFS as low-then-high every frame. When the
+  // game increments scroll by one pixel per frame, the low byte sweeps
+  // 0..255. Earlier code stored bg_hofs_ pre-masked to 10 bits, which
+  // discarded bit 10 of the raw shift-in — that bit is exactly bit 2 of
+  // the previously written "Curr". On the very next write, the fullsnes
+  // "((BGnHOFS_old>>8) & 7)" feedback term then yielded only 2 bits of
+  // the previous Curr, clearing bit 2 of the final effective offset.
+  //
+  // Observable symptom in SMW: BG visibly scrolled backwards 4 pixels
+  // when H_low crossed bit 2, then snapped forward 8 when bit 3 caught
+  // up. This test pins down the per-pixel offset for low bytes 0..15
+  // (always with high byte = 0).
+  SNES snes;
+  Ppu& ppu = snes.GetPpu();
+  ppu.Reset();
+  TimeMasterT now = 1;
+
+  for (uint8_t lo = 0; lo < 16U; ++lo) {
+    BusWrite(snes, sppu::regs::kBg1Hofs, lo, now++);
+    BusWrite(snes, sppu::regs::kBg1Hofs, 0x00U, now++);
+    (void)BusRead(snes, sppu::regs::kStat77, now++);
+    INFO("low byte = " << static_cast<int>(lo));
+    REQUIRE(ppu.GetBgHofs(0) == static_cast<uint16_t>(lo));
+  }
+}
+
 TEST_CASE("Mode 1 BG3 priority bit sends BG3 prio-1 above BG1 prio-1", "[unit][ppu]") {
   SNES snes;
   Ppu& ppu = snes.GetPpu();

@@ -122,7 +122,11 @@ class Ppu : public Device {
   [[nodiscard]] bool IsForcedBlank() const { return forced_blank_; }
   [[nodiscard]] uint8_t GetBrightness() const { return brightness_; }
   [[nodiscard]] bool IsOverscan() const { return overscan_; }
-  [[nodiscard]] uint16_t GetBgHofs(uint8_t bg) const { return bg < 4U ? bg_hofs_[bg] : uint16_t{0}; }
+  // bg_hofs_ stores the raw 16-bit shift-in (see BG_old feedback term in
+  // ReplayWrite). Mask to the 10-bit effective offset used by rendering.
+  [[nodiscard]] uint16_t GetBgHofs(uint8_t bg) const {
+    return bg < 4U ? static_cast<uint16_t>(bg_hofs_[bg] & sppu::regs::kBgScrollMask) : uint16_t{0};
+  }
   [[nodiscard]] uint16_t GetBgVofs(uint8_t bg) const { return bg < 4U ? bg_vofs_[bg] : uint16_t{0}; }
   [[nodiscard]] uint32_t GetPendingWriteCount() const { return pending_writes_count_ - pending_writes_cursor_; }
   void SetForceOverscanDraw(bool v) { force_overscan_draw_ = v; }
@@ -328,8 +332,11 @@ class Ppu : public Device {
   std::array<uint16_t, 4> bg_tilemap_word_base_{};
   std::array<uint8_t, 4> bg_tilemap_layout_{};  // 0=32x32, 1=64x32, 2=32x64, 3=64x64
   std::array<uint16_t, 4> bg_char_word_base_{};
-  std::array<uint16_t, 4> bg_hofs_{};  // 10-bit (masked by kBgScrollMask)
-  std::array<uint16_t, 4> bg_vofs_{};
+  // bg_hofs_ holds the raw 16-bit shift-in: the high byte preserves the
+  // previous "Curr" so the next write's `(Reg_old>>8) & 7` feedback term
+  // recovers all 3 of its low bits. Render path masks with kBgScrollMask.
+  std::array<uint16_t, 4> bg_hofs_{};
+  std::array<uint16_t, 4> bg_vofs_{};  // 10-bit (no feedback term, masked at write)
   // Shared "BG_old" latch byte. Per fullsnes: BGxHOFS = (Curr<<8) | (Prev&~7) |
   // ((BGxHOFS_old>>8)&7); BGxVOFS = (Curr<<8) | Prev. Prev = Curr after either.
   uint8_t bg_scroll_prev_ = 0;

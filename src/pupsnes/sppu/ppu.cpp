@@ -763,12 +763,18 @@ void Ppu::ReplayWrite(uint16_t offset, uint8_t data) {
     case sppu::regs::kBg4Hofs: {
       // BG_old shared latch + this BG's old high byte for low 3 bits. Per
       // fullsnes: BGnHOFS = (Curr<<8) | (Prev & ~7) | ((Reg_old>>8) & 7).
+      // Store the full 16-bit shift-in unmasked: the feedback term reads
+      // the previous register's high byte (bits 15..8), which carries the
+      // previous "Curr" verbatim. Masking to 10 bits at storage would drop
+      // bit 10 (== Curr bit 2) and clear bit 2 of every smooth scroll step,
+      // producing visible 4-pixel backward/forward jitter. Rendering and
+      // the public accessor mask down to 10 bits at use.
       const std::size_t bg = static_cast<std::size_t>((offset - sppu::regs::kBg1Hofs) >> 1U);
       const uint16_t old_value = bg_hofs_[bg];
       const uint16_t high = static_cast<uint16_t>(static_cast<uint16_t>(data) << 8);
       const uint16_t mid = static_cast<uint16_t>(bg_scroll_prev_ & 0xF8U);  // Prev & ~7
       const uint16_t low = static_cast<uint16_t>((old_value >> 8) & 0x07U);
-      bg_hofs_[bg] = static_cast<uint16_t>((high | mid | low) & sppu::regs::kBgScrollMask);
+      bg_hofs_[bg] = static_cast<uint16_t>(high | mid | low);
       bg_scroll_prev_ = data;
       break;
     }
