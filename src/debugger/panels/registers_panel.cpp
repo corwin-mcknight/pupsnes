@@ -124,6 +124,17 @@ void RenderRegistersPanel(DebuggerApp& app) {
   char buf[32];
 
   if (ImGui::BeginTable("regs", 4, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoPadInnerX)) {
+    // Lock columns to the widest possible content so values don't reflow as
+    // glyph widths or A's 8-bit "(B:XX)" suffix come and go.
+    const float label1_w = ImGui::CalcTextSize("PC").x;
+    const float label2_w = ImGui::CalcTextSize("DBR").x;
+    const float value1_w = ImGui::CalcTextSize("$BB (B:BB)").x;
+    const float value2_w = ImGui::CalcTextSize("$BBBB").x;
+    ImGui::TableSetupColumn("l1", ImGuiTableColumnFlags_WidthFixed, label1_w);
+    ImGui::TableSetupColumn("v1", ImGuiTableColumnFlags_WidthFixed, value1_w);
+    ImGui::TableSetupColumn("l2", ImGuiTableColumnFlags_WidthFixed, label2_w);
+    ImGui::TableSetupColumn("v2", ImGuiTableColumnFlags_WidthFixed, value2_w);
+
     ImGui::TableNextRow();
     std::snprintf(buf, sizeof(buf), "$%02X:%04X", regs.PBR, regs.PC);
     RenderValueCell("PC", buf, std::max(hist.hi_PC, hist.hi_PBR));
