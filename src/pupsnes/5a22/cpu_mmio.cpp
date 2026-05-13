@@ -16,14 +16,30 @@ namespace {
 // page $40) and the standard 5A22 MMIO block ($4200-$43FF). Mapping the whole
 // span keeps stray reads in this region from falling through to "unmapped" on
 // the bus log even though most addresses inside $40-$41 are unimplemented.
+//
+// Access timing splits the span in two:
+//   * Pages $40-$41 ($4000-$41FF) — manual joypad area. Each access costs 12
+//     master cycles on real hardware (slowest bus class). The only live regs
+//     here are $4016/$4017; everything else on these pages is unmapped but
+//     still charged the 12-cycle slot.
+//   * Pages $42-$43 ($4200-$43FF) — CPU/DMA register block. Real hardware
+//     bills 6 master cycles, but PupSNES currently charges 8 across the
+//     board for the wider MMIO span; see the TODO for the follow-up that
+//     drops $20-$21 and $42-$43 to 6.
 constexpr uint8_t kFirstMmioPage = 0x40U;
 constexpr uint8_t kLastMmioPage = 0x43U;
+constexpr uint8_t kFirstJoypadPage = 0x40U;
+constexpr uint8_t kLastJoypadPage = 0x41U;
+constexpr uint8_t kJoypadAccessCycles = 12U;
+constexpr uint8_t kMmioAccessCycles = 8U;
 
 void MapMmioBank(SystemBus& bus, DeviceIdT device_id, uint8_t bank) {
   for (uint16_t page = kFirstMmioPage; page <= kLastMmioPage; ++page) {
     const uint32_t base_offset = static_cast<uint32_t>(page) * 0x100U;
-    bus.MapPage({bank, static_cast<uint8_t>(page), device_id, base_offset, PageDeviceKind::kSameClockMmio, 8, nullptr,
-                 nullptr});
+    const uint8_t access_cycles =
+        (page >= kFirstJoypadPage && page <= kLastJoypadPage) ? kJoypadAccessCycles : kMmioAccessCycles;
+    bus.MapPage({bank, static_cast<uint8_t>(page), device_id, base_offset, PageDeviceKind::kSameClockMmio,
+                 access_cycles, nullptr, nullptr});
   }
 }
 
