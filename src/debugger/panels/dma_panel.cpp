@@ -55,7 +55,16 @@ void DrawEnableSection(const DmaController& dma, const CpuMmio& cpu_mmio) {
     ImGui::Text("$420B MDMAEN: 0x00  (last trigger mask: 0x%02X -> %s)", static_cast<unsigned>(last_mask),
                 bits.c_str());
   }
-  ImGui::Text("$420C HDMAEN: 0x%02X  (HDMA execution not yet emulated)", static_cast<unsigned>(cpu_mmio.GetHdmaEn()));
+  const uint8_t hdmaen = cpu_mmio.GetHdmaEn();
+  const uint8_t hdma_active = dma.GetHdmaActiveMask();
+  if (hdmaen == 0U && hdma_active == 0U) {
+    ImGui::Text("$420C HDMAEN: 0x00  (no HDMA channels enabled)");
+  } else {
+    const std::string en_bits = FormatMaskBits(hdmaen);
+    const std::string active_bits = FormatMaskBits(hdma_active);
+    ImGui::Text("$420C HDMAEN: 0x%02X (live: %s)  | active this frame: %s", static_cast<unsigned>(hdmaen),
+                en_bits.c_str(), active_bits.c_str());
+  }
 }
 
 void DrawChannelRowExpansion(uint8_t ch, const DmaController::ChannelState& s) {
@@ -106,7 +115,14 @@ void DrawChannelsSection(const DmaController& dma) {
     ImGui::TableSetColumnIndex(1);
     ImGui::TextUnformatted(hdma ? "HDMA" : "DMA");
     if (hdma && ImGui::IsItemHovered()) {
-      ImGui::SetTooltip("HDMA execution is not yet emulated; this row reflects what the game has programmed.");
+      if (s.hdma_finished) {
+        ImGui::SetTooltip("HDMA channel finished this frame (count-byte 0 hit). Re-arms next frame.");
+      } else {
+        ImGui::SetTooltip("HDMA live state: A2A=$%02X%02X, NTRL=$%02X (lines left %u, repeat=%u)",
+                          static_cast<unsigned>(s.a2a_high), static_cast<unsigned>(s.a2a),
+                          static_cast<unsigned>(s.ntrl), static_cast<unsigned>(s.ntrl & 0x7FU),
+                          static_cast<unsigned>((s.ntrl >> 7U) & 1U));
+      }
     }
 
     ImGui::TableSetColumnIndex(2);

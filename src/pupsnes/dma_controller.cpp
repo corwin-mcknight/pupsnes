@@ -2,6 +2,10 @@
 
 #include <array>
 
+#include "pupsnes/hw/5a22/cpu.h"
+#include "pupsnes/hw/5a22/cpu_mmio.h"
+#include "pupsnes/hw/scheduler.h"
+#include "pupsnes/hw/signal_event.h"
 #include "pupsnes/hw/snes.h"
 #include "pupsnes/hw/systembus.h"
 
@@ -49,6 +53,205 @@ void DmaController::Reset() {
   channels_.fill({});
   trigger_write_count_ = 0;
   last_trigger_mask_ = 0;
+
+  // HDMA scheduler bootstrap. The first frame starts at master_time 0, so the
+  // init signal fires at master_time = kHdmaInitMasterCycles (24). After that,
+  // OnHdmaSignal chains itself forward — init -> per-line(V=0..224) -> next
+  // frame's init.
+  hdma_phase_ = HdmaPhase::kInit;
+  hdma_next_v_ = 0;
+  hdma_active_mask_ = 0;
+  hdma_frame_base_time_ = 0;
+  ScheduleNextHdmaInit(0U);
+}
+
+void DmaController::ScheduleNextHdmaInit(TimeMasterT frame_base) {
+  if (snes_ == nullptr || snes_->scheduler == nullptr) {
+    return;
+  }
+  hdma_phase_ = HdmaPhase::kInit;
+  hdma_frame_base_time_ = frame_base;
+  snes_->scheduler->ScheduleSignal(frame_base + kHdmaInitMasterCycles, SignalKind::kHdmaFire,
+                                   [this](TimeMasterT t) { OnHdmaSignal(t); });
+}
+
+void DmaController::OnHdmaSignal(TimeMasterT master_time) {
+  if (snes_ == nullptr || snes_->scheduler == nullptr) {
+    return;
+  }
+
+  if (hdma_phase_ == HdmaPhase::kInit) {
+    // Snapshot HDMAEN; mid-frame writes to $420C don't enable new channels
+    // (they can only disable via per-line live read). Latched mask drives the
+    // rest of the frame.
+    hdma_active_mask_ = (snes_->cpu_mmio != nullptr) ? snes_->cpu_mmio->GetHdmaEn() : 0U;
+
+    // Per-channel init: copy A1T into A2A, reset NTRL, clear runtime flags.
+    for (uint8_t ch = 0; ch < 8U; ++ch) {
+      ChannelState& s = channels_[ch];
+      if ((hdma_active_mask_ & (1U << ch)) == 0U) {
+        s.hdma_do_transfer = false;
+        s.hdma_finished = false;
+        continue;
+      }
+      s.a2a = static_cast<uint8_t>(s.a1t & 0xFFU);
+      s.a2a_high = static_cast<uint8_t>((s.a1t >> 8U) & 0xFFU);
+      s.ntrl = 0U;
+      s.hdma_do_transfer = false;
+      s.hdma_finished = false;
+    }
+
+    // CPU stall: 18 mcyc base + 8 per active channel.
+    uint32_t active_count = 0;
+    for (uint8_t ch = 0; ch < 8U; ++ch) {
+      if ((hdma_active_mask_ & (1U << ch)) != 0U) ++active_count;
+    }
+    const TimeMasterT end_time = master_time + 18U + 8U * static_cast<TimeMasterT>(active_count);
+    if (snes_->GetMasterTime() < end_time) {
+      snes_->SetMasterTime(end_time);
+    }
+    if (snes_->cpu != nullptr && snes_->cpu->GetTime() < end_time) {
+      snes_->cpu->SetLocalTime(end_time);
+    }
+
+    // Schedule first per-line at V=0 H=274.
+    hdma_phase_ = HdmaPhase::kRunLine;
+    hdma_next_v_ = 0;
+    snes_->scheduler->ScheduleSignal(hdma_frame_base_time_ + kHdmaPerLineMasterCycles, SignalKind::kHdmaFire,
+                                     [this](TimeMasterT t) { OnHdmaSignal(t); });
+    return;
+  }
+
+  // kRunLine: walk active channels and do per-line work. Live HDMAEN gates
+  // each channel — mid-frame writes that clear bits stop transfers
+  // immediately. Bits set mid-frame are ignored (channel's runtime state
+  // wasn't initialized for this frame).
+  const uint8_t live_mask = (snes_->cpu_mmio != nullptr) ? snes_->cpu_mmio->GetHdmaEn() : 0U;
+  const uint8_t effective_mask = static_cast<uint8_t>(hdma_active_mask_ & live_mask);
+
+  TimeMasterT t = master_time;
+  uint32_t active_count = 0;
+  for (uint8_t ch = 0; ch < 8U; ++ch) {
+    if ((effective_mask & (1U << ch)) == 0U) continue;
+    if (channels_[ch].hdma_finished) continue;
+    ++active_count;
+    t = HdmaRunChannelLine(ch, t);
+  }
+  if (active_count > 0U) {
+    t += 8U;  // per-line overhead
+  }
+
+  if (snes_->GetMasterTime() < t) {
+    snes_->SetMasterTime(t);
+  }
+  if (snes_->cpu != nullptr && snes_->cpu->GetTime() < t) {
+    snes_->cpu->SetLocalTime(t);
+  }
+
+  // Schedule the next fire. If we just ran V=224 (the last visible line),
+  // chain to next frame's init. Otherwise schedule next scanline at +1364.
+  if (hdma_next_v_ >= kHdmaLastVisibleV) {
+    ScheduleNextHdmaInit(hdma_frame_base_time_ + kHdmaFrameCycles);
+  } else {
+    ++hdma_next_v_;
+    const TimeMasterT next_time = hdma_frame_base_time_ +
+                                  static_cast<TimeMasterT>(hdma_next_v_) * kHdmaNormalLineCycles +
+                                  kHdmaPerLineMasterCycles;
+    snes_->scheduler->ScheduleSignal(next_time, SignalKind::kHdmaFire, [this](TimeMasterT t2) { OnHdmaSignal(t2); });
+  }
+}
+
+TimeMasterT DmaController::HdmaRunChannelLine(uint8_t ch, TimeMasterT t) {
+  ChannelState& s = channels_[ch];
+  const uint8_t mode = static_cast<uint8_t>(s.dmap & 0x07U);
+  const ModePattern& pat = kModePatterns[mode];
+
+  // Header reload when the lines-remaining counter (low 7 bits) reaches 0.
+  // Bit 7 of NTRL is the repeat flag preserved across decrements; the reload
+  // overwrites the whole byte with the new entry header.
+  if ((s.ntrl & 0x7FU) == 0U) {
+    const uint32_t a2a16 = (static_cast<uint32_t>(s.a2a_high) << 8U) | static_cast<uint32_t>(s.a2a);
+    const uint32_t header_addr = (static_cast<uint32_t>(s.a1b) << 16U) | a2a16;
+    auto rplan = snes_->system_bus->Plan(header_addr, BusAccessType::kRead);
+    const uint8_t header = snes_->system_bus->Follow(rplan, t, GetDeviceId()).data;
+    t += 8U;
+
+    // A2A++ (16-bit, no carry into the bank — matches fullsnes "bank stays
+    // constant" wording for HDMA source-table addressing).
+    const uint16_t next_a2a = static_cast<uint16_t>((a2a16 + 1U) & 0xFFFFU);
+    s.a2a = static_cast<uint8_t>(next_a2a & 0xFFU);
+    s.a2a_high = static_cast<uint8_t>((next_a2a >> 8U) & 0xFFU);
+
+    if (header == 0U) {
+      s.hdma_finished = true;
+      return t;
+    }
+    s.ntrl = header;
+    s.hdma_do_transfer = true;
+
+    // Indirect mode: after the header byte, the source table holds a 16-bit
+    // pointer that becomes the live data address (DAS). Refresh it from the
+    // table on each entry reload. The data bank is DASB; the pointer wraps
+    // within the bank just like A2A does.
+    if ((s.dmap & 0x40U) != 0U) {
+      const uint32_t a2a16_lo = (static_cast<uint32_t>(s.a2a_high) << 8U) | static_cast<uint32_t>(s.a2a);
+      const uint32_t lo_addr = (static_cast<uint32_t>(s.a1b) << 16U) | a2a16_lo;
+      auto lo_plan = snes_->system_bus->Plan(lo_addr, BusAccessType::kRead);
+      const uint8_t das_lo = snes_->system_bus->Follow(lo_plan, t, GetDeviceId()).data;
+      t += 8U;
+      const uint16_t after_lo = static_cast<uint16_t>((a2a16_lo + 1U) & 0xFFFFU);
+
+      const uint32_t hi_addr = (static_cast<uint32_t>(s.a1b) << 16U) | after_lo;
+      auto hi_plan = snes_->system_bus->Plan(hi_addr, BusAccessType::kRead);
+      const uint8_t das_hi = snes_->system_bus->Follow(hi_plan, t, GetDeviceId()).data;
+      t += 8U;
+      const uint16_t after_hi = static_cast<uint16_t>((after_lo + 1U) & 0xFFFFU);
+
+      s.das = static_cast<uint16_t>((static_cast<uint16_t>(das_hi) << 8U) | das_lo);
+      s.a2a = static_cast<uint8_t>(after_hi & 0xFFU);
+      s.a2a_high = static_cast<uint8_t>((after_hi >> 8U) & 0xFFU);
+    }
+  }
+
+  if (s.hdma_do_transfer) {
+    // Mode pattern dictates how many bytes constitute one transfer unit (1,
+    // 2, or 4 bytes). Source = indirect ? DASB:DAS : A1B:A2A; advances per
+    // byte within its respective bank. Destination = $2100 | (BBAD + offset).
+    const bool indirect = (s.dmap & 0x40U) != 0U;
+    for (uint8_t i = 0; i < pat.length; ++i) {
+      uint32_t src_addr;
+      if (indirect) {
+        src_addr = (static_cast<uint32_t>(s.dasb) << 16U) | static_cast<uint32_t>(s.das);
+      } else {
+        const uint32_t a2a16 = (static_cast<uint32_t>(s.a2a_high) << 8U) | static_cast<uint32_t>(s.a2a);
+        src_addr = (static_cast<uint32_t>(s.a1b) << 16U) | a2a16;
+      }
+      const uint32_t dst_addr = 0x2100U | static_cast<uint32_t>(static_cast<uint8_t>(s.bbad + pat.offsets[i]));
+
+      auto rplan = snes_->system_bus->Plan(src_addr, BusAccessType::kRead);
+      const uint8_t value = snes_->system_bus->Follow(rplan, t, GetDeviceId()).data;
+      auto wplan = snes_->system_bus->Plan(dst_addr, BusAccessType::kWrite, value);
+      (void)snes_->system_bus->Follow(wplan, t + 4U, GetDeviceId());
+      t += 8U;
+
+      if (indirect) {
+        s.das = static_cast<uint16_t>((s.das + 1U) & 0xFFFFU);
+      } else {
+        const uint32_t a2a16 = (static_cast<uint32_t>(s.a2a_high) << 8U) | static_cast<uint32_t>(s.a2a);
+        const uint16_t next_a2a = static_cast<uint16_t>((a2a16 + 1U) & 0xFFFFU);
+        s.a2a = static_cast<uint8_t>(next_a2a & 0xFFU);
+        s.a2a_high = static_cast<uint8_t>((next_a2a >> 8U) & 0xFFU);
+      }
+    }
+  }
+
+  // Decrement low 7 bits of NTRL; preserve bit 7 (repeat flag).
+  const uint8_t repeat_bit = static_cast<uint8_t>(s.ntrl & 0x80U);
+  const uint8_t low7 = static_cast<uint8_t>((s.ntrl & 0x7FU) - 1U) & 0x7FU;
+  s.ntrl = static_cast<uint8_t>(repeat_bit | low7);
+  s.hdma_do_transfer = (repeat_bit != 0U) || (low7 == 0U);
+
+  return t;
 }
 
 std::optional<uint8_t> DmaController::ReadRegisterShadow(uint32_t offset) const {
