@@ -275,26 +275,37 @@ constexpr CycleFragment PullDirectPage() {
 }
 
 constexpr auto MakeStackSpecs() {
+  // "New" 65C816 stack instructions (PHB/PLB, PHD/PLD, PHK, PEA/PER/PEI) are
+  // marked with .NewInstruction() — wide-SP pushes and end-of-instruction
+  // page-1 restore in emulation mode (Bruce Clark §2688), and PEI
+  // additionally skips the DP-page wrap (§5.1.1). PHA/PLA/PHP/PLP are 6502
+  // instructions and PHX/PHY/PLX/PLY are 65C02 instructions — both groups
+  // are "old" by Bruce Clark's criterion and keep the page-1 wrap.
   return std::array{
       Opcode(0x48, "PHA", "implied").Then(PushAccumulator()).Build(),
-      Opcode(0x8B, "PHB", "implied").Then(PushDataBank()).Build(),
-      Opcode(0xAB, "PLB", "implied").Then(PullDataBank()).Build(),
+      Opcode(0x8B, "PHB", "implied").Then(PushDataBank()).NewInstruction().Build(),
+      Opcode(0xAB, "PLB", "implied").Then(PullDataBank()).NewInstruction().Build(),
+      // PHX/PHY/PLX/PLY were added on the 65C02, so they are "old" by Bruce
+      // Clark's criterion (§2688) and keep the page-1 wrap in emulation mode.
+      // Witness: cputest-full test 0x03D5 (PLX at S=$01FF, E=1) reads $0100
+      // via 8-bit pre-inc wrap, not $0200 as a "new" PLB would.
       Opcode(0xDA, "PHX", "implied").Then(PushIndexX()).Build(),
       Opcode(0x5A, "PHY", "implied").Then(PushIndexY()).Build(),
       Opcode(0x08, "PHP", "implied").Then(PushStatus()).Build(),
-      Opcode(0x0B, "PHD", "implied").Then(PushDirectPage()).Build(),
-      Opcode(0x4B, "PHK", "implied").Then(PushProgramBank()).Build(),
+      Opcode(0x0B, "PHD", "implied").Then(PushDirectPage()).NewInstruction().Build(),
+      Opcode(0x4B, "PHK", "implied").Then(PushProgramBank()).NewInstruction().Build(),
       Opcode(0x68, "PLA", "implied").Then(PullAccumulator()).Build(),
       Opcode(0xFA, "PLX", "implied").Then(PullIndexX()).Build(),
       Opcode(0x7A, "PLY", "implied").Then(PullIndexY()).Build(),
       Opcode(0x28, "PLP", "implied").Then(PullStatus()).Build(),
-      Opcode(0x2B, "PLD", "implied").Then(PullDirectPage()).Build(),
-      Opcode(0xF4, "PEA", "absolute").Then(PushEffectiveAbsolute()).Build(),
-      Opcode(0x62, "PER", "relative long").Then(PushEffectiveRelative()).Build(),
+      Opcode(0x2B, "PLD", "implied").Then(PullDirectPage()).NewInstruction().Build(),
+      Opcode(0xF4, "PEA", "absolute").Then(PushEffectiveAbsolute()).NewInstruction().Build(),
+      Opcode(0x62, "PER", "relative long").Then(PushEffectiveRelative()).NewInstruction().Build(),
       Opcode(0xD4, "PEI", "direct page")
           .Then(FetchDirectPage())
           .Then(FetchDirectIndirect())
           .Then(PushEffectiveIndirectTail())
+          .NewInstruction()
           .Build(),
   };
 }
@@ -810,10 +821,13 @@ constexpr auto MakeJumpSpecs() {
       Opcode(0xDC, "JMP", "absolute indirect long").Then(FetchJumpAbsoluteIndirectLong()).Build(),
       Opcode(0x7C, "JMP", "absolute indexed indirect X").Then(FetchJumpAbsoluteIndexedIndirectX()).Build(),
       Opcode(0x20, "JSR", "absolute").Then(JsrAbsolute()).Build(),
-      Opcode(0x22, "JSL", "absolute long").Then(JsrAbsoluteLong()).Build(),
-      Opcode(0xFC, "JSR", "absolute indexed indirect X").Then(JsrAbsoluteIndexedIndirectX()).Build(),
+      // JSL, RTL, and JSR(abs,X) are "new" 65C816 instructions and use 16-bit
+      // SP math in emulation mode (see Bruce Clark §2688). JSR abs and RTS
+      // are inherited from the 6502 and use the old page-1 wrap.
+      Opcode(0x22, "JSL", "absolute long").Then(JsrAbsoluteLong()).NewInstruction().Build(),
+      Opcode(0xFC, "JSR", "absolute indexed indirect X").Then(JsrAbsoluteIndexedIndirectX()).NewInstruction().Build(),
       Opcode(0x60, "RTS", "implied").Then(Rts()).Build(),
-      Opcode(0x6B, "RTL", "implied").Then(Rtl()).Build(),
+      Opcode(0x6B, "RTL", "implied").Then(Rtl()).NewInstruction().Build(),
       Opcode(0x40, "RTI", "implied").Then(ReturnFromInterrupt()).Build(),
       Opcode(0x00, "BRK", "immediate byte").Then(SoftwareInterrupt(/*is_cop=*/false)).Build(),
       Opcode(0x02, "COP", "immediate byte").Then(SoftwareInterrupt(/*is_cop=*/true)).Build(),

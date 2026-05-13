@@ -1072,12 +1072,16 @@ TEST_CASE("PLB sets N when pulled value has bit 7 set", "[cpu]") {
   CheckPlbFlagPermutation(0x80, 0x00, false, false, 0x80, true, false);
 }
 
-TEST_CASE("PLB in emulation mode wraps SP across page 1", "[cpu]") {
+TEST_CASE("PLB in emulation mode uses wide pre-inc, restores SP to page 1", "[cpu]") {
+  // PLB is a "new" 65C816 instruction; in E=1 the pre-increment uses 16-bit
+  // SP math (no $01xx page wrap) and the high byte of SP is restored to $01
+  // at end-of-instruction. Bruce Clark §2688: "PHB pushes to $000100 (like
+  // PHP), but PLB pulls from $000200" when S=$01FF beforehand.
   ResetFixture f;
   f.LoadInstruction({0xAB});
 
   f.cpu.Reset();
-  f.wram.WriteRegister(0x0100, 0x33, 0);
+  f.wram.WriteRegister(0x0200, 0x33, 0);
   f.ModifyRegs([](auto& r) { r.SP = 0x01FF; });
 
   TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 36);
