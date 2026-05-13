@@ -95,7 +95,7 @@ constexpr CycleFragment FetchDirectPageIndexed(Reg index_reg) {
           MicroInternalOp::kAddIndexToAddr,
           Always(),
           "add index",
-          micro_op_params::PackAddIndex(index_reg),
+          micro_op_params::PackAddIndex(index_reg, /*bank_wrap=*/true, /*dp_wrap=*/true),
       })
       .Build();
 }
@@ -165,9 +165,12 @@ constexpr CycleFragment FetchAbsoluteLongIndexedX() {
 // Two additional cycles on top of FetchDirectPage (which must be Then()'d
 // first). Used by (dp) addressing.
 constexpr CycleFragment FetchDirectIndirect() {
+  // Pointer advance uses kStashDpIndirectLow so an emulation-mode pointer
+  // crossing the DP-page boundary wraps back to DP base instead of advancing
+  // into the next page (E=1 + DPL=$00 quirk per Bruce Clark §6.2).
   return Fragment()
-      .Then(
-          CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kStashIndirectLow, Always(), "read pointer low", 0})
+      .Then(CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kStashDpIndirectLow, Always(),
+                          "read pointer low", 0})
       .Then(CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kFormAddrFromScratchDbr, Always(),
                           "read pointer high, assemble", 0})
       .Build();
@@ -185,10 +188,10 @@ constexpr CycleFragment FetchDirectIndexedIndirectX() {
           MicroInternalOp::kAddIndexToAddr,
           Always(),
           "add X to DP addr",
-          micro_op_params::PackAddIndex(Reg::kX, /*bank_wrap=*/true),
+          micro_op_params::PackAddIndex(Reg::kX, /*bank_wrap=*/true, /*dp_wrap=*/true),
       })
-      .Then(
-          CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kStashIndirectLow, Always(), "read pointer low", 0})
+      .Then(CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kStashDpXIndirectLow, Always(),
+                          "read pointer low", 0})
       .Then(CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kFormAddrFromScratchDbr, Always(),
                           "read pointer high, assemble", 0})
       .Build();
@@ -202,8 +205,8 @@ constexpr CycleFragment FetchDirectIndexedIndirectX() {
 // kIndexedPageCrossed condition).
 constexpr CycleFragment FetchDirectIndirectIndexedY() {
   return Fragment()
-      .Then(
-          CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kStashIndirectLow, Always(), "read pointer low", 0})
+      .Then(CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kStashDpIndirectLow, Always(),
+                          "read pointer low", 0})
       .Then(CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kFormAddrFromScratchDbr, Always(),
                           "read pointer high, assemble", 0})
       .Then(CycleSlotSpec{

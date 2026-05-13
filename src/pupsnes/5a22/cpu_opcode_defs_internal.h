@@ -162,11 +162,17 @@ inline constexpr bool UnpackLoadAddrByteAndSetPcWithPbr(uint8_t params) { return
 // the add (bank forced to 0) — used by direct-page-indexed addressing. When 0,
 // the add is 24-bit and carry can propagate into the bank byte — used by
 // absolute-indexed addressing where the effective address is DBR:(abs + idx).
-inline constexpr uint8_t PackAddIndex(Reg reg, bool bank_wrap = true) {
-  return static_cast<uint8_t>((static_cast<uint32_t>(reg) & 0x0FU) | (bank_wrap ? 0x10U : 0x00U));
+inline constexpr uint8_t PackAddIndex(Reg reg, bool bank_wrap = true, bool dp_wrap = false) {
+  return static_cast<uint8_t>((static_cast<uint32_t>(reg) & 0x0FU) | (bank_wrap ? 0x10U : 0x00U) |
+                              (dp_wrap ? 0x20U : 0x00U));
 }
 inline constexpr Reg UnpackAddIndex(uint8_t params) { return static_cast<Reg>(params & 0x0FU); }
 inline constexpr bool UnpackAddIndexBankWrap(uint8_t params) { return (params & 0x10U) != 0U; }
+// When true, also apply emulation-mode direct-page wrap (in E=1 the index add
+// is 8-bit — low byte only — so an overflow stays inside the current 256-byte
+// page instead of advancing into the next). Used by direct-page-indexed and
+// (dp,X) addressing; orthogonal to bank_wrap.
+inline constexpr bool UnpackAddIndexDpWrap(uint8_t params) { return (params & 0x20U) != 0U; }
 
 // Form addr from scratch (kFormAddrFromScratchBank): bit 0 = with_y_add. When
 // set, after assembling addr_ = bank:(scratch high:low), Y is added with
