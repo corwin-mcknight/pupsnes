@@ -82,6 +82,7 @@ set(PUPSNES_TEST_SOURCES
   src/tests/rom_format_tests.cpp
   src/tests/rom_integration_tests.cpp
   src/tests/scheduler_tests.cpp
+  src/tests/sram_tests.cpp
   src/tests/test_rom_builder_tests.cpp
   src/tests/token_tests.cpp
   src/tests/mem_tests.cpp

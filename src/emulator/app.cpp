@@ -47,6 +47,17 @@ constexpr std::size_t kMaxLogicalPixels = 256U * 239U;
 // breaks out of stalls (e.g., a STP) so the UI stays responsive.
 constexpr int kMaxStuckIterations = 16;
 
+// Interval between automatic .srm flushes while the ROM is running. Real save
+// writes are coalesced behind the dirty flag so this is the worst-case window
+// in which a crash would lose unwritten SRAM.
+constexpr std::chrono::seconds kSramFlushInterval{2};
+
+std::string DeriveSavePath(const std::string& rom_path) {
+  std::filesystem::path p(rom_path);
+  p.replace_extension(".srm");
+  return p.string();
+}
+
 constexpr uint32_t Expand5To8(uint32_t v5) { return (v5 << 3U) | (v5 >> 2U); }
 
 uint32_t Bgr555ToRgba8(uint16_t c) {
@@ -67,9 +78,7 @@ std::array<uint32_t, kMaxLogicalPixels>& GetScratchBuffer() {
 //   Q/W   → L/R        Enter → Start, R-Shift → Select
 void ApplyKeyboardToJoypad(GLFWwindow* window, Joypad& joypad) {
   using Btn = Joypad::Button;
-  const auto press = [&](int key, Btn b) {
-    joypad.SetButton(b, glfwGetKey(window, key) == GLFW_PRESS);
-  };
+  const auto press = [&](int key, Btn b) { joypad.SetButton(b, glfwGetKey(window, key) == GLFW_PRESS); };
   press(GLFW_KEY_UP, Btn::kUp);
   press(GLFW_KEY_DOWN, Btn::kDown);
   press(GLFW_KEY_LEFT, Btn::kLeft);
@@ -111,6 +120,7 @@ int EmulatorApp::Run(const std::optional<std::string>& initial_rom_path) {
     Render();
   }
 
+  FlushSramToDisk();
   SaveConfig();
   return fatal_error_.has_value() ? 1 : 0;
 }
@@ -131,11 +141,29 @@ bool EmulatorApp::LoadRomFromPath(const std::string& path) {
     return false;
   }
 
+  // Flush the outgoing cart's SRAM before we tear it down. Skipped when no
+  // ROM is loaded yet — FlushSramToDisk is a no-op in that case.
+  FlushSramToDisk();
+
   try {
     snes_.LoadLoRom(rom);
     snes_.Reset();
     loaded_rom_ = true;
     loaded_rom_path_ = path;
+    loaded_rom_save_path_ = DeriveSavePath(path);
+
+    // Load the .srm next to the ROM if it exists and the cart actually has
+    // SRAM. A missing file is normal (new game, first run) — leave SRAM as
+    // the 0xFF-initialised default.
+    Cartridge& cart = snes_.GetCartridge();
+    if (cart.SramSize() > 0U) {
+      std::ifstream save_stream(loaded_rom_save_path_, std::ios::binary);
+      if (save_stream.good()) {
+        std::vector<uint8_t> save_data((std::istreambuf_iterator<char>(save_stream)), std::istreambuf_iterator<char>());
+        cart.LoadSram(save_data);
+      }
+    }
+
     ui_state_.paused = false;
     std::error_code abs_ec;
     const fs::path absolute = fs::weakly_canonical(fs::path(path), abs_ec);
@@ -146,10 +174,32 @@ bool EmulatorApp::LoadRomFromPath(const std::string& path) {
     }
     SaveConfig();
     last_tick_time_ = std::chrono::steady_clock::now();
+    last_sram_flush_time_ = last_tick_time_;
     return true;
   } catch (const std::exception& ex) {
     ui_state_.load_rom_error = ex.what();
     return false;
+  }
+}
+
+void EmulatorApp::FlushSramToDisk() {
+  if (!loaded_rom_ || loaded_rom_save_path_.empty()) {
+    return;
+  }
+  Cartridge& cart = snes_.GetCartridge();
+  if (cart.SramSize() == 0U || !cart.SramDirty()) {
+    return;
+  }
+  std::ofstream stream(loaded_rom_save_path_, std::ios::binary | std::ios::trunc);
+  if (!stream.good()) {
+    // Don't surface as fatal — a non-writable save dir shouldn't crash the
+    // emulator. The dirty flag stays set so the next attempt retries.
+    return;
+  }
+  const auto view = cart.SramView();
+  stream.write(reinterpret_cast<const char*>(view.data()), static_cast<std::streamsize>(view.size()));
+  if (stream.good()) {
+    cart.ClearSramDirty();
   }
 }
 
@@ -233,6 +283,11 @@ void EmulatorApp::TickEmulation() {
   } catch (const std::exception& ex) {
     fatal_error_ = ex.what();
   }
+
+  if (now - last_sram_flush_time_ >= kSramFlushInterval) {
+    FlushSramToDisk();
+    last_sram_flush_time_ = now;
+  }
 }
 
 void EmulatorApp::UploadFrontBufferToTexture() {
@@ -272,13 +327,13 @@ void EmulatorApp::UploadFrontBufferToTexture() {
   }
 
   if (ppu_tex_w_ != view.width || ppu_tex_h_ != view.height) {
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, static_cast<GLsizei>(view.width),
-                 static_cast<GLsizei>(view.height), 0, GL_RGBA, GL_UNSIGNED_BYTE, scratch.data());
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, static_cast<GLsizei>(view.width), static_cast<GLsizei>(view.height), 0,
+                 GL_RGBA, GL_UNSIGNED_BYTE, scratch.data());
     ppu_tex_w_ = view.width;
     ppu_tex_h_ = view.height;
   } else {
-    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, static_cast<GLsizei>(view.width),
-                    static_cast<GLsizei>(view.height), GL_RGBA, GL_UNSIGNED_BYTE, scratch.data());
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, static_cast<GLsizei>(view.width), static_cast<GLsizei>(view.height),
+                    GL_RGBA, GL_UNSIGNED_BYTE, scratch.data());
   }
 
   glPixelStorei(GL_UNPACK_ALIGNMENT, previous_unpack_alignment);
@@ -331,8 +386,7 @@ void EmulatorApp::RenderBackgroundFrame() {
     draw_h = tex_h * static_cast<float>(scale);
   }
 
-  const ImVec2 dst_min(origin.x + (size.x - draw_w) * 0.5F,
-                       origin.y + (size.y - draw_h) * 0.5F);
+  const ImVec2 dst_min(origin.x + (size.x - draw_w) * 0.5F, origin.y + (size.y - draw_h) * 0.5F);
   const ImVec2 dst_max(dst_min.x + draw_w, dst_min.y + draw_h);
   dl->AddImage(static_cast<ImTextureID>(static_cast<intptr_t>(ppu_tex_id_)), dst_min, dst_max);
 }
@@ -348,8 +402,7 @@ void EmulatorApp::RenderMenuBar() {
     }
     const bool has_last = !ui_state_.last_rom_path.empty();
     const std::string last_label =
-        has_last ? ("Load Last ROM (" +
-                    std::filesystem::path(ui_state_.last_rom_path).filename().string() + ")")
+        has_last ? ("Load Last ROM (" + std::filesystem::path(ui_state_.last_rom_path).filename().string() + ")")
                  : std::string("Load Last ROM");
     if (ImGui::MenuItem(last_label.c_str(), nullptr, false, has_last)) {
       if (!LoadRomFromPath(ui_state_.last_rom_path)) {
@@ -439,8 +492,7 @@ void EmulatorApp::RenderMenuBar() {
     } else if (dt >= 0.25) {
       const auto master_delta = static_cast<double>(master_now - perf_last_master_);
       perf_fps_ = ImGui::GetIO().Framerate;
-      perf_realtime_pct_ =
-          static_cast<float>((master_delta / static_cast<double>(kMasterClockHz)) / dt * 100.0);
+      perf_realtime_pct_ = static_cast<float>((master_delta / static_cast<double>(kMasterClockHz)) / dt * 100.0);
       perf_last_time_ = now;
       perf_last_master_ = master_now;
     }
@@ -449,8 +501,8 @@ void EmulatorApp::RenderMenuBar() {
     char overlay[80];
     if (loaded_rom_) {
       std::snprintf(overlay, sizeof(overlay), "%s  |  FPS %5.1f  |  Speed %6.1f%%",
-                    ui_state_.paused ? "PAUSED" : "      ",
-                    static_cast<double>(perf_fps_), static_cast<double>(perf_realtime_pct_));
+                    ui_state_.paused ? "PAUSED" : "      ", static_cast<double>(perf_fps_),
+                    static_cast<double>(perf_realtime_pct_));
     } else {
       std::snprintf(overlay, sizeof(overlay), "No ROM loaded");
     }
@@ -502,8 +554,7 @@ void EmulatorApp::RenderLoadRomDialog() {
     std::error_code ec;
     fs::path dir(ui_state_.load_rom_dir);
     if (!fs::exists(dir, ec) || !fs::is_directory(dir, ec)) {
-      ImGui::TextColored(ImVec4(0.95F, 0.5F, 0.25F, 1.0F), "Directory not found: %s",
-                         ui_state_.load_rom_dir.c_str());
+      ImGui::TextColored(ImVec4(0.95F, 0.5F, 0.25F, 1.0F), "Directory not found: %s", ui_state_.load_rom_dir.c_str());
     } else {
       if (ImGui::Button("Up")) {
         const fs::path parent = dir.parent_path();
@@ -617,10 +668,9 @@ void EmulatorApp::Render() {
                         viewport->WorkPos.y + viewport->WorkSize.y * 0.5F);
     ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5F, 0.5F));
     ImGui::SetNextWindowBgAlpha(0.0F);
-    constexpr ImGuiWindowFlags kFlags = ImGuiWindowFlags_NoDecoration |
-                                         ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
-                                         ImGuiWindowFlags_NoFocusOnAppearing |
-                                         ImGuiWindowFlags_NoNav | ImGuiWindowFlags_AlwaysAutoResize;
+    constexpr ImGuiWindowFlags kFlags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+                                        ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
+                                        ImGuiWindowFlags_NoNav | ImGuiWindowFlags_AlwaysAutoResize;
     if (ImGui::Begin("##no_rom_overlay", nullptr, kFlags)) {
       ImGui::TextDisabled("No ROM loaded — File > Load ROM…");
     }
