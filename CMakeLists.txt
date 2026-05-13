@@ -62,6 +62,14 @@ set(PUPSNES_DEBUGGER_SOURCES
   src/debugger/third_party/imgui_stdlib_binding.cpp
 )
 
+set(PUPSNES_EMULATOR_SOURCES
+  src/emulator/app.cpp
+  src/emulator/main.cpp
+  src/debugger/third_party/imgui_glfw_backend.cpp
+  src/debugger/third_party/imgui_opengl3_backend.cpp
+  src/debugger/third_party/imgui_stdlib_binding.cpp
+)
+
 set(PUPSNES_TEST_SOURCES
   src/tests/unit/catch2_smoke_tests.cpp
   src/tests/cpu_tests.cpp
@@ -193,6 +201,23 @@ set_source_files_properties(
 )
 set_target_properties(pupsnes_debugger PROPERTIES OUTPUT_NAME pupsnes-debugger)
 
+add_executable(pupsnes_emulator ${PUPSNES_EMULATOR_SOURCES})
+target_compile_features(pupsnes_emulator PRIVATE cxx_std_20)
+target_include_directories(pupsnes_emulator PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/includes)
+target_include_directories(pupsnes_emulator PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/src
+  ${PUPSNES_IMGUI_ROOT}/res/bindings
+  ${PUPSNES_IMGUI_ROOT}/res/misc/cpp
+)
+target_link_libraries(pupsnes_emulator PRIVATE pupsnes imgui::imgui glfw OpenGL::GL)
+set_source_files_properties(
+  src/debugger/third_party/imgui_glfw_backend.cpp
+  src/debugger/third_party/imgui_opengl3_backend.cpp
+  src/debugger/third_party/imgui_stdlib_binding.cpp
+  PROPERTIES COMPILE_OPTIONS "-w"
+)
+set_target_properties(pupsnes_emulator PROPERTIES OUTPUT_NAME pupsnes)
+
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(PUPSNES_WERROR "Treat warnings as errors" OFF)
@@ -247,6 +272,7 @@ endfunction()
 pupsnes_apply_warnings(pupsnes)
 pupsnes_apply_warnings(pupsnes_debugger_core)
 pupsnes_apply_warnings(pupsnes_debugger)
+pupsnes_apply_warnings(pupsnes_emulator)
 pupsnes_apply_warnings(pupsnes_trace_runner)
 pupsnes_apply_warnings(pupsnes_trace_cli)
 pupsnes_apply_warnings(pupsnes_trace_diff)
@@ -339,12 +365,14 @@ set(PUPSNES_HEADERS
   ${PUPSNES_PUBLIC_HEADERS}
   ${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/app.h
   ${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/panels/panels.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/app.h
 )
 
 set(PUPSNES_ALL_SOURCES
   ${PUPSNES_LIB_SOURCES}
   ${PUPSNES_DEBUGGER_CORE_SOURCES}
   ${PUPSNES_DEBUGGER_SOURCES}
+  ${PUPSNES_EMULATOR_SOURCES}
   ${PUPSNES_TEST_SOURCES}
 )
 
