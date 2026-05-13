@@ -241,6 +241,32 @@ TEST_CASE("Binary ADC D=0 is unaffected by BCD changes (regression guard)", "[un
   REQUIRE(f.cpu.GetRegs().P.C == false);
 }
 
+TEST_CASE("BCD ADC 16-bit at $3550 + $4470 yields V=1 from partially-adjusted result",
+          "[unit][opcode][cpu][bcd]") {
+  // Mirrors cputest-basic test 0404 (the first failure that surfaced this
+  // bug). The raw binary sum is $79C0 (bit 15 clear -> binary-derived V=0),
+  // but the per-nibble fixup carries propagate into bit 15 *before* the top
+  // (>$9FFF) fixup runs: at that V-sampling point the result is $8020, so V=1.
+  // The earlier "compute V on raw bin_sum" formula failed this case.
+  // Expected output is A=$8020, P=$c8 (N=1, V=1, D=1) per tests-basic.txt.
+  TestFixture f;
+  f.LoadAt(0, {0x69, 0x70, 0x44});  // ADC #$4470
+  auto regs = f.cpu.GetRegs();
+  regs.P.E = false;
+  regs.P.M = false;  // 16-bit accumulator
+  regs.A = 0x3550;
+  regs.P.D = true;
+  regs.P.C = false;
+  f.cpu.SetRegs(regs);
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 24);
+  REQUIRE(r.completed_cycles == 24);
+  REQUIRE(f.cpu.GetRegs().A == 0x8020);
+  REQUIRE(f.cpu.GetRegs().P.N == true);
+  REQUIRE(f.cpu.GetRegs().P.V == true);
+  REQUIRE(f.cpu.GetRegs().P.Z == false);
+  REQUIRE(f.cpu.GetRegs().P.C == false);
+}
+
 TEST_CASE("BCD ADC 16-bit: $4000 + $4000 = $8000 V=1 N=1 (signed boundary)", "[unit][opcode][cpu][bcd]") {
   // HIGH-5 guard: V must come from the full 16-bit pre-adjustment binary sum,
   // NOT from the high-byte BcdAdd8's overflow field.
