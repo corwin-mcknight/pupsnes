@@ -227,6 +227,14 @@ void CPU::OnNmiTimenChanged(uint8_t prev_byte, uint8_t new_byte, TimeMasterT t) 
 }
 
 void CPU::FinishInstruction() {
+  // Restore SP into page $01 in emulation mode for "new" 65C816 stack
+  // instructions. Their pushes/pulls use 16-bit SP math (handled in kModifySp
+  // and kPreIncPullStack), so SP can briefly leave the $01xx page during the
+  // instruction. Bruce Clark §2688 documents the page-$01 restore at end of
+  // instruction (PEA at S=$0100 in E=1 ends with S=$01FE, etc.).
+  if (current_instr_ != nullptr && current_instr_->is_new_65816_instruction && regs_.P.E) {
+    regs_.SP = static_cast<uint16_t>(0x0100U | static_cast<uint8_t>(regs_.SP));
+  }
   if (micro_op_recorder_ != nullptr && current_instr_ != nullptr) {
     micro_op_recorder_->OnInstructionEnd(retired_instruction_count_ + 1);
   }
@@ -484,9 +492,14 @@ void CPU::ExecuteInternalOp(MicroInternalOp op, [[maybe_unused]] uint8_t params)
       // 256-byte page in E=1 ONLY when DPL=$00 (cputest-full 0034 with DPL=0
       // wraps; 0035 with DPL=$01 does not). Otherwise it's a normal bank-wrap
       // +1. The (dp,X) form uses kStashDpXIndirectLow instead — it wraps
-      // unconditionally in E=1.
+      // unconditionally in E=1. PEI is a "new" 65C816 instruction and skips
+      // the DP-page wrap even with E=1 + DPL=$00 (Bruce Clark §5.1.1, witness
+      // cputest-full test 0x03C4: PEI $FF with D=$0200 reads pointer high
+      // from $0300 rather than wrapping back to $0200).
       addr_scratch_ = static_cast<uint16_t>((addr_scratch_ & 0xFF00U) | fetch_data_);
-      if (regs_.P.E && (regs_.DP & 0x00FFU) == 0U) {
+      const bool is_new_instr =
+          (current_instr_ != nullptr) && current_instr_->is_new_65816_instruction;
+      if (regs_.P.E && (regs_.DP & 0x00FFU) == 0U && !is_new_instr) {
         addr_ = (addr_ & 0x00FFFF00U) | ((addr_ + 1U) & 0x000000FFU);
       } else {
         addr_ = (addr_ & 0x00FF0000U) | ((addr_ + 1U) & 0x0000FFFFU);
@@ -583,8 +596,18 @@ void CPU::ExecuteInternalOp(MicroInternalOp op, [[maybe_unused]] uint8_t params)
 
     case MicroInternalOp::kModifySp: {
       const uint16_t delta = mp::UnpackModifySpIncrement(params) ? 0x0001U : 0xFFFFU;
-      regs_.SP = regs_.P.E ? static_cast<uint16_t>(0x0100U | static_cast<uint8_t>(regs_.SP + delta))
-                           : static_cast<uint16_t>(regs_.SP + delta);
+      // "New" 65C816 stack instructions in emulation mode use 16-bit SP math
+      // during pushes/pulls — no wrap at the $01xx page boundary — and the
+      // high byte is restored to $01 at end-of-instruction (handled in
+      // FinishInstruction). For "old" 6502-compatible push/pull (PHA/PHP/PLA/
+      // PLP/JSR abs/RTS/BRK/COP/IRQ/NMI/ABORT), keep the 8-bit page-1 wrap.
+      const bool wide =
+          (current_instr_ != nullptr) && current_instr_->is_new_65816_instruction;
+      if (regs_.P.E && !wide) {
+        regs_.SP = static_cast<uint16_t>(0x0100U | static_cast<uint8_t>(regs_.SP + delta));
+      } else {
+        regs_.SP = static_cast<uint16_t>(regs_.SP + delta);
+      }
       return;
     }
 
@@ -1101,15 +1124,20 @@ TickResult CPU::PerformBusAction(MicroBusAction action, [[maybe_unused]] uint8_t
       return BusWrite(StackAddr(regs_), byte, cycle_time);
     }
     case MicroBusAction::kPullStack: return BusRead(StackAddr(regs_), cycle_time);
-    case MicroBusAction::kPreIncPullStack:
+    case MicroBusAction::kPreIncPullStack: {
       // Stack pulls: SP must point at the top of the stack before reading.
-      if (regs_.P.E) {
+      // "New" 65C816 instructions in E=1 use 16-bit SP math (no page-1 wrap);
+      // the high byte is restored to $01 at end-of-instruction.
+      const bool wide =
+          (current_instr_ != nullptr) && current_instr_->is_new_65816_instruction;
+      if (regs_.P.E && !wide) {
         const uint8_t sp_lo = static_cast<uint8_t>(static_cast<uint8_t>(regs_.SP) + 1U);
         regs_.SP = static_cast<uint16_t>(0x0100U | sp_lo);
       } else {
         regs_.SP = static_cast<uint16_t>(regs_.SP + 1U);
       }
       return BusRead(StackAddr(regs_), cycle_time);
+    }
   }
   return TickResult{0, TickStopReason::kReachedTarget};
 }
@@ -1189,9 +1217,12 @@ TimeMasterDeltaT CPU::EstimateNextStepCostOrZero() const {
     case MicroBusAction::kPullStack: return bus.Plan(StackAddr(regs_), BusAccessType::kRead).access_cycles;
     case MicroBusAction::kPreIncPullStack: {
       // Simulate the pre-increment on a copy so the estimate picks the
-      // page the real read will land on.
+      // page the real read will land on. Mirror the wide-mode logic from
+      // PerformBusAction so the page estimate matches the live increment.
       CPU::Regs sim = regs_;
-      if (sim.P.E) {
+      const bool wide =
+          (current_instr_ != nullptr) && current_instr_->is_new_65816_instruction;
+      if (sim.P.E && !wide) {
         const uint8_t sp_lo = static_cast<uint8_t>(static_cast<uint8_t>(sim.SP) + 1U);
         sim.SP = static_cast<uint16_t>(0x0100U | sp_lo);
       } else {

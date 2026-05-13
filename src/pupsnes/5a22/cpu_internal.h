@@ -89,11 +89,21 @@ struct InstructionEntry {
   // Without this gate, branches executed with DP-low nonzero would spuriously
   // trigger the emulation-mode page-cross penalty.
   bool uses_dp_penalty = false;
+  // True for "new" 65C816 instructions whose emulation-mode behavior diverges
+  // from the "old" 6502 / 65C02 set. Covers the stack family
+  // (JSL/RTL/PEA/PEI/PER/PHB/PLB/PHD/PLD/PHK/JSR(abs,X)) which uses 16-bit SP
+  // math during pushes/pulls (no wrap at $01xx) and restores the SP high byte
+  // to $01 at end-of-instruction (Bruce Clark §2688). Also gates the
+  // direct-page-indirect wrap suppression for PEI (§5.1.1: "PEI $FF does not
+  // wrap at a page boundary, either the direct page part, or the (pushing
+  // onto the) stack part"). PHX/PHY/PLX/PLY are NOT marked — they were
+  // already on the 65C02 and use the old page-1 wrap.
+  bool is_new_65816_instruction = false;
   std::array<MicroOp, kMaxRemainingOps> ops{};
   std::array<uint32_t, kMaxInstructionRules> rules{};
 };
-// 52 bytes with kMaxRemainingOps=8 and the uses_dp_penalty flag: 4 header +
-// 32 ops + 16 rules. 256-entry table is 13 KiB, still L1i-resident.
+// 56 bytes with kMaxRemainingOps=8 and the two header flag bytes: 8 header
+// (padded) + 32 ops + 16 rules. 256-entry table is 14 KiB, still L1i-resident.
 static_assert(sizeof(InstructionEntry) <= 56, "InstructionEntry budget");
 
 }  // namespace pupsnes

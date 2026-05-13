@@ -233,6 +233,10 @@ struct OpcodeSpec {
   std::string_view addressing_mode{};
   uint8_t cycle_count = 0;
   bool overflowed = false;
+  // Mirrors InstructionEntry::is_new_65816_instruction; set via
+  // OpcodeSpecBuilder::NewInstruction() for "new" 65C816 opcodes whose
+  // emulation-mode quirks differ from the old 6502 set.
+  bool is_new_65816_instruction = false;
   std::array<CycleSlotSpec, kMaxRemainingOps> cycles{};
 };
 
@@ -584,6 +588,19 @@ struct OpcodeSpecBuilder {
     return *this;
   }
 
+  // Mark this opcode as a "new" 65C816 instruction (not present on the 6502 /
+  // 65C02). In emulation mode the 65C816 applies different quirks to these:
+  //   - Stack ops (JSL/RTL/PEA/PEI/PER/PHB/PLB/PHD/PLD/PHK/PHX/PHY/PLX/PLY/
+  //     JSR(abs,X)) use 16-bit SP math during pushes/pulls (no wrap at $01xx)
+  //     and restore the SP high byte to $01 at end-of-instruction (Bruce
+  //     Clark §2688).
+  //   - PEI's (dp) pointer fetch skips the DP-page wrap that "old" (dp)
+  //     instructions apply when E=1 + DPL=$00 (Bruce Clark §5.1.1).
+  constexpr OpcodeSpecBuilder& NewInstruction() {
+    spec.is_new_65816_instruction = true;
+    return *this;
+  }
+
   constexpr OpcodeSpec Build() const { return spec; }
 };
 
@@ -763,6 +780,7 @@ constexpr InstructionEntry LowerOpcode(const OpcodeSpec& spec) {
   entry.disposition = InstructionDisposition::kImplemented;
   entry.remaining_op_count = spec.cycle_count;
   entry.uses_dp_penalty = AddressingModeUsesDpPenalty(spec.addressing_mode);
+  entry.is_new_65816_instruction = spec.is_new_65816_instruction;
   entry.rule_count = 1;
   entry.rules[0] = ComputeTimingRuleTruthTable(Always());
 
