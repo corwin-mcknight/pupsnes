@@ -115,6 +115,12 @@ void RenderControllerPanel(DebuggerApp& app) {
   }
   ImGui::SameLine();
   ImGui::TextDisabled("state: $%04X", static_cast<unsigned>(joypad.GetP1State()));
+
+  // Keyboard binding hint. Must stay in sync with kP1KeyMap in app.cpp.
+  ImGui::Dummy(ImVec2(0.0F, 4.0F));
+  ImGui::TextDisabled("Keyboard:");
+  ImGui::TextDisabled("  D-pad: arrows   B: Z   A: X   Y: A   X: S");
+  ImGui::TextDisabled("  L: Q   R: W   Start: Enter   Select: Right Shift");
 }
 
 }  // namespace pupsnes::debugger

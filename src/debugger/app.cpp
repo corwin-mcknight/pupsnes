@@ -25,12 +25,43 @@
 #include "pupsnes/debugger/file_trace_sink.h"
 #include "pupsnes/debugger/sha1.h"
 #include "pupsnes/hw/cartridge.h"
+#include "pupsnes/hw/joypad.h"
 #include "pupsnes/hw/sppu/ppu.h"
 #include "pupsnes/rom_format.h"
 
 namespace pupsnes::debugger {
 
 DebuggerApp* DebuggerApp::current_app_ = nullptr;
+
+namespace {
+
+// Keyboard → P1 button map. Indices line up with DebuggerApp::p1_key_was_down_
+// for edge detection. Layout matches a Snes9x-style default: arrows for the
+// D-pad, ASZX for the face-button diamond (A=Y, S=X, Z=B, X=A), Q/W for L/R,
+// Enter for Start, Right Shift for Select.
+struct KeyMapping {
+  ImGuiKey key;
+  Joypad::Button button;
+  const char* key_label;
+};
+
+constexpr std::array<KeyMapping, 13> kP1KeyMap{{
+    {ImGuiKey_UpArrow, Joypad::Button::kUp, "Up"},
+    {ImGuiKey_DownArrow, Joypad::Button::kDown, "Down"},
+    {ImGuiKey_LeftArrow, Joypad::Button::kLeft, "Left"},
+    {ImGuiKey_RightArrow, Joypad::Button::kRight, "Right"},
+    {ImGuiKey_Z, Joypad::Button::kB, "Z"},
+    {ImGuiKey_X, Joypad::Button::kA, "X"},
+    {ImGuiKey_A, Joypad::Button::kY, "A"},
+    {ImGuiKey_S, Joypad::Button::kX, "S"},
+    {ImGuiKey_Q, Joypad::Button::kL, "Q"},
+    {ImGuiKey_W, Joypad::Button::kR, "W"},
+    {ImGuiKey_Enter, Joypad::Button::kStart, "Enter"},
+    {ImGuiKey_KeypadEnter, Joypad::Button::kStart, "KP-Enter"},
+    {ImGuiKey_RightShift, Joypad::Button::kSelect, "RShift"},
+}};
+
+}  // namespace
 
 DebuggerApp::DebuggerApp()
     : trace_log_(512),
@@ -656,6 +687,33 @@ void DebuggerApp::SaveAppConfig() {
   stream << "speed_multiplier=" << ui_state_.speed_multiplier << "\n";
 }
 
+void DebuggerApp::PollGameInput() {
+  if (!loaded_rom_) {
+    // No ROM means the SNES is in reset state; still safe to forward inputs,
+    // but the joypad is reset on every ROM load so don't bother.
+    return;
+  }
+
+  const ImGuiIO& io = ImGui::GetIO();
+  // When an ImGui text widget is active, suppress all polled input so typing
+  // an address doesn't fire button presses. Treating every mapped key as
+  // "not down" also releases any button that was held when focus moved into
+  // the text field — otherwise a held key would stick on the pad until the
+  // user happened to release it inside the text field (an event ImGui eats).
+  // Same logic applies to Ctrl/Cmd/Alt — those compose into shortcuts, not
+  // gameplay.
+  const bool suppress = io.WantTextInput || io.KeyCtrl || io.KeyAlt || io.KeySuper;
+
+  Joypad& joypad = snes_.GetJoypad();
+  for (size_t i = 0; i < kP1KeyMap.size(); ++i) {
+    const bool down = !suppress && ImGui::IsKeyDown(kP1KeyMap[i].key);
+    if (down != p1_key_was_down_[i]) {
+      joypad.SetButton(kP1KeyMap[i].button, down);
+      p1_key_was_down_[i] = down;
+    }
+  }
+}
+
 void DebuggerApp::RenderFatalModal() {
   if (!fatal_error_.has_value()) {
     return;
@@ -675,6 +733,8 @@ void DebuggerApp::Render() {
   ImGui_ImplOpenGL3_NewFrame();
   ImGui_ImplGlfw_NewFrame();
   ImGui::NewFrame();
+
+  PollGameInput();
 
   RenderMenuBar();
   ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport());

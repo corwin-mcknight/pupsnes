@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -146,6 +147,10 @@ class DebuggerApp {
   void Render();
   void RenderMenuBar();
   void RenderFatalModal();
+  // Reads the keyboard each frame and forwards key transitions to the P1
+  // joypad. Edge-detected so the on-screen controller panel can still toggle
+  // bits when the user isn't using the keyboard.
+  void PollGameInput();
   void LoadAppConfig();
   void SaveAppConfig();
   static std::string GetConfigPath();
@@ -176,6 +181,9 @@ class DebuggerApp {
   std::string trace_recording_path_;
   std::string trace_last_error_;
   UiState ui_state_;
+  // Edge-detection state for keyboard → P1 polling. Index lines up with the
+  // mapping table in app.cpp.
+  std::array<bool, 13> p1_key_was_down_{};
 };
 
 }  // namespace pupsnes::debugger
