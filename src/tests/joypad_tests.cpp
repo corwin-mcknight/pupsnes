@@ -141,3 +141,52 @@ TEST_CASE("Joypad::Reset clears the manual shift state but not button presses", 
   BusWrite(snes, 0x00'4016U, 0x00U);
   REQUIRE((BusRead(snes, 0x00'4016U) & 0x01U) == 0x01U);
 }
+
+TEST_CASE("Manual joypad ports $4016/$4017 cost 12 master cycles per access", "[unit][joypad]") {
+  // Pages $40-$41 ($4000-$41FF) are the slowest bus class on real hardware —
+  // every access takes 12 master cycles, FASTROM has no effect. Mirror this in
+  // both bank $00 (low-half) and bank $80 (high-half) since the MMIO span is
+  // mirrored there too.
+  SNES snes;
+  snes.Reset();
+
+  for (uint32_t addr : {0x00'4016U, 0x00'4017U, 0x80'4016U, 0x80'4017U}) {
+    const BusPlan read_plan = snes.system_bus->Plan(addr, BusAccessType::kRead);
+    REQUIRE(read_plan.outcome == BusPlanOutcome::kInlineComplete);
+    REQUIRE(read_plan.access_cycles == 12);
+
+    const BusPlan write_plan = snes.system_bus->Plan(addr, BusAccessType::kWrite, 0x00U);
+    REQUIRE(write_plan.outcome == BusPlanOutcome::kInlineComplete);
+    REQUIRE(write_plan.access_cycles == 12);
+  }
+}
+
+TEST_CASE("Unmapped $4000-$41FF addresses still bill 12 master cycles", "[unit][joypad]") {
+  // The whole manual-joypad page range bills at 12 mcyc on real hardware, even
+  // for addresses with no live device behind them ($4000-$4015, $4018-$41FF).
+  // PupSNES routes every page in this span through CpuMmio as kSameClockMmio
+  // so the bus log captures the access; the access_cycles must still be 12.
+  SNES snes;
+  snes.Reset();
+
+  for (uint32_t addr : {0x00'4000U, 0x00'4018U, 0x00'40FFU, 0x00'4100U, 0x00'41FFU}) {
+    const BusPlan plan = snes.system_bus->Plan(addr, BusAccessType::kRead);
+    REQUIRE(plan.outcome == BusPlanOutcome::kInlineComplete);
+    REQUIRE(plan.access_cycles == 12);
+  }
+}
+
+TEST_CASE("Auto-joypad result regs $4218-$421F use the 8-cycle MMIO timing", "[unit][joypad]") {
+  // $4218-$421F live on page $42, which is part of the standard CPU MMIO
+  // block — 8 master cycles in PupSNES today. (Real hardware bills 6 for
+  // $4200-$43FF; see TODO.md for the wider fix.) This test pins the current
+  // contract so a future bump to 6 trips a deliberate update here.
+  SNES snes;
+  snes.Reset();
+
+  for (uint32_t addr = 0x00'4218U; addr <= 0x00'421FU; ++addr) {
+    const BusPlan plan = snes.system_bus->Plan(addr, BusAccessType::kRead);
+    REQUIRE(plan.outcome == BusPlanOutcome::kInlineComplete);
+    REQUIRE(plan.access_cycles == 8);
+  }
+}
