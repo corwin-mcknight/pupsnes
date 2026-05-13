@@ -149,6 +149,11 @@ target_compile_features(pupsnes_trace_diff_cli PRIVATE cxx_std_20)
 target_link_libraries(pupsnes_trace_diff_cli PRIVATE pupsnes_trace_diff)
 set_target_properties(pupsnes_trace_diff_cli PROPERTIES OUTPUT_NAME pupsnes-trace-diff)
 
+add_executable(pupsnes_screenshot_cli src/tools/screenshot_main.cpp)
+target_compile_features(pupsnes_screenshot_cli PRIVATE cxx_std_20)
+target_link_libraries(pupsnes_screenshot_cli PRIVATE pupsnes_trace_runner)
+set_target_properties(pupsnes_screenshot_cli PROPERTIES OUTPUT_NAME pupsnes-screenshot)
+
 # Treat third-party (Conan) include dirs as SYSTEM so clang-tidy / warnings
 # don't report issues inside vendor headers or macro expansions from them.
 function(pupsnes_mark_system target)
@@ -246,6 +251,7 @@ pupsnes_apply_warnings(pupsnes_trace_runner)
 pupsnes_apply_warnings(pupsnes_trace_cli)
 pupsnes_apply_warnings(pupsnes_trace_diff)
 pupsnes_apply_warnings(pupsnes_trace_diff_cli)
+pupsnes_apply_warnings(pupsnes_screenshot_cli)
 
 include(CTest)
 if(BUILD_TESTING)
