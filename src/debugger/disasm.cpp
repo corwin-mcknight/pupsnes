@@ -126,4 +126,40 @@ DisassembledInstruction DisassembleInstruction(const SNES& snes, SnesAddrT pc, c
   return out;
 }
 
+std::optional<SnesAddrT> GetBranchTarget(const DisassembledInstruction& instr) {
+  if (!instr.complete) return std::nullopt;
+  const OpcodeMetadataView& metadata = GetOpcodeMetadata(instr.opcode);
+  const SnesAddrT bank = instr.pc & 0x00FF0000U;
+  switch (instr.opcode) {
+    case 0x10:  // BPL
+    case 0x30:  // BMI
+    case 0x50:  // BVC
+    case 0x70:  // BVS
+    case 0x80:  // BRA
+    case 0x90:  // BCC
+    case 0xB0:  // BCS
+    case 0xD0:  // BNE
+    case 0xF0:  // BEQ
+    {
+      if (metadata.addressing_mode != OpcodeAddressingMode::kRelative8) return std::nullopt;
+      if (instr.byte_count < 2U) return std::nullopt;
+      const int8_t displacement = static_cast<int8_t>(instr.bytes[1]);
+      const uint16_t next_pc = static_cast<uint16_t>((instr.pc + 2U) & 0xFFFFU);
+      const uint16_t target = static_cast<uint16_t>(next_pc + displacement);
+      return bank | static_cast<SnesAddrT>(target);
+    }
+    case 0x82:  // BRL
+    {
+      if (metadata.addressing_mode != OpcodeAddressingMode::kRelative16) return std::nullopt;
+      if (instr.byte_count < 3U) return std::nullopt;
+      const int16_t displacement =
+          static_cast<int16_t>(static_cast<uint16_t>(instr.bytes[1] | (static_cast<uint16_t>(instr.bytes[2]) << 8U)));
+      const uint16_t next_pc = static_cast<uint16_t>((instr.pc + 3U) & 0xFFFFU);
+      const uint16_t target = static_cast<uint16_t>(next_pc + displacement);
+      return bank | static_cast<SnesAddrT>(target);
+    }
+    default: return std::nullopt;
+  }
+}
+
 }  // namespace pupsnes::debugger
