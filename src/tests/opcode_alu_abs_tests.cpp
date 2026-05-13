@@ -144,6 +144,32 @@ TEST_CASE("ADC absolute 16-bit uses 5-cycle path", "[unit][opcode][cpu][abs]") {
   REQUIRE(f.cpu.GetRegs().A == 0x2234);
 }
 
+TEST_CASE("ADC absolute 16-bit at $FFFF carries operand fetch into next bank", "[unit][opcode][cpu][abs]") {
+  // Regression: ADC $FFFF with DBR=$7E must read its high byte from $7F:0000,
+  // not $7E:0000. Mirrors cputest-basic test 0007 (the first failure that
+  // surfaced this bug).
+  ResetFixture f;
+  f.LoadInstruction({0x6D, 0xFF, 0xFF});
+
+  f.cpu.Reset();
+  f.wram.WriteRegister(0x0FFFF, 0xCB, 0);  // $7E:FFFF (low byte)
+  f.wram.WriteRegister(0x10000, 0xED, 0);  // $7F:0000 (high byte)
+  f.wram.WriteRegister(0x00000, 0x5A, 0);  // $7E:0000 — must NOT be the source
+  SetAccumulator16(f.cpu, 0x1234);
+  SetDataBank(f.cpu, 0x7E);
+  f.ModifyRegs([](auto& r) { r.P.C = true; });
+
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 40);
+
+  REQUIRE(r.completed_cycles == 40);
+  // $1234 + $EDCB + 1 = $20000 -> A=$0000, Z=1, C=1, V=0, N=0.
+  REQUIRE(f.cpu.GetRegs().A == 0x0000);
+  REQUIRE(f.cpu.GetRegs().P.Z == true);
+  REQUIRE(f.cpu.GetRegs().P.C == true);
+  REQUIRE(f.cpu.GetRegs().P.V == false);
+  REQUIRE(f.cpu.GetRegs().P.N == false);
+}
+
 TEST_CASE("AND absolute 16-bit masks wide accumulator", "[unit][opcode][cpu][abs]") {
   ResetFixture f;
   f.LoadInstruction({0x2D, 0x40, 0x00});

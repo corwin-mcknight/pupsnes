@@ -1261,9 +1261,7 @@ TEST_CASE("TickToTarget on unimplemented opcode returns kFault without advancing
   REQUIRE(fault->opcode == 0x00);
 }
 
-TEST_CASE(
-    "Same-master-time bus accesses within TickToTarget use increasing timestamps",
-    "[cpu]") {
+TEST_CASE("Same-master-time bus accesses within TickToTarget use increasing timestamps", "[cpu]") {
   MMIOProgramFixture f;
   f.LoadAt(0, {0xA9, 0x7F});
 
@@ -1760,8 +1758,7 @@ TEST_CASE("SEP in native mode sets the specified P bits", "[cpu][opcode]") {
   REQUIRE(out.X == false);
 }
 
-TEST_CASE("SEP #$10 in native mode zeroes X.H and Y.H when X-flag transitions 0->1",
-          "[cpu][opcode]") {
+TEST_CASE("SEP #$10 in native mode zeroes X.H and Y.H when X-flag transitions 0->1", "[cpu][opcode]") {
   // 65C816: setting the X (index) flag forces the high byte of X and Y to $00,
   // matching real-hardware behaviour (Bruce Clark §6.13). Without this, 16-bit
   // index values leak through into 8-bit mode and corrupt subsequent reads.
@@ -1784,8 +1781,7 @@ TEST_CASE("SEP #$10 in native mode zeroes X.H and Y.H when X-flag transitions 0-
   REQUIRE(out.Y == 0x0078);
 }
 
-TEST_CASE("SEP #$30 in native mode zeroes X.H and Y.H but preserves AH",
-          "[cpu][opcode]") {
+TEST_CASE("SEP #$30 in native mode zeroes X.H and Y.H but preserves AH", "[cpu][opcode]") {
   // SEP #$30 sets both M and X. The accumulator's hidden high byte (B) must be
   // preserved; only the index registers truncate.
   TestFixture f;
@@ -1810,8 +1806,7 @@ TEST_CASE("SEP #$30 in native mode zeroes X.H and Y.H but preserves AH",
   REQUIRE(out.Y == 0x00FD);
 }
 
-TEST_CASE("PLP that sets X-flag in native mode zeroes X.H and Y.H",
-          "[cpu][opcode]") {
+TEST_CASE("PLP that sets X-flag in native mode zeroes X.H and Y.H", "[cpu][opcode]") {
   // PHP pushes P with X=0; we manually push a status byte with X=1, then PLP.
   // PLA path uses kLoadReg for Reg::kP, which must apply the same forcing as
   // SEP/REP/XCE.
@@ -2575,7 +2570,7 @@ TEST_CASE("ASL dp 8-bit shifts memory and sets carry", "[cpu][opcode][rmw]") {
 
   REQUIRE(r.completed_cycles == 38);
   REQUIRE(f.wram.ReadRegister(0x0010, 0).value == 0x02);  // 0x81 << 1 = 0x102 → 0x02
-  REQUIRE(f.cpu.GetRegs().P.C == true);                    // bit 7 went to C
+  REQUIRE(f.cpu.GetRegs().P.C == true);                   // bit 7 went to C
 }
 
 TEST_CASE("INC abs 8-bit increments memory", "[cpu][opcode][rmw]") {
@@ -2615,6 +2610,57 @@ TEST_CASE("DEC abs 16-bit decrements 16-bit memory", "[cpu][opcode][rmw]") {
   REQUIRE(f.wram.ReadRegister(0x1235, 0).value == 0x00);  // 0x0100 - 1 = 0x00FF
 }
 
+TEST_CASE("INC abs 8-bit at $FFFF stays in DBR-bank across read/write", "[cpu][opcode][rmw]") {
+  // Regression: INC $FFFF with DBR=$7E reads and writes a single byte at
+  // $7E:FFFF. The internal advance/rollback bookkeeping must stay 24-bit so
+  // the write-back doesn't escape to the previous bank.
+  ResetFixture f;
+  f.LoadInstruction({0xEE, 0xFF, 0xFF});
+
+  f.cpu.Reset();
+  f.wram.WriteRegister(0x0FFFF, 0x7F, 0);  // $7E:FFFF — target
+  f.wram.WriteRegister(0x0FFFE, 0xAA, 0);  // $7E:FFFE — must not be clobbered
+  f.wram.WriteRegister(0x10000, 0xBB, 0);  // $7F:0000 — must not be clobbered
+  f.ModifyRegs([](auto& r) {
+    r.DBR = 0x7E;
+    r.P.M = true;  // 8-bit accumulator/memory
+  });
+
+  // INC abs 8-bit = 6 cycles × 8 master = 46 (5 mem accesses at 8 + 1 internal at 6).
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 46);
+
+  REQUIRE(r.completed_cycles == 46);
+  REQUIRE(f.wram.Peek(0x0FFFF) == 0x80);
+  REQUIRE(f.wram.Peek(0x0FFFE) == 0xAA);
+  REQUIRE(f.wram.Peek(0x10000) == 0xBB);
+}
+
+TEST_CASE("INC abs 16-bit at $FFFF carries operand fetch into next bank", "[cpu][opcode][rmw]") {
+  // Regression: 16-bit INC $FFFF with DBR=$7E reads/writes a 16-bit operand
+  // that straddles $7E:FFFF (low) and $7F:0000 (high).
+  ResetFixture f;
+  f.LoadInstruction({0xEE, 0xFF, 0xFF});
+
+  f.cpu.Reset();
+  f.ModifyRegs([](auto& r) {
+    r.DBR = 0x7E;
+    r.P.E = false;
+    r.P.M = false;  // 16-bit memory
+  });
+  f.wram.WriteRegister(0x0FFFF, 0xFF, 0);  // $7E:FFFF (low byte)
+  f.wram.WriteRegister(0x10000, 0x00, 0);  // $7F:0000 (high byte) -> 16-bit value $00FF
+  f.wram.WriteRegister(0x00000, 0x5A, 0);  // $7E:0000 — must NOT be touched
+
+  // INC abs 16-bit = 8 cycles = 7 mem × 8 + 1 internal × 6 = 62 master cycles.
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 62);
+
+  REQUIRE(r.completed_cycles == 62);
+  // $00FF + 1 = $0100 -> low byte $00 at $7E:FFFF, high byte $01 at $7F:0000.
+  REQUIRE(f.wram.Peek(0x0FFFF) == 0x00);
+  REQUIRE(f.wram.Peek(0x10000) == 0x01);
+  REQUIRE(f.wram.Peek(0x00000) == 0x5A);  // bank-wrap target untouched
+}
+
 TEST_CASE("ROL dp,X 8-bit rotates memory through carry", "[cpu][opcode][rmw]") {
   ResetFixture f;
   // ROL $10,X with X=$02, DP=0 → effective addr $0012. C=1 rotates into bit 0.
@@ -2632,7 +2678,7 @@ TEST_CASE("ROL dp,X 8-bit rotates memory through carry", "[cpu][opcode][rmw]") {
 
   REQUIRE(r.completed_cycles == 46);
   REQUIRE(f.wram.ReadRegister(0x0012, 0).value == 0x81);  // (0x40 << 1) | 1 = 0x81
-  REQUIRE(f.cpu.GetRegs().P.C == false);                   // bit 7 of original (0x40) was 0
+  REQUIRE(f.cpu.GetRegs().P.C == false);                  // bit 7 of original (0x40) was 0
 }
 
 TEST_CASE("ASL abs,X 16-bit shifts 16-bit memory", "[cpu][opcode][rmw]") {
@@ -2764,8 +2810,8 @@ TEST_CASE("TSB dp sets memory bits from A and updates Z from (A AND mem)", "[uni
   // mem was 0x0C, A=0x03; (A & mem) = 0 → Z=1; result mem = 0x0C | 0x03 = 0x0F.
   REQUIRE(f.wram.ReadRegister(0x0010, 0).value == 0x0F);
   REQUIRE(f.cpu.GetRegs().P.Z == true);
-  REQUIRE(f.cpu.GetRegs().P.N == true);   // preserved
-  REQUIRE(f.cpu.GetRegs().P.C == true);   // preserved
+  REQUIRE(f.cpu.GetRegs().P.N == true);                      // preserved
+  REQUIRE(f.cpu.GetRegs().P.C == true);                      // preserved
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x03);  // A unchanged
 }
 
@@ -2935,7 +2981,7 @@ TEST_CASE("BRK in native mode pushes PBR and uses the $FFE6 vector", "[unit][cpu
   REQUIRE(f.cpu.GetRegs().PC == 0x9000);
   REQUIRE(f.cpu.GetRegs().PBR == 0x00);
   // Native push order: PBR, PCH, PCL, P.
-  REQUIRE(f.wram.ReadRegister(sp_before, 0).value == 0x80);  // PBR
+  REQUIRE(f.wram.ReadRegister(sp_before, 0).value == 0x80);                              // PBR
   REQUIRE(f.wram.ReadRegister(static_cast<uint16_t>(sp_before - 1U), 0).value == 0x80);  // PCH
   REQUIRE(f.wram.ReadRegister(static_cast<uint16_t>(sp_before - 2U), 0).value == 0x02);  // PCL
   REQUIRE(f.cpu.GetRegs().SP == static_cast<uint16_t>(sp_before - 4U));
@@ -3044,10 +3090,10 @@ TEST_CASE("MVN copies a block forward one byte per 7-cycle pass", "[unit][cpu][o
     r.P.E = false;  // enable 16-bit A/X/Y
     r.P.M = false;
     r.P.X = false;
-    r.A = 0x0002;   // 3 bytes: count - 1
-    r.X = 0x0300;   // source low 16
-    r.Y = 0x0400;   // destination low 16
-    r.DBR = 0x55;   // will be overwritten by dest bank ($00)
+    r.A = 0x0002;  // 3 bytes: count - 1
+    r.X = 0x0300;  // source low 16
+    r.Y = 0x0400;  // destination low 16
+    r.DBR = 0x55;  // will be overwritten by dest bank ($00)
   });
   f.wram.WriteRegister(0x0300, 0xAA, 0);
   f.wram.WriteRegister(0x0301, 0xBB, 0);
@@ -3083,9 +3129,9 @@ TEST_CASE("MVP copies a block backward one byte per 7-cycle pass", "[unit][cpu][
     r.P.E = false;
     r.P.M = false;
     r.P.X = false;
-    r.A = 0x0002;   // 3 bytes to move
-    r.X = 0x0302;   // source = end of block (MVP walks downward)
-    r.Y = 0x0402;   // destination = end of block
+    r.A = 0x0002;  // 3 bytes to move
+    r.X = 0x0302;  // source = end of block (MVP walks downward)
+    r.Y = 0x0402;  // destination = end of block
     r.DBR = 0x55;
   });
   f.wram.WriteRegister(0x0300, 0xAA, 0);

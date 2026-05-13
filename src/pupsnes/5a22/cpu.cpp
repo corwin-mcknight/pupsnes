@@ -469,6 +469,16 @@ void CPU::ExecuteInternalOp(MicroInternalOp op, [[maybe_unused]] uint8_t params)
       return;
     }
 
+    case MicroInternalOp::kStashOperandLow: {
+      // 16-bit data fetch through the effective address: stash the low byte
+      // into scratch and advance addr_ with 24-bit carry. Required when the
+      // operand straddles a bank boundary — e.g. ADC $FFFF / ASL $FFFF with
+      // DBR=$7E must read the high byte from $7F:0000, not $7E:0000.
+      addr_scratch_ = static_cast<uint16_t>((addr_scratch_ & 0xFF00U) | fetch_data_);
+      addr_ = (addr_ + 1U) & 0x00FFFFFFU;
+      return;
+    }
+
     case MicroInternalOp::kFormAddrFromScratchDbr: {
       const uint32_t low = static_cast<uint32_t>(addr_scratch_ & 0x00FFU);
       const uint32_t high = static_cast<uint32_t>(fetch_data_) << 8U;

@@ -54,13 +54,26 @@ enum class MicroInternalOp : uint8_t {
                               // is 24-bit and carry can propagate into the bank byte (used by
                               // absolute-indexed, where the effective address is DBR:(abs + idx)).
                               // See micro_op_params::PackAddIndex.
-  kStashIndirectLow,          // addr_scratch_[7:0] = fetch_data_; addr_ = (addr_ + 1) & 0xFFFFFF.
-                              // First step of (dp) / [dp] / (dp),Y / [dp],Y: captures the low byte
-                              // of the indirect pointer while advancing addr_ to the next pointer
-                              // byte. Models AAL latch capture on the 65C816.
-  kStashIndirectHigh,         // addr_scratch_[15:8] = fetch_data_; addr_ = (addr_ + 1) & 0xFFFFFF.
-                              // Second step for [dp] / [dp],Y long-indirect: captures pointer
-                              // high byte before the bank-byte read clobbers fetch_data_.
+  kStashIndirectLow,          // addr_scratch_[7:0] = fetch_data_; addr_ low 16 bits += 1 with
+                              // bank-wrap (bank byte untouched). First step of (dp) / [dp] /
+                              // (dp),Y / [dp],Y and the JMP/JSR indirect family: captures the
+                              // low byte of the indirect pointer while advancing addr_ to the
+                              // next pointer byte. Bank-wrap matches the 65C816's pointer-fetch
+                              // behavior — pointers in bank 0 / PBR stay in that bank when the
+                              // low 16 bits overflow. For 16-bit operand reads through the
+                              // effective address (ALU/RMW), use kStashOperandLow instead so
+                              // the high byte address carries into (bank+1):0000.
+  kStashIndirectHigh,         // addr_scratch_[15:8] = fetch_data_; addr_ low 16 bits += 1 with
+                              // bank-wrap. Second step for [dp] / [dp],Y long-indirect and
+                              // JMP [abs]: captures pointer high byte before the bank-byte read
+                              // clobbers fetch_data_. Same bank-wrap reasoning as
+                              // kStashIndirectLow.
+  kStashOperandLow,           // addr_scratch_[7:0] = fetch_data_; addr_ += 1 with 24-bit carry
+                              // (overflow at $xxFFFF -> $(xx+1):0000). Used as the low-byte
+                              // step of a 16-bit data read through the effective address — the
+                              // high byte lives at the next 24-bit address, so the bank must
+                              // increment on rollover. Distinct from kStashIndirectLow, which
+                              // bank-wraps for pointer fetches.
   kFormAddrFromScratchDbr,    // addr_ = DBR:(fetch_data_<<8 | addr_scratch_[7:0]). Completes
                               // assembly for (dp) / (dp,X) / (dp),Y: the just-fetched byte is
                               // the pointer high, scratch held the pointer low, and DBR supplies
@@ -170,9 +183,11 @@ enum class MicroInternalOp : uint8_t {
                               //     decrements addr_ by 1 so the subsequent paired-write
                               //     cycle (kWriteRegByte + kModifyAddr(decrement)) lands at
                               //     the original effective address.
-                              //   M=0 (16-bit): a prior kStashIndirectLow stashed the low
+                              //   M=0 (16-bit): a prior kStashOperandLow stashed the low
                               //     byte into addr_scratch_[7:0] and advanced addr_ past the
-                              //     high byte. fetch_data_ holds the high byte just read.
+                              //     high byte (with 24-bit carry, so absolute-mode reads at
+                              //     $xxFFFF correctly land in $(xx+1):0000). fetch_data_ holds
+                              //     the high byte just read.
                               //     The op combines the 16-bit operand, modifies it, and
                               //     writes new_high back to fetch_data_ and new_low back to
                               //     addr_scratch_[7:0]. addr_ is left at the high-byte

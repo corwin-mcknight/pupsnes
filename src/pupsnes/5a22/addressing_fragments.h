@@ -22,8 +22,7 @@ namespace pupsnes::opcode_defs_internal {
 // Byte-fetch primitive shared by FetchAbsolute, FetchAbsoluteLong, and
 // FetchAbsoluteIndexed. Builds one cycle slot: FetchPc bus action +
 // kSetAddrByteFromFetch internal op targeting byte_sel of addr_.
-constexpr CycleSlotSpec FetchAddrByte(ByteSel byte_sel, bool from_dbr,
-                                       TimingRuleExpr rule, std::string_view label) {
+constexpr CycleSlotSpec FetchAddrByte(ByteSel byte_sel, bool from_dbr, TimingRuleExpr rule, std::string_view label) {
   return CycleSlotSpec{
       MicroBusAction::kFetchPc,
       MicroInternalOp::kSetAddrByteFromFetch,
@@ -291,8 +290,8 @@ constexpr CycleFragment FetchJumpAbsoluteIndirect() {
           "fetch pointer high, bank=0",
           micro_op_params::PackSetAddrByte(ByteSel::kHigh, BankSrc::kZero),
       })
-      .Then(CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kStashIndirectLow, Always(),
-                          "read target low", 0})
+      .Then(
+          CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kStashIndirectLow, Always(), "read target low", 0})
       .Then(CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kSetPcFromScratchAndFetch, Always(),
                           "read target high, set PC",
                           /*with_pbr=*/0})
@@ -318,10 +317,10 @@ constexpr CycleFragment FetchJumpAbsoluteIndirectLong() {
           "fetch pointer high, bank=0",
           micro_op_params::PackSetAddrByte(ByteSel::kHigh, BankSrc::kZero),
       })
-      .Then(CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kStashIndirectLow, Always(),
-                          "read target low", 0})
-      .Then(CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kStashIndirectHigh, Always(),
-                          "read target high", 0})
+      .Then(
+          CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kStashIndirectLow, Always(), "read target low", 0})
+      .Then(CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kStashIndirectHigh, Always(), "read target high",
+                          0})
       .Then(CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kSetPcFromScratchAndFetch, Always(),
                           "read target bank, set PC+PBR",
                           /*with_pbr=*/1})
@@ -356,8 +355,8 @@ constexpr CycleFragment FetchJumpAbsoluteIndexedIndirectX() {
           "add X to pointer",
           micro_op_params::PackAddIndex(Reg::kX, /*bank_wrap=*/true),
       })
-      .Then(CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kStashIndirectLow, Always(),
-                          "read target low", 0})
+      .Then(
+          CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kStashIndirectLow, Always(), "read target low", 0})
       .Then(CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kSetPcFromScratchAndFetch, Always(),
                           "read target high, set PC",
                           /*with_pbr=*/0})
@@ -395,13 +394,17 @@ constexpr CycleFragment LoadRegFromAddr(Reg reg, TimingCondition wide_cond) {
 // and two cycles for the 16-bit path (low byte into addr_scratch_, high byte
 // performs the 16-bit ALU using scratch low + fetch_data_ high).
 //
+// The 16-bit advance uses kStashOperandLow (24-bit carry) so an absolute-mode
+// read at $xxFFFF correctly pulls its high byte from $(xx+1):0000. Using
+// kStashIndirectLow here would bank-wrap and read the wrong byte.
+//
 // wide_cond must be kAccumulator16 for A-based ALU ops. This helper is not
 // used for CPX/CPY (they use immediate-only in the current opcode set).
 constexpr CycleFragment AluFromAddr(AluOp op, TimingCondition wide_cond) {
   return Fragment()
       .Then(CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kAlu8Imm, Not(Condition(wide_cond)),
                           "read + ALU (8-bit)", micro_op_params::PackAluOp(op)})
-      .Then(CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kStashIndirectLow, Condition(wide_cond),
+      .Then(CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kStashOperandLow, Condition(wide_cond),
                           "read low", 0})
       .Then(CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kAlu16Imm, Condition(wide_cond),
                           "read high + ALU (16-bit)", micro_op_params::PackAluOp(op, /*low_from_scratch=*/true)})
@@ -437,6 +440,11 @@ constexpr CycleFragment StoreRegToAddr(WriteSrc src, TimingCondition wide_cond) 
 // addr_ pointing at the high byte, so the same paired write emits high first,
 // decrements, and the conditional final slot writes the low byte from
 // addr_scratch_.
+//
+// The read-advance uses kStashOperandLow (24-bit carry) so that a 16-bit
+// RMW at $xxFFFF reads its high byte from $(xx+1):0000 — and so kRmwMem's
+// 24-bit rollback and kModifyAddr's 24-bit decrement on the write path stay
+// consistent with the read advance across the bank boundary.
 constexpr CycleFragment ReadModifyWriteFromAddr(RmwOp op) {
   // Shared-params trick: kWriteRegByte reads bits [3:0]; kModifyAddr reads
   // bit 4 for decrement. Combine the two so a single params byte encodes both.
@@ -445,10 +453,9 @@ constexpr CycleFragment ReadModifyWriteFromAddr(RmwOp op) {
                                 micro_op_params::PackModifyAddr(/*increment=*/false));
   };
   return Fragment()
-      .Then(CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kStashIndirectLow, Always(),
-                          "read byte / low", 0})
-      .Then(CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kNone,
-                          Condition(TimingCondition::kAccumulator16), "read high (16-bit)", 0})
+      .Then(CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kStashOperandLow, Always(), "read byte / low", 0})
+      .Then(CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kNone, Condition(TimingCondition::kAccumulator16),
+                          "read high (16-bit)", 0})
       .Then(CycleSlotSpec{MicroBusAction::kNone, MicroInternalOp::kRmwMem, Always(), "modify",
                           micro_op_params::PackRmw(op)})
       .Then(CycleSlotSpec{MicroBusAction::kWriteRegByte, MicroInternalOp::kModifyAddr, Always(),
