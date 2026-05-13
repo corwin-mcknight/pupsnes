@@ -37,6 +37,7 @@ conan.lock
 conanbuildinfo.*
 conaninfo.txt
 conan*.cmake
+!cmake/ConanAutoInstall.cmake
 conan_toolchain.cmake
 generators/
 
