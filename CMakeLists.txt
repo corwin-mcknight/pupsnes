@@ -414,10 +414,19 @@ else()
 endif()
 
 if(CLANG_TIDY_EXE)
+  include(ProcessorCount)
+  ProcessorCount(PUPSNES_TIDY_JOBS)
+  if(PUPSNES_TIDY_JOBS EQUAL 0)
+    set(PUPSNES_TIDY_JOBS 1)
+  endif()
+  set(PUPSNES_TIDY_FILELIST "${CMAKE_BINARY_DIR}/pupsnes_tidy_files.txt")
+  string(REPLACE ";" "\n" PUPSNES_TIDY_FILES_LINES "${PUPSNES_TIDY_FILES}")
+  file(WRITE "${PUPSNES_TIDY_FILELIST}" "${PUPSNES_TIDY_FILES_LINES}\n")
   add_custom_target(tidy
-    COMMAND ${CLANG_TIDY_EXE} --quiet -p=${CMAKE_BINARY_DIR} ${PUPSNES_TIDY_FILES}
+    COMMAND bash -c "xargs -n1 -P${PUPSNES_TIDY_JOBS} ${CLANG_TIDY_EXE} --quiet -p=${CMAKE_BINARY_DIR} < ${PUPSNES_TIDY_FILELIST}"
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    COMMENT "Running clang-tidy"
+    COMMENT "Running clang-tidy in parallel (-P${PUPSNES_TIDY_JOBS})"
+    VERBATIM
   )
 else()
   add_custom_target(tidy
