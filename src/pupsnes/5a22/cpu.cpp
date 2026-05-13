@@ -479,6 +479,36 @@ void CPU::ExecuteInternalOp(MicroInternalOp op, [[maybe_unused]] uint8_t params)
       return;
     }
 
+    case MicroInternalOp::kStashDpIndirectLow: {
+      // (dp) and (dp),Y pointer advance. The pointer fetch wraps within the
+      // 256-byte page in E=1 ONLY when DPL=$00 (cputest-full 0034 with DPL=0
+      // wraps; 0035 with DPL=$01 does not). Otherwise it's a normal bank-wrap
+      // +1. The (dp,X) form uses kStashDpXIndirectLow instead — it wraps
+      // unconditionally in E=1.
+      addr_scratch_ = static_cast<uint16_t>((addr_scratch_ & 0xFF00U) | fetch_data_);
+      if (regs_.P.E && (regs_.DP & 0x00FFU) == 0U) {
+        addr_ = (addr_ & 0x00FFFF00U) | ((addr_ + 1U) & 0x000000FFU);
+      } else {
+        addr_ = (addr_ & 0x00FF0000U) | ((addr_ + 1U) & 0x0000FFFFU);
+      }
+      return;
+    }
+
+    case MicroInternalOp::kStashDpXIndirectLow: {
+      // (dp,X) pointer advance. The X-add cycle already operated in 8-bit
+      // mode (E=1 + dp_wrap), and the pointer fetch inherits that — wrapping
+      // within the 256-byte page even when DPL≠$00. Hardware witness:
+      // cputest-full test 0027 (`ADC ($F7,X)`, D=$011A, DPL=$1A, E=1) reads
+      // pointer high at $0200 after pointer low at $02FF.
+      addr_scratch_ = static_cast<uint16_t>((addr_scratch_ & 0xFF00U) | fetch_data_);
+      if (regs_.P.E) {
+        addr_ = (addr_ & 0x00FFFF00U) | ((addr_ + 1U) & 0x000000FFU);
+      } else {
+        addr_ = (addr_ & 0x00FF0000U) | ((addr_ + 1U) & 0x0000FFFFU);
+      }
+      return;
+    }
+
     case MicroInternalOp::kFormAddrFromScratchDbr: {
       const uint32_t low = static_cast<uint32_t>(addr_scratch_ & 0x00FFU);
       const uint32_t high = static_cast<uint32_t>(fetch_data_) << 8U;
@@ -509,8 +539,17 @@ void CPU::ExecuteInternalOp(MicroInternalOp op, [[maybe_unused]] uint8_t params)
         // (abs,X) indirect (bank = PBR — the pointer fetch stays in the
         // program bank even if the low 16 bits overflow).
         const uint32_t bank = addr_ & 0x00FF0000U;
-        const uint32_t low = (addr_ + static_cast<uint32_t>(masked)) & 0x0000FFFFU;
-        addr_ = bank | low;
+        if (mp::UnpackAddIndexDpWrap(params) && regs_.P.E) {
+          // (dp,X) in emulation mode: 8-bit page wrap. The index add is done
+          // on the low byte only — the high byte and bank stay fixed. Holds
+          // regardless of DPL (witness: cputest-full test 0025 with DPL=$00
+          // *and* test 0026/0027 with DPL=$1A both expect this).
+          const uint32_t hi = addr_ & 0x0000FF00U;
+          const uint32_t lo = (addr_ + static_cast<uint32_t>(masked)) & 0x000000FFU;
+          addr_ = bank | hi | lo;
+        } else {
+          addr_ = bank | ((addr_ + static_cast<uint32_t>(masked)) & 0x0000FFFFU);
+        }
       } else {
         addr_ = (addr_ + static_cast<uint32_t>(masked)) & 0x00FFFFFFU;
       }

@@ -74,6 +74,17 @@ enum class MicroInternalOp : uint8_t {
                               // high byte lives at the next 24-bit address, so the bank must
                               // increment on rollover. Distinct from kStashIndirectLow, which
                               // bank-wraps for pointer fetches.
+  kStashDpIndirectLow,        // addr_scratch_[7:0] = fetch_data_; advance addr_. Used by the
+                              // 16-bit DP-indirect pointer fetches without an internal X-add:
+                              // (dp) and (dp),Y. In E=1 the +1 wraps within the 256-byte page
+                              // (low byte only) when DPL=$00, matching real-hardware tests
+                              // (cputest-full 0034 vs 0035 differ only by DPL). With DPL≠$00
+                              // or in native mode the advance is a normal bank-wrap +1.
+  kStashDpXIndirectLow,       // Same shape as kStashDpIndirectLow, but used by (dp,X) where the
+                              // internal X-add already forced 8-bit addressing. In E=1 the +1
+                              // wraps within the page UNCONDITIONALLY (regardless of DPL) —
+                              // cputest-full test 0027 (DPL=$1A) requires this even though
+                              // 0035 (also DPL≠0 but (dp),Y) does not.
   kFormAddrFromScratchDbr,    // addr_ = DBR:(fetch_data_<<8 | addr_scratch_[7:0]). Completes
                               // assembly for (dp) / (dp,X) / (dp),Y: the just-fetched byte is
                               // the pointer high, scratch held the pointer low, and DBR supplies
