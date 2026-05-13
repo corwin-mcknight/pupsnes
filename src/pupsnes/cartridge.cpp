@@ -1,6 +1,9 @@
 #include "pupsnes/hw/cartridge.h"
 
+#include <algorithm>
+
 #include "pupsnes/hw/systembus.h"
+#include "pupsnes/rom_format.h"
 
 namespace pupsnes {
 
@@ -27,11 +30,31 @@ void MapLoRomBankRange(SystemBus& bus, DeviceIdT device_id, uint8_t bank, const 
   }
 }
 
+// Map SRAM into pages $00-$7F of a single LoROM SRAM bank. Each 256-byte page
+// resolves to (page_offset % sram_size) inside the SRAM buffer, which gives
+// every cartridge mirror Super Metroid relies on for its piracy check (the
+// $702000 / $700000 alias) for free. Writes go through the slow path
+// (fast_write_ptr = nullptr) so WriteRegister can update the dirty flag.
+void MapLoRomSramBank(SystemBus& bus, DeviceIdT device_id, uint8_t bank, uint8_t* sram_data, std::size_t sram_size) {
+  for (uint16_t page = 0x00; page <= 0x7F; ++page) {
+    const uint32_t page_offset = static_cast<uint32_t>(page) * 0x100U;
+    const uint32_t sram_offset = page_offset % static_cast<uint32_t>(sram_size);
+    bus.MapPage({bank, static_cast<uint8_t>(page), device_id, Cartridge::kSramOffsetTag | sram_offset,
+                 PageDeviceKind::kMemory, 8, sram_data + sram_offset, nullptr});
+  }
+}
+
 }  // namespace
 
 Cartridge::Cartridge(SNES* snes) : Device(snes) {}
 
-void Cartridge::LoadLoRom(std::span<const uint8_t> rom_data) { rom_.assign(rom_data.begin(), rom_data.end()); }
+void Cartridge::LoadLoRom(std::span<const uint8_t> rom_data) {
+  rom_.assign(rom_data.begin(), rom_data.end());
+
+  const std::size_t sram_size = LoRomSramSize(rom_data);
+  sram_.assign(sram_size, 0xFFU);
+  sram_dirty_ = false;
+}
 
 void Cartridge::MapLoRom(SystemBus& bus) {
   const uint8_t* const rom_data = rom_.empty() ? nullptr : rom_.data();
@@ -49,8 +72,30 @@ void Cartridge::MapLoRom(SystemBus& bus) {
     MapLoRomBankRange(bus, GetDeviceId(), static_cast<uint8_t>(bank), rom_data, rom_size, 8);
   }
 
+  MapLoRomSram(bus);
+
   lorom_mapped_ = true;
   mapper_kind_ = MapperKind::kLoROM;
+}
+
+void Cartridge::MapLoRomSram(SystemBus& bus) {
+  if (sram_.empty()) {
+    return;
+  }
+
+  uint8_t* const sram_data = sram_.data();
+  const std::size_t sram_size = sram_.size();
+
+  // LoROM SRAM lives in pages $00-$7F of banks $70-$7D (banks $7E-$7F are
+  // WRAM-only) and the same pages of the FASTROM-mirror banks $F0-$FF. Real
+  // carts wire SRAM through both half-spaces; Super Metroid happens to use
+  // bank $70 explicitly, but games that touch $F0+ rely on the upper mirror.
+  for (uint16_t bank = 0x70; bank <= 0x7D; ++bank) {
+    MapLoRomSramBank(bus, GetDeviceId(), static_cast<uint8_t>(bank), sram_data, sram_size);
+  }
+  for (uint16_t bank = 0xF0; bank <= 0xFF; ++bank) {
+    MapLoRomSramBank(bus, GetDeviceId(), static_cast<uint8_t>(bank), sram_data, sram_size);
+  }
 }
 
 void Cartridge::OnMemSelChanged(SystemBus& bus, bool fast) {
@@ -67,7 +112,27 @@ void Cartridge::OnMemSelChanged(SystemBus& bus, bool fast) {
   }
 }
 
+void Cartridge::LoadSram(std::span<const uint8_t> data) {
+  if (sram_.empty()) {
+    return;
+  }
+  const std::size_t copy_size = std::min(data.size(), sram_.size());
+  std::copy_n(data.begin(), copy_size, sram_.begin());
+  if (copy_size < sram_.size()) {
+    std::fill(sram_.begin() + static_cast<std::ptrdiff_t>(copy_size), sram_.end(), 0xFFU);
+  }
+  sram_dirty_ = false;
+}
+
 MmioReadResult Cartridge::ReadRegister(uint32_t offset, TimeMasterT /*current_time*/) {
+  if ((offset & kSramOffsetTag) != 0U) {
+    if (sram_.empty()) {
+      return {0xFFU, 0xFFU};
+    }
+    const uint32_t sram_offset = offset & ~kSramOffsetTag;
+    return {sram_[static_cast<std::size_t>(sram_offset) % sram_.size()], 0xFFU};
+  }
+
   if (rom_.empty()) {
     return {0xFFU, 0xFFU};
   }
@@ -75,12 +140,39 @@ MmioReadResult Cartridge::ReadRegister(uint32_t offset, TimeMasterT /*current_ti
   return {rom_[static_cast<std::size_t>(offset) % rom_.size()], 0xFFU};
 }
 
+void Cartridge::WriteRegister(uint32_t offset, uint8_t data, TimeMasterT /*current_time*/) {
+  if ((offset & kSramOffsetTag) == 0U || sram_.empty()) {
+    return;
+  }
+  const uint32_t sram_offset = offset & ~kSramOffsetTag;
+  sram_[static_cast<std::size_t>(sram_offset) % sram_.size()] = data;
+  sram_dirty_ = true;
+}
+
 std::optional<uint8_t> Cartridge::HandleDebugRead(uint32_t offset) const {
+  if ((offset & kSramOffsetTag) != 0U) {
+    if (sram_.empty()) {
+      return 0xFFU;
+    }
+    const uint32_t sram_offset = offset & ~kSramOffsetTag;
+    return sram_[static_cast<std::size_t>(sram_offset) % sram_.size()];
+  }
+
   if (rom_.empty()) {
     return 0xFFU;
   }
 
   return rom_[static_cast<std::size_t>(offset) % rom_.size()];
+}
+
+bool Cartridge::HandleDebugWrite(uint32_t offset, uint8_t data) {
+  if ((offset & kSramOffsetTag) == 0U || sram_.empty()) {
+    return false;
+  }
+  const uint32_t sram_offset = offset & ~kSramOffsetTag;
+  sram_[static_cast<std::size_t>(sram_offset) % sram_.size()] = data;
+  sram_dirty_ = true;
+  return true;
 }
 
 }  // namespace pupsnes

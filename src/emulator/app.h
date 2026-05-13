@@ -54,6 +54,10 @@ class EmulatorApp {
   bool LoadRomFromPath(const std::string& path);
   void ResetMachine();
   void TickEmulation();
+  // Write the cartridge SRAM out to `loaded_rom_save_path_` if the cart has
+  // SRAM and it's been written since the last flush. Safe to call when no ROM
+  // is loaded (no-op).
+  void FlushSramToDisk();
   void PollControllerInput();
   void Render();
   void RenderMenuBar();
@@ -73,8 +77,13 @@ class EmulatorApp {
   SNES snes_;
   bool loaded_rom_ = false;
   std::string loaded_rom_path_;
+  // ROM path with extension replaced by ".srm". Empty when no ROM is loaded
+  // or the cart declares no SRAM. Cached at load time so that FlushSramToDisk
+  // doesn't have to re-derive it during shutdown teardown.
+  std::string loaded_rom_save_path_;
   std::optional<std::string> fatal_error_;
   std::chrono::steady_clock::time_point last_tick_time_{};
+  std::chrono::steady_clock::time_point last_sram_flush_time_{};
 
   // Performance overlay sample.
   double perf_last_time_ = 0.0;
