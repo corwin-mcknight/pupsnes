@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "pupsnes/hw/device.h"
+#include "pupsnes/rom_format.h"
 
 namespace pupsnes {
 
@@ -36,10 +37,15 @@ class Cartridge : public Device {
 
   [[nodiscard]] MapperKind GetMapperKind() const { return mapper_kind_; }
 
-  void LoadLoRom(std::span<const uint8_t> rom_data);
+  // Validate and ingest the bytes as a LoROM image. On success returns
+  // {ok=true, detected_kind=kLoROM} and the cartridge is ready for MapLoRom;
+  // on failure returns ok=false with a specific message and leaves the
+  // cartridge unchanged.
+  RomLoadResult LoadLoRom(std::span<const uint8_t> rom_data);
   void MapLoRom(SystemBus& bus);
 
-  void LoadHiRom(std::span<const uint8_t> rom_data);
+  // Same as LoadLoRom for HiROM images.
+  RomLoadResult LoadHiRom(std::span<const uint8_t> rom_data);
   void MapHiRom(SystemBus& bus);
 
   // Re-map the active mapper's fast-bank range with the access speed selected

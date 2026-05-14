@@ -132,17 +132,10 @@ int main(int argc, char** argv) {
   }
   pupsnes::StripSmcCopierHeader(rom_bytes);
 
-  if (rom_bytes.empty() || (rom_bytes.size() % pupsnes::Cartridge::kLoROMWindowSize) != 0U) {
-    std::cerr << "pupsnes-screenshot: ROM size not a multiple of LoROM bank "
-                 "(32 KiB) after header strip\n";
-    return 1;
-  }
-
   pupsnes::SNES snes;
-  try {
-    snes.LoadLoRom(rom_bytes);
-  } catch (const std::exception& ex) {
-    std::cerr << "pupsnes-screenshot: LoadLoRom failed: " << ex.what() << "\n";
+  const pupsnes::RomLoadResult load_result = snes.LoadRom(rom_bytes);
+  if (!load_result.ok) {
+    std::cerr << "pupsnes-screenshot: ROM load failed: " << load_result.message << "\n";
     return 1;
   }
   snes.Reset();

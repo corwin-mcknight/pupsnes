@@ -3,9 +3,28 @@
 #include <cstddef>
 #include <cstdint>
 #include <span>
+#include <string>
 #include <vector>
 
 namespace pupsnes {
+
+// MapperKind is declared in cartridge.h, but the load-result type that uses
+// it is shared across cartridge.h / snes.h. Mirror the enum here so
+// rom_format.h doesn't have to depend on cartridge.h (which transitively
+// pulls in the Device/SystemBus surface).
+enum class MapperKind : uint8_t;
+
+// Outcome of an attempt to load a cartridge image. `ok=true` means the
+// cartridge state has been updated; the message carries a one-line
+// detection summary. `ok=false` means the request was refused —
+// `detected_kind` carries whatever the header looked like (often the OTHER
+// mapper, which is the whole point of validation), and `message` explains
+// specifically what was wrong.
+struct RomLoadResult {
+  bool ok = false;
+  MapperKind detected_kind{};  // initialised to kNone (0) — see cartridge.h
+  std::string message;
+};
 
 // Size of the legacy SMC copier header prepended to many .smc dumps by
 // devices like the Super Magicom. The prefix is metadata for the copier
@@ -37,6 +56,68 @@ inline constexpr std::size_t kHiRomHeaderOffset = 0xFFB0U;
 
 // File offset of the SRAM size byte inside the HiROM header.
 inline constexpr std::size_t kHiRomSramSizeOffset = 0xFFD8U;
+
+// Offsets of the map-mode byte inside each header. SNES headers encode the
+// mapper in this byte:
+//   $20 — LoROM (slow)        $30 — LoROM + FastROM
+//   $21 — HiROM (slow)        $31 — HiROM + FastROM
+// The byte sits at $XXFD5 in CPU space — file offset $7FD5 for LoROM and
+// $FFD5 for HiROM. Higher map modes ($22/$32 SA-1, $23/$33 SuperFX, $25
+// ExHiROM, $35 ExHiROM+FastROM) live outside the LoROM/HiROM bring-up
+// surface and are reported as "unsupported" by the detector.
+inline constexpr std::size_t kLoRomMapModeOffset = 0x7FD5U;
+inline constexpr std::size_t kHiRomMapModeOffset = 0xFFD5U;
+
+// Offsets of the checksum + complement pair. Real SNES headers have the
+// complement at $XXFDC and the checksum at $XXFDE; the two 16-bit words
+// XORed together must equal $FFFF on a valid cart. Pirate/homebrew dumps
+// often fail this; the detector treats it as a *positive* signal but never
+// rejects a load purely on a checksum mismatch.
+inline constexpr std::size_t kLoRomChecksumComplementOffset = 0x7FDCU;
+inline constexpr std::size_t kLoRomChecksumOffset = 0x7FDEU;
+inline constexpr std::size_t kHiRomChecksumComplementOffset = 0xFFDCU;
+inline constexpr std::size_t kHiRomChecksumOffset = 0xFFDEU;
+
+[[nodiscard]] constexpr bool IsLoRomMapModeByte(uint8_t value) noexcept {
+  // Strict: only the two LoROM map-mode bytes count. $32 (LoROM + SA-1) is
+  // intentionally excluded — the SA-1 mapper isn't implemented yet, and we
+  // want the loader to refuse those ROMs with a specific message instead of
+  // limping along as plain LoROM.
+  return value == 0x20U || value == 0x30U;
+}
+
+[[nodiscard]] constexpr bool IsHiRomMapModeByte(uint8_t value) noexcept { return value == 0x21U || value == 0x31U; }
+
+// Convenience accessors. Both return 0xFF (open-bus shape) when the ROM is
+// too short for the header — callers can still inspect the byte without an
+// extra size check.
+[[nodiscard]] inline uint8_t LoRomMapModeByte(std::span<const uint8_t> rom) noexcept {
+  return rom.size() > kLoRomMapModeOffset ? rom[kLoRomMapModeOffset] : 0xFFU;
+}
+
+[[nodiscard]] inline uint8_t HiRomMapModeByte(std::span<const uint8_t> rom) noexcept {
+  return rom.size() > kHiRomMapModeOffset ? rom[kHiRomMapModeOffset] : 0xFFU;
+}
+
+// True when the checksum + complement at the offsets given XOR to $FFFF.
+// Returns false when the ROM is too short to hold the pair.
+[[nodiscard]] inline bool ChecksumPairValid(std::span<const uint8_t> rom, std::size_t complement_offset,
+                                            std::size_t checksum_offset) noexcept {
+  if (rom.size() <= checksum_offset + 1U) {
+    return false;
+  }
+  const uint16_t complement = static_cast<uint16_t>(rom[complement_offset] | (rom[complement_offset + 1U] << 8U));
+  const uint16_t checksum = static_cast<uint16_t>(rom[checksum_offset] | (rom[checksum_offset + 1U] << 8U));
+  return static_cast<uint16_t>(complement ^ checksum) == 0xFFFFU;
+}
+
+[[nodiscard]] inline bool LoRomChecksumValid(std::span<const uint8_t> rom) noexcept {
+  return ChecksumPairValid(rom, kLoRomChecksumComplementOffset, kLoRomChecksumOffset);
+}
+
+[[nodiscard]] inline bool HiRomChecksumValid(std::span<const uint8_t> rom) noexcept {
+  return ChecksumPairValid(rom, kHiRomChecksumComplementOffset, kHiRomChecksumOffset);
+}
 
 // Largest RAM-size byte we honour. The header encodes SRAM as 1024 << N
 // bytes, so N=9 maps to 512 KiB — the practical ceiling for cartridge SRAM

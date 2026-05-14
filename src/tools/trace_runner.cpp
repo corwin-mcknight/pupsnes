@@ -79,18 +79,12 @@ TraceRunResult RunTrace(const TraceRunOptions& opts) {
   }
   StripSmcCopierHeader(rom_bytes);
 
-  if (rom_bytes.empty() || (rom_bytes.size() % Cartridge::kLoROMWindowSize) != 0U) {
-    result.error = "ROM size not a multiple of LoROM bank (32 KiB) after header strip";
-    return result;
-  }
-
   const debugger::Sha1Digest rom_sha1 = ComputeSha1(rom_bytes);
 
   SNES snes;
-  try {
-    snes.LoadLoRom(rom_bytes);
-  } catch (const std::exception& ex) {
-    result.error = std::string{"LoadLoRom failed: "} + ex.what();
+  const RomLoadResult load_result = snes.LoadRom(rom_bytes);
+  if (!load_result.ok) {
+    result.error = "ROM load failed: " + load_result.message;
     return result;
   }
   snes.Reset();

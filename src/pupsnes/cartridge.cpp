@@ -1,6 +1,7 @@
 #include "pupsnes/hw/cartridge.h"
 
 #include <algorithm>
+#include <format>
 
 #include "pupsnes/hw/systembus.h"
 #include "pupsnes/rom_format.h"
@@ -8,6 +9,89 @@
 namespace pupsnes {
 
 namespace {
+
+// Pre-flight validation shared by Cartridge::LoadLoRom / LoadHiRom. Hard
+// failures fill `out` with a specific message and return false; the caller
+// should NOT touch its rom_/sram_ state in that case. Soft validity (map
+// mode mismatch) is checked separately so each loader can name the wrong
+// mapper explicitly in its diagnostic.
+[[nodiscard]] bool CheckHardRomShape(std::span<const uint8_t> rom_data, std::size_t min_header_byte,
+                                     const char* mapper_label, RomLoadResult& out) {
+  if (rom_data.empty()) {
+    out.ok = false;
+    out.detected_kind = MapperKind::kNone;
+    out.message = "ROM is empty (0 bytes)";
+    return false;
+  }
+  if (HasSmcCopierHeader(rom_data.size())) {
+    out.ok = false;
+    out.detected_kind = MapperKind::kNone;
+    out.message = std::format(
+        "ROM still has a {}-byte SMC copier header (file size {} bytes is "
+        "{} bytes off a 32 KiB bank boundary). Strip the copier header "
+        "with StripSmcCopierHeader before loading.",
+        kSmcCopierHeaderSize, rom_data.size(), kSmcCopierHeaderSize);
+    return false;
+  }
+  if (rom_data.size() <= min_header_byte) {
+    out.ok = false;
+    out.detected_kind = MapperKind::kNone;
+    out.message = std::format(
+        "ROM is too small for {} ({} bytes; need at least {} bytes to "
+        "cover the internal header).",
+        mapper_label, rom_data.size(), min_header_byte + 1U);
+    return false;
+  }
+  return true;
+}
+
+// Returns true when this ROM is *strictly* more consistent with the other
+// mapper than the requested one. "Strictly" means: the other mapper's map
+// mode byte sits in the documented range AND the requested mapper's does
+// NOT. We also accept a checksum match as a tiebreaker when the map mode
+// alone is inconclusive (homebrew often leaves $FFD5 alone but ships valid
+// checksums).
+[[nodiscard]] bool OtherMapperWins(std::span<const uint8_t> rom_data, MapperKind requested) {
+  const uint8_t lorom_byte = LoRomMapModeByte(rom_data);
+  const uint8_t hirom_byte = HiRomMapModeByte(rom_data);
+  const bool lorom_map = IsLoRomMapModeByte(lorom_byte);
+  const bool hirom_map = IsHiRomMapModeByte(hirom_byte);
+  const bool lorom_csum = LoRomChecksumValid(rom_data);
+  const bool hirom_csum = HiRomChecksumValid(rom_data);
+
+  if (requested == MapperKind::kLoROM) {
+    if (hirom_map && !lorom_map) return true;
+    if (!lorom_map && hirom_csum && !lorom_csum) return true;
+  } else if (requested == MapperKind::kHiROM) {
+    if (lorom_map && !hirom_map) return true;
+    if (!hirom_map && lorom_csum && !hirom_csum) return true;
+  }
+  return false;
+}
+
+// Builds the "this looks like the wrong mapper" message — quotes both
+// candidates' header bytes so the user can see what tipped the scale.
+[[nodiscard]] std::string FormatWrongMapperMessage(std::span<const uint8_t> rom_data, MapperKind requested,
+                                                   MapperKind detected) {
+  const uint8_t lorom_byte = LoRomMapModeByte(rom_data);
+  const uint8_t hirom_byte = HiRomMapModeByte(rom_data);
+  const char* requested_label = (requested == MapperKind::kLoROM) ? "LoROM" : "HiROM";
+  const char* detected_label = (detected == MapperKind::kLoROM) ? "LoROM" : "HiROM";
+  const char* detected_loader = (detected == MapperKind::kLoROM) ? "LoadLoRom" : "LoadHiRom";
+  return std::format(
+      "ROM looks like {} but {} was requested (map mode byte at $7FD5=0x{:02X}, "
+      "$FFD5=0x{:02X}; LoROM checksum {}, HiROM checksum {}). Use {} instead.",
+      detected_label, requested_label, lorom_byte, hirom_byte, LoRomChecksumValid(rom_data) ? "ok" : "bad",
+      HiRomChecksumValid(rom_data) ? "ok" : "bad", detected_loader);
+}
+
+[[nodiscard]] std::string FormatLoadSuccess(std::span<const uint8_t> rom_data, MapperKind kind) {
+  const char* label = (kind == MapperKind::kLoROM) ? "LoROM" : "HiROM";
+  const uint8_t mode_byte = (kind == MapperKind::kLoROM) ? LoRomMapModeByte(rom_data) : HiRomMapModeByte(rom_data);
+  const bool csum = (kind == MapperKind::kLoROM) ? LoRomChecksumValid(rom_data) : HiRomChecksumValid(rom_data);
+  return std::format("Loaded {} ({} bytes, map mode 0x{:02X}, checksum {})", label, rom_data.size(), mode_byte,
+                     csum ? "ok" : "bad");
+}
 
 void MapLoRomBankRange(SystemBus& bus, DeviceIdT device_id, uint8_t bank, const uint8_t* rom_data, std::size_t rom_size,
                        uint8_t access_speed) {
@@ -86,12 +170,28 @@ void MapHiRomSramBank(SystemBus& bus, DeviceIdT device_id, uint8_t bank, uint8_t
 
 Cartridge::Cartridge(SNES* snes) : Device(snes) {}
 
-void Cartridge::LoadLoRom(std::span<const uint8_t> rom_data) {
+RomLoadResult Cartridge::LoadLoRom(std::span<const uint8_t> rom_data) {
+  RomLoadResult result{};
+  if (!CheckHardRomShape(rom_data, kLoRomMapModeOffset, "LoROM", result)) {
+    return result;
+  }
+  if (OtherMapperWins(rom_data, MapperKind::kLoROM)) {
+    result.ok = false;
+    result.detected_kind = MapperKind::kHiROM;
+    result.message = FormatWrongMapperMessage(rom_data, MapperKind::kLoROM, MapperKind::kHiROM);
+    return result;
+  }
+
   rom_.assign(rom_data.begin(), rom_data.end());
 
   const std::size_t sram_size = LoRomSramSize(rom_data);
   sram_.assign(sram_size, 0xFFU);
   sram_dirty_ = false;
+
+  result.ok = true;
+  result.detected_kind = MapperKind::kLoROM;
+  result.message = FormatLoadSuccess(rom_data, MapperKind::kLoROM);
+  return result;
 }
 
 void Cartridge::MapLoRom(SystemBus& bus) {
@@ -136,12 +236,28 @@ void Cartridge::MapLoRomSram(SystemBus& bus) {
   }
 }
 
-void Cartridge::LoadHiRom(std::span<const uint8_t> rom_data) {
+RomLoadResult Cartridge::LoadHiRom(std::span<const uint8_t> rom_data) {
+  RomLoadResult result{};
+  if (!CheckHardRomShape(rom_data, kHiRomMapModeOffset, "HiROM", result)) {
+    return result;
+  }
+  if (OtherMapperWins(rom_data, MapperKind::kHiROM)) {
+    result.ok = false;
+    result.detected_kind = MapperKind::kLoROM;
+    result.message = FormatWrongMapperMessage(rom_data, MapperKind::kHiROM, MapperKind::kLoROM);
+    return result;
+  }
+
   rom_.assign(rom_data.begin(), rom_data.end());
 
   const std::size_t sram_size = HiRomSramSize(rom_data);
   sram_.assign(sram_size, 0xFFU);
   sram_dirty_ = false;
+
+  result.ok = true;
+  result.detected_kind = MapperKind::kHiROM;
+  result.message = FormatLoadSuccess(rom_data, MapperKind::kHiROM);
+  return result;
 }
 
 void Cartridge::MapHiRom(SystemBus& bus) {

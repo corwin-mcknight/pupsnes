@@ -136,17 +136,17 @@ bool EmulatorApp::LoadRomFromPath(const std::string& path) {
 
   std::vector<uint8_t> rom((std::istreambuf_iterator<char>(stream)), std::istreambuf_iterator<char>());
   StripSmcCopierHeader(rom);
-  if (rom.empty() || (rom.size() % Cartridge::kLoROMWindowSize) != 0U) {
-    ui_state_.load_rom_error = "Unsupported LoROM size for " + path;
-    return false;
-  }
 
   // Flush the outgoing cart's SRAM before we tear it down. Skipped when no
   // ROM is loaded yet — FlushSramToDisk is a no-op in that case.
   FlushSramToDisk();
 
   try {
-    snes_.LoadLoRom(rom);
+    const RomLoadResult load_result = snes_.LoadRom(rom);
+    if (!load_result.ok) {
+      ui_state_.load_rom_error = path + ": " + load_result.message;
+      return false;
+    }
     snes_.Reset();
     loaded_rom_ = true;
     loaded_rom_path_ = path;

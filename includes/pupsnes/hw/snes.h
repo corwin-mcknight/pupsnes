@@ -5,6 +5,7 @@
 #include <span>
 #include <vector>
 
+#include "pupsnes/rom_format.h"
 #include "pupsnes/types.h"
 
 namespace pupsnes {
@@ -52,8 +53,17 @@ class SNES {
   SNES();
   ~SNES();
 
-  void LoadLoRom(std::span<const uint8_t> rom_data);
-  void LoadHiRom(std::span<const uint8_t> rom_data);
+  // Load a cartridge image as the named mapper. On success the bus is fully
+  // re-mapped and the result carries a one-line detection summary. On
+  // failure the previous cartridge state is left untouched and the result's
+  // `message` explains specifically what was wrong (empty, copier header
+  // present, mapper mismatch, etc.).
+  RomLoadResult LoadLoRom(std::span<const uint8_t> rom_data);
+  RomLoadResult LoadHiRom(std::span<const uint8_t> rom_data);
+  // Auto-detect the mapper from the header and load. Returns the same
+  // result type; `detected_kind` names which path was taken when ok=true,
+  // and on failure `message` describes why no mapper claimed the ROM.
+  RomLoadResult LoadRom(std::span<const uint8_t> rom_data);
   void Reset();
 
   [[nodiscard]] TimeMasterT GetMasterTime() const { return time_now_; }

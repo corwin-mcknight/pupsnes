@@ -14,6 +14,7 @@
 #include "pupsnes/hw/sppu/ppu.h"
 #include "pupsnes/hw/systembus.h"
 #include "pupsnes/hw/wram.h"
+#include "pupsnes/rom_format.h"
 
 // --- Device ---
 
@@ -45,23 +46,65 @@ pupsnes::SNES::SNES()
 pupsnes::SNES::~SNES() = default;
 pupsnes::Device* pupsnes::SNES::GetDevice(DeviceIdT id) const { return id < devices_.size() ? devices_[id] : nullptr; }
 
-void pupsnes::SNES::LoadLoRom(std::span<const uint8_t> rom_data) {
+pupsnes::RomLoadResult pupsnes::SNES::LoadLoRom(std::span<const uint8_t> rom_data) {
+  // Validate before touching MMIO state. A rejected load must leave the
+  // previous cartridge mapping intact — clearing MEMSEL up front would
+  // visibly disturb a running game even though no new ROM ended up loaded.
+  RomLoadResult result = cartridge->LoadLoRom(rom_data);
+  if (!result.ok) {
+    return result;
+  }
   // Mirror power-cycle semantics: a fresh cartridge insert drops FASTROM back
   // to slow regardless of what the previous ROM left in $420D. Reset the MMIO
-  // register *before* re-mapping so the cached memsel_ and the new page table
-  // agree from the first cycle. Without this, the debugger's FASTROM indicator
-  // stays green after Load across cartridge swaps.
+  // register so the cached memsel_ and the new page table agree from the
+  // first cycle. Without this, the debugger's FASTROM indicator stays green
+  // after Load across cartridge swaps.
   cpu_mmio->Reset();
-  cartridge->LoadLoRom(rom_data);
   cartridge->MapLoRom(*system_bus);
+  return result;
 }
 
-void pupsnes::SNES::LoadHiRom(std::span<const uint8_t> rom_data) {
-  // Same swap-time semantics as LoadLoRom: clear MEMSEL before remapping so
-  // the FASTROM cache and page table agree on the first cycle after load.
+pupsnes::RomLoadResult pupsnes::SNES::LoadHiRom(std::span<const uint8_t> rom_data) {
+  RomLoadResult result = cartridge->LoadHiRom(rom_data);
+  if (!result.ok) {
+    return result;
+  }
   cpu_mmio->Reset();
-  cartridge->LoadHiRom(rom_data);
   cartridge->MapHiRom(*system_bus);
+  return result;
+}
+
+pupsnes::RomLoadResult pupsnes::SNES::LoadRom(std::span<const uint8_t> rom_data) {
+  // Score both header candidates and dispatch to the winning loader. The
+  // map mode byte is the primary signal; a valid checksum on one candidate
+  // breaks ties when neither map mode byte is in range.
+  if (rom_data.empty()) {
+    return {false, MapperKind::kNone, "ROM is empty (0 bytes)"};
+  }
+  if (HasSmcCopierHeader(rom_data.size())) {
+    return {false, MapperKind::kNone,
+            std::format("ROM still has a {}-byte SMC copier header; strip it before loading.", kSmcCopierHeaderSize)};
+  }
+  const bool lorom_map = IsLoRomMapModeByte(LoRomMapModeByte(rom_data));
+  const bool hirom_map = IsHiRomMapModeByte(HiRomMapModeByte(rom_data));
+  const bool lorom_csum = LoRomChecksumValid(rom_data);
+  const bool hirom_csum = HiRomChecksumValid(rom_data);
+
+  if (hirom_map && !lorom_map) return LoadHiRom(rom_data);
+  if (lorom_map && !hirom_map) return LoadLoRom(rom_data);
+  if (lorom_map && hirom_map) {
+    // Both map mode bytes legal — break with the checksum, then default to
+    // LoROM which is the more common cartridge format.
+    if (hirom_csum && !lorom_csum) return LoadHiRom(rom_data);
+    return LoadLoRom(rom_data);
+  }
+  // Neither map mode byte recognised: fall back to checksum.
+  if (hirom_csum && !lorom_csum) return LoadHiRom(rom_data);
+  if (lorom_csum && !hirom_csum) return LoadLoRom(rom_data);
+  // No discriminator at all. Default to LoROM — homebrew / test ROMs without
+  // a real header almost always intend LoROM since that's what the standard
+  // ld65 LoROM linker config emits.
+  return LoadLoRom(rom_data);
 }
 
 void pupsnes::SNES::Reset() {
