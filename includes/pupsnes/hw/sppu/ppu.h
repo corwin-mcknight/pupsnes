@@ -169,6 +169,35 @@ class Ppu : public Device {
   [[nodiscard]] bool GetCgramReadLatchHigh() const { return cgram_read_latch_high_; }
   [[nodiscard]] const uint16_t* GetCgram() const { return cgram_->data(); }
 
+  // Live cursor accessor used by the H/V-IRQ scheduler. Returns the current
+  // (h, v, field) snapshot without catching the PPU up. Callers that need a
+  // catch-up'd view should call CatchUpTo(now) first.
+  struct Cursor {
+    uint32_t h;
+    uint32_t v;
+    bool field;
+    TimeMasterT local_time;
+  };
+  [[nodiscard]] Cursor GetCursor() const { return {h_, v_, field_, local_time_}; }
+
+  // Master cycle of the start of dot (h, v) within the frame anchored at
+  // master time `frame_origin` and field-toggle `field`. The frame origin is
+  // the master cycle when (h=0, v=0) of that frame entered.
+  //
+  // Used by the H/V-IRQ scheduler in CpuMmio to compute the absolute master
+  // cycle for a given (HTIME, VTIME) match. Does not advance PPU state.
+  [[nodiscard]] static constexpr TimeMasterT MasterCycleAt(uint32_t target_h, uint32_t target_v,
+                                                           TimeMasterT frame_origin, bool field) {
+    TimeMasterT t = frame_origin;
+    for (uint32_t v = 0; v < target_v; ++v) {
+      t += LineCycles(v, field);
+    }
+    for (uint32_t h = 0; h < target_h; ++h) {
+      t += DotCost(h, target_v, field);
+    }
+    return t;
+  }
+
   // Pure timing helpers — exposed for tests and the debugger time display.
   // NTSC non-interlace only in v1; PAL / interlaced long-line support lands
   // with the timing overhaul later.
