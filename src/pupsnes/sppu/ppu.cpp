@@ -29,8 +29,8 @@ constexpr uint16_t OamByteSlot(uint16_t byte_addr) {
   return static_cast<uint16_t>(0x200U | (addr & 0x1FU));
 }
 
-constexpr std::array<uint8_t, 4> kTmMaskForBg = {sppu::regs::kTmBg1Mask, sppu::regs::kTmBg2Mask,
-                                                 sppu::regs::kTmBg3Mask, sppu::regs::kTmBg4Mask};
+constexpr std::array<uint8_t, 4> kTmMaskForBg = {sppu::regs::kTmBg1Mask, sppu::regs::kTmBg2Mask, sppu::regs::kTmBg3Mask,
+                                                 sppu::regs::kTmBg4Mask};
 
 }  // namespace
 
@@ -118,6 +118,12 @@ void Ppu::Reset() {
   bg_row_dirty_.fill(true);
 
   vblank_nmi_flag_ = false;
+
+  ophct_ = 0;
+  opvct_ = 0;
+  ophct_read_high_ = false;
+  opvct_read_high_ = false;
+  hv_latch_flag_ = false;
 
   vram_->fill(0);
   oam_->fill(0);
@@ -281,6 +287,17 @@ MmioReadResult Ppu::ReadRegister(uint32_t offset, TimeMasterT current_time) {
   }
 
   switch (reg) {
+    case sppu::regs::kSlhv: {
+      // Dummy-read latches the current H/V counters into OPHCT/OPVCT and
+      // sets the latch flag (STAT78.bit6). Per fullsnes the gating condition
+      // is WRIO.bit7 being (or having been) set; WRIO is not modeled today
+      // and its reset value FFh already satisfies the gate, so we always
+      // latch. The read value itself is open-bus.
+      ophct_ = static_cast<uint16_t>(h_ & 0x01FFU);
+      opvct_ = static_cast<uint16_t>(v_ & 0x01FFU);
+      hv_latch_flag_ = true;
+      return {0x00U, 0x00U};
+    }
     case sppu::regs::kRdOam: {
       const uint8_t value = ReadOamByte(oam_byte_addr_);
       oam_byte_addr_ = static_cast<uint16_t>((oam_byte_addr_ + 1U) & 0x3FFU);
@@ -315,6 +332,25 @@ MmioReadResult Ppu::ReadRegister(uint32_t offset, TimeMasterT current_time) {
       // driven by the PPU. The bus merges the floating bit from the latch.
       return {high_byte, 0x7FU};
     }
+    case sppu::regs::kOphct: {
+      // Per-register read-twice flipflop. 1st read returns bits 7:0 of the
+      // 9-bit latched H counter; 2nd read returns bit 8 (only bit 0 driven —
+      // bits 7:1 fall to open-bus per fullsnes).
+      if (!ophct_read_high_) {
+        ophct_read_high_ = true;
+        return {static_cast<uint8_t>(ophct_ & 0xFFU), 0xFFU};
+      }
+      ophct_read_high_ = false;
+      return {static_cast<uint8_t>((ophct_ >> 8) & 0x01U), sppu::regs::kOpctHighDrivenMask};
+    }
+    case sppu::regs::kOpvct: {
+      if (!opvct_read_high_) {
+        opvct_read_high_ = true;
+        return {static_cast<uint8_t>(opvct_ & 0xFFU), 0xFFU};
+      }
+      opvct_read_high_ = false;
+      return {static_cast<uint8_t>((opvct_ >> 8) & 0x01U), sppu::regs::kOpctHighDrivenMask};
+    }
     case sppu::regs::kStat77: {
       // Bits 3:0 = PPU1 version (1), bits 6:4 open-bus, bit 7 time-over
       // (stubbed 0). Only the driven bits set mask=1.
@@ -322,13 +358,21 @@ MmioReadResult Ppu::ReadRegister(uint32_t offset, TimeMasterT current_time) {
     }
     case sppu::regs::kStat78: {
       // Bits 3:0 = PPU2 version (3 on real HW; use 3), bit 4 = NTSC/PAL
-      // (0=NTSC), bits 5:6 open-bus, bit 7 = interlace field toggle.
+      // (0=NTSC), bit 5 open-bus, bit 6 = H/V latch flag, bit 7 = interlace
+      // field toggle. Reading this register resets both OPHCT/OPVCT 1st/2nd
+      // flipflops and clears the latch flag.
       uint8_t value = 0x03U;  // version
       if (field_) {
         value = static_cast<uint8_t>(value | sppu::regs::kStat78FieldMask);
       }
+      if (hv_latch_flag_) {
+        value = static_cast<uint8_t>(value | sppu::regs::kStat78LatchFlagMask);
+      }
       const uint8_t driven = static_cast<uint8_t>(sppu::regs::kStat78VersionMask | sppu::regs::kStat78PalMask |
-                                                  sppu::regs::kStat78FieldMask);
+                                                  sppu::regs::kStat78FieldMask | sppu::regs::kStat78LatchFlagMask);
+      ophct_read_high_ = false;
+      opvct_read_high_ = false;
+      hv_latch_flag_ = false;
       return {value, driven};
     }
     default:
@@ -443,23 +487,46 @@ struct Slot {
 
 // Mode 0 priority (highest first): BG palette regions stagger by 32 entries.
 constexpr std::array<Slot, 12> kOrderMode0 = {{
-    {true, 0U, 3U},  {false, 0U, 1U}, {false, 1U, 1U}, {true, 0U, 2U},
-    {false, 0U, 0U}, {false, 1U, 0U}, {true, 0U, 1U},  {false, 2U, 1U},
-    {false, 3U, 1U}, {true, 0U, 0U},  {false, 2U, 0U}, {false, 3U, 0U},
+    {true, 0U, 3U},
+    {false, 0U, 1U},
+    {false, 1U, 1U},
+    {true, 0U, 2U},
+    {false, 0U, 0U},
+    {false, 1U, 0U},
+    {true, 0U, 1U},
+    {false, 2U, 1U},
+    {false, 3U, 1U},
+    {true, 0U, 0U},
+    {false, 2U, 0U},
+    {false, 3U, 0U},
 }};
 
 // Mode 1, BGMODE.3 clear — BG3 priority "normal".
 constexpr std::array<Slot, 10> kOrderMode1Normal = {{
-    {true, 0U, 3U},  {false, 0U, 1U}, {false, 1U, 1U}, {true, 0U, 2U},
-    {false, 0U, 0U}, {false, 1U, 0U}, {true, 0U, 1U},  {false, 2U, 1U},
-    {true, 0U, 0U},  {false, 2U, 0U},
+    {true, 0U, 3U},
+    {false, 0U, 1U},
+    {false, 1U, 1U},
+    {true, 0U, 2U},
+    {false, 0U, 0U},
+    {false, 1U, 0U},
+    {true, 0U, 1U},
+    {false, 2U, 1U},
+    {true, 0U, 0U},
+    {false, 2U, 0U},
 }};
 
 // Mode 1, BGMODE.3 set — BG3 priority-1 tiles climb above BG1/BG2.
 constexpr std::array<Slot, 10> kOrderMode1Bg3High = {{
-    {false, 2U, 1U}, {true, 0U, 3U},  {false, 0U, 1U}, {false, 1U, 1U},
-    {true, 0U, 2U},  {false, 0U, 0U}, {false, 1U, 0U}, {true, 0U, 1U},
-    {true, 0U, 0U},  {false, 2U, 0U},
+    {false, 2U, 1U},
+    {true, 0U, 3U},
+    {false, 0U, 1U},
+    {false, 1U, 1U},
+    {true, 0U, 2U},
+    {false, 0U, 0U},
+    {false, 1U, 0U},
+    {true, 0U, 1U},
+    {true, 0U, 0U},
+    {false, 2U, 0U},
 }};
 
 // 5-bit per-channel saturating add (0..31).
@@ -473,7 +540,7 @@ constexpr uint8_t SatSub5(uint8_t a, uint8_t b) { return static_cast<uint8_t>(a 
 }  // namespace
 
 Ppu::ResolvedPixel Ppu::ResolveScreenPixel(uint8_t layer_mask, uint32_t screen_x, uint32_t screen_y,
-                                            const ObjPixel& obj_px) const {
+                                           const ObjPixel& obj_px) const {
   ResolvedPixel result = {(*cgram_)[0], 5U, false};
 
   auto try_resolve = [&](auto order, auto bpp_for, auto cgram_base_for) -> bool {
@@ -516,9 +583,8 @@ Ppu::ResolvedPixel Ppu::ResolveScreenPixel(uint8_t layer_mask, uint32_t screen_x
   return result;
 }
 
-uint16_t Ppu::ApplyColorMath(uint16_t main_bgr, uint8_t main_layer, bool main_obj_high,
-                              uint32_t screen_x, uint32_t screen_y,
-                              const ObjPixel& obj_px) const {
+uint16_t Ppu::ApplyColorMath(uint16_t main_bgr, uint8_t main_layer, bool main_obj_high, uint32_t screen_x,
+                             uint32_t screen_y, const ObjPixel& obj_px) const {
   // Determine if the main layer at this pixel is included in CGADSUB. The
   // OBJ case adds a "palette >= 4" gate per fullsnes.
   uint8_t layer_bit = 0;
@@ -536,9 +602,8 @@ uint16_t Ppu::ApplyColorMath(uint16_t main_bgr, uint8_t main_layer, bool main_ob
   // Build the sub-screen contribution. With CGWSEL.1 set the TS layer ladder
   // is resolved; if nothing renders there, the sub-screen pixel falls back to
   // the COLDATA fixed colour. CGWSEL.1 clear short-circuits to fixed.
-  const uint16_t coldata_fixed =
-      static_cast<uint16_t>(coldata_r_ | (static_cast<uint16_t>(coldata_g_) << 5U) |
-                            (static_cast<uint16_t>(coldata_b_) << 10U));
+  const uint16_t coldata_fixed = static_cast<uint16_t>(coldata_r_ | (static_cast<uint16_t>(coldata_g_) << 5U) |
+                                                       (static_cast<uint16_t>(coldata_b_) << 10U));
   uint16_t sub_bgr = coldata_fixed;
   if ((cgwsel_ & sppu::regs::kCgwselSubScreenEnableMask) != 0U) {
     const ResolvedPixel sub = ResolveScreenPixel(sub_screen_layers_, screen_x, screen_y, obj_px);
@@ -585,16 +650,15 @@ void Ppu::EmitPixel(uint32_t h, uint32_t v) {
 
     // FetchObjPixel is gated on either TM or TS enabling OBJ, since the same
     // resolved sprite pixel feeds both main and sub resolutions.
-    const uint8_t obj_enable_mask =
-        static_cast<uint8_t>(main_screen_layers_ | sub_screen_layers_);
+    const uint8_t obj_enable_mask = static_cast<uint8_t>(main_screen_layers_ | sub_screen_layers_);
     ObjPixel obj_px = {0U, true, 0U};
     if ((obj_enable_mask & sppu::regs::kTmObjMask) != 0U) {
       obj_px = FetchObjPixel(screen_x, screen_y);
     }
 
     const ResolvedPixel main = ResolveScreenPixel(main_screen_layers_, screen_x, screen_y, obj_px);
-    const uint16_t composed = ApplyColorMath(main.bgr, main.layer_id, main.obj_palette_high,
-                                              screen_x, screen_y, obj_px);
+    const uint16_t composed =
+        ApplyColorMath(main.bgr, main.layer_id, main.obj_palette_high, screen_x, screen_y, obj_px);
     color = BrightnessScale(composed, brightness_);
   }
   // Outside the visible window and under forced-blank, the PPU drives black.
@@ -1120,8 +1184,8 @@ Ppu::ObjPixel Ppu::FetchObjPixel(uint32_t screen_x, uint32_t screen_y) const {
         (static_cast<unsigned>(e.attr) >> sppu::regs::kObjAttrPaletteShift) & sppu::regs::kObjAttrPaletteMask;
     const uint8_t cgram_index =
         static_cast<uint8_t>(0x80U | (palette_group << 4U) | static_cast<unsigned>(color_index));
-    const uint8_t priority = static_cast<uint8_t>(
-        (static_cast<unsigned>(e.attr) >> sppu::regs::kObjAttrPriorityShift) & sppu::regs::kObjAttrPriorityMask);
+    const uint8_t priority = static_cast<uint8_t>((static_cast<unsigned>(e.attr) >> sppu::regs::kObjAttrPriorityShift) &
+                                                  sppu::regs::kObjAttrPriorityMask);
     return {cgram_index, false, priority};
   }
 

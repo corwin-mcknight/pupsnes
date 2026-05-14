@@ -289,11 +289,119 @@ TEST_CASE("STAT78 surfaces version, PAL=0, field toggle, and open-bus bits", "[u
   // Same latch priming trick: 0xFF means every open-bus bit surfaces as 1.
   BusWrite(snes, 0x7E0000, 0xFF, /*now=*/0);
   BusFollowResult stat = BusRead(snes, sppu::regs::kStat78, /*now=*/1);
-  // Driven bits: version=0x03 (bits 3:0), PAL=0 (bit 4), field=0 on reset
-  // (bit 7). Open-bus bits 5:6 come from the latch, so they're 1.
-  // Expected: 0b 0 11 0 0011 = 0x63 combined with open-bus bits 6:5 set → 0x63.
-  REQUIRE(stat.data == 0x63);
+  // Driven bits: version=0x03 (bits 3:0), PAL=0 (bit 4), latch flag=0
+  // (bit 6), field=0 on reset (bit 7). Only bit 5 is open-bus, so it
+  // surfaces as 1 from the latch.
+  // Expected: 0b 0 0 1 0 0011 = 0x23.
+  REQUIRE(stat.data == 0x23);
   (void)ppu;
+}
+
+TEST_CASE("SLHV ($2137) read latches H/V into OPHCT/OPVCT and arms STAT78 flag", "[unit][ppu]") {
+  SNES snes;
+  Ppu& ppu = snes.GetPpu();
+  ppu.Reset();
+
+  // Before any latch trigger: STAT78.bit6 must be 0.
+  BusWrite(snes, 0x7E0000, 0x00, /*now=*/0);
+  BusFollowResult pre = BusRead(snes, sppu::regs::kStat78, /*now=*/1);
+  REQUIRE((pre.data & sppu::regs::kStat78LatchFlagMask) == 0);
+
+  // Advance the PPU to a known dot position. SLHV read at master_time=4 lets
+  // the bus catch-up emit dot (0,0); the PPU then sits at h=1, v=0 (h points
+  // at the next dot to emit, which is the live beam position).
+  (void)BusRead(snes, sppu::regs::kSlhv, /*now=*/4);
+  REQUIRE(ppu.GetOphct() == 1U);
+  REQUIRE(ppu.GetOpvct() == 0U);
+  REQUIRE(ppu.GetHvLatchFlag());
+
+  // 1st OPHCT read returns bits 7:0 (=1), 2nd returns bit 8 (=0, only
+  // bit 0 driven; bits 7:1 come from open-bus).
+  BusWrite(snes, 0x7E0000, 0x00, /*now=*/5);
+  BusFollowResult oph_lo = BusRead(snes, sppu::regs::kOphct, /*now=*/6);
+  REQUIRE(oph_lo.data == 0x01);
+  BusFollowResult oph_hi = BusRead(snes, sppu::regs::kOphct, /*now=*/7);
+  REQUIRE(oph_hi.data == 0x00);
+
+  // Same for OPVCT (low=0, high=0).
+  BusFollowResult opv_lo = BusRead(snes, sppu::regs::kOpvct, /*now=*/8);
+  REQUIRE(opv_lo.data == 0x00);
+  BusFollowResult opv_hi = BusRead(snes, sppu::regs::kOpvct, /*now=*/9);
+  REQUIRE(opv_hi.data == 0x00);
+}
+
+TEST_CASE("OPHCT latches H counter values above 0xFF and exposes bit 8 on 2nd read", "[unit][ppu]") {
+  SNES snes;
+  Ppu& ppu = snes.GetPpu();
+  ppu.Reset();
+
+  // Drive the PPU past H=255 inside a single scanline. Dots 0..255 all cost
+  // 4 mcyc (H=323/327 are the only 6-cyc dots), so a SLHV read at
+  // master_time = 256 * 4 = 1024 puts h_ at 256.
+  (void)BusRead(snes, sppu::regs::kSlhv, /*now=*/1024);
+  REQUIRE(ppu.GetOphct() == 256U);
+  REQUIRE(ppu.GetOpvct() == 0U);
+
+  // Consume the low byte first (a fully-driven read clobbers the bus latch
+  // to 0x00, so we have to re-prime open-bus between the two reads).
+  BusFollowResult oph_lo = BusRead(snes, sppu::regs::kOphct, /*now=*/1026);
+  REQUIRE(oph_lo.data == 0x00);  // 256 & 0xFF
+  // Re-prime open-bus to 0xFE so the 2nd-read masking is observable: only
+  // bit 0 is driven by the device; bits 7:1 must surface from the latch.
+  BusWrite(snes, 0x7E0000, 0xFE, /*now=*/1027);
+  BusFollowResult oph_hi = BusRead(snes, sppu::regs::kOphct, /*now=*/1028);
+  // bit 0 driven (=1 since 256 >> 8 == 1); bits 7:1 = 0xFE from latch.
+  REQUIRE(oph_hi.data == 0xFF);
+}
+
+TEST_CASE("STAT78 read resets both OPHCT and OPVCT 1st/2nd flipflops and clears the latch flag", "[unit][ppu]") {
+  SNES snes;
+  Ppu& ppu = snes.GetPpu();
+  ppu.Reset();
+
+  // Latch H/V and consume the OPHCT low-byte (flipflop now at "high").
+  (void)BusRead(snes, sppu::regs::kSlhv, /*now=*/4);
+  REQUIRE(ppu.GetHvLatchFlag());
+  BusFollowResult low_first = BusRead(snes, sppu::regs::kOphct, /*now=*/5);
+  REQUIRE(low_first.data == 0x01);  // h=1 low byte
+
+  // STAT78 read: latch-flag bit set in returned data, then both flipflops
+  // and the live flag clear.
+  BusWrite(snes, 0x7E0000, 0x00, /*now=*/6);
+  BusFollowResult stat = BusRead(snes, sppu::regs::kStat78, /*now=*/7);
+  REQUIRE((stat.data & sppu::regs::kStat78LatchFlagMask) != 0);
+  REQUIRE(!ppu.GetHvLatchFlag());
+
+  // Subsequent STAT78 read shows the flag cleared.
+  BusFollowResult stat2 = BusRead(snes, sppu::regs::kStat78, /*now=*/8);
+  REQUIRE((stat2.data & sppu::regs::kStat78LatchFlagMask) == 0);
+
+  // OPHCT next read is the low byte again (flipflop was reset).
+  BusFollowResult low_again = BusRead(snes, sppu::regs::kOphct, /*now=*/9);
+  REQUIRE(low_again.data == 0x01);
+}
+
+TEST_CASE("OPHCT and OPVCT have independent 1st/2nd flipflops", "[unit][ppu]") {
+  SNES snes;
+  Ppu& ppu = snes.GetPpu();
+  ppu.Reset();
+
+  (void)BusRead(snes, sppu::regs::kSlhv, /*now=*/4);
+  REQUIRE(ppu.GetOphct() == 1U);
+  REQUIRE(ppu.GetOpvct() == 0U);
+
+  // Toggle OPHCT to "expect high next" without touching OPVCT.
+  BusFollowResult oph_lo = BusRead(snes, sppu::regs::kOphct, /*now=*/5);
+  REQUIRE(oph_lo.data == 0x01);
+
+  // OPVCT still returns the low byte first (independent flipflop).
+  BusWrite(snes, 0x7E0000, 0x00, /*now=*/6);
+  BusFollowResult opv_lo = BusRead(snes, sppu::regs::kOpvct, /*now=*/7);
+  REQUIRE(opv_lo.data == 0x00);  // v=0 low byte
+
+  // OPHCT next read is the high byte (its flipflop advanced).
+  BusFollowResult oph_hi = BusRead(snes, sppu::regs::kOphct, /*now=*/8);
+  REQUIRE(oph_hi.data == 0x00);  // h>>8 = 0
 }
 
 TEST_CASE("DotCost: most dots are 4 mcyc; H=323 and H=327 cost 6 on normal lines", "[unit][ppu]") {
@@ -2137,9 +2245,9 @@ TEST_CASE("Mid-line VRAM write to BG1 tile data propagates to subsequent pixels"
 
   BusWrite(snes, sppu::regs::kInidisp, 0x0FU, now++);
   BusWrite(snes, sppu::regs::kVmain, 0x80U, now++);
-  WriteCgramWord(snes, 0U, 0x0000U, now);     // backdrop = black
-  WriteCgramWord(snes, 1U, 0x001FU, now);     // BG1 palette idx 1 = red
-  WriteCgramWord(snes, 3U, 0x7C00U, now);     // BG1 palette idx 3 = blue
+  WriteCgramWord(snes, 0U, 0x0000U, now);  // backdrop = black
+  WriteCgramWord(snes, 1U, 0x001FU, now);  // BG1 palette idx 1 = red
+  WriteCgramWord(snes, 3U, 0x7C00U, now);  // BG1 palette idx 3 = blue
 
   // Tile 0 starts as solid color-index 1 (red): plane 0 = 0xFF, planes 1/2/3
   // = 0 on every row. The mid-line write below flips plane 1, row 0 to 0xFF,

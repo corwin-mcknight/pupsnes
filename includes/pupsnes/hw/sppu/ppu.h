@@ -134,6 +134,9 @@ class Ppu : public Device {
   [[nodiscard]] uint32_t GetDotH() const { return h_; }
   [[nodiscard]] uint32_t GetDotV() const { return v_; }
   [[nodiscard]] bool GetField() const { return field_; }
+  [[nodiscard]] uint16_t GetOphct() const { return ophct_; }
+  [[nodiscard]] uint16_t GetOpvct() const { return opvct_; }
+  [[nodiscard]] bool GetHvLatchFlag() const { return hv_latch_flag_; }
   [[nodiscard]] uint8_t GetMainScreenLayers() const { return main_screen_layers_; }
   [[nodiscard]] uint8_t GetSubScreenLayers() const { return sub_screen_layers_; }
   [[nodiscard]] uint8_t GetCgwsel() const { return cgwsel_; }
@@ -150,9 +153,7 @@ class Ppu : public Device {
   [[nodiscard]] uint16_t GetBgTilemapWordBase(uint8_t bg) const {
     return bg < 4U ? bg_tilemap_word_base_[bg] : uint16_t{0};
   }
-  [[nodiscard]] uint16_t GetBgCharWordBase(uint8_t bg) const {
-    return bg < 4U ? bg_char_word_base_[bg] : uint16_t{0};
-  }
+  [[nodiscard]] uint16_t GetBgCharWordBase(uint8_t bg) const { return bg < 4U ? bg_char_word_base_[bg] : uint16_t{0}; }
   [[nodiscard]] uint8_t GetObjSizeSelect() const { return obj_size_select_; }
   [[nodiscard]] uint16_t GetObjRegion0Word() const { return obj_region0_word_; }
   [[nodiscard]] uint16_t GetObjRegion1Word() const { return obj_region1_word_; }
@@ -334,7 +335,7 @@ class Ppu : public Device {
   // plane bytes. y_internal is `(screen_y - y_raw) & 0xFF` clipped to height —
   // already known to fall inside the sprite's vertical extent.
   struct ObjLineEntry {
-    int16_t x;          // signed 9-bit X origin (sign-extended into int16_t)
+    int16_t x;  // signed 9-bit X origin (sign-extended into int16_t)
     uint8_t y_internal;
     uint8_t width;
     uint8_t height;
@@ -360,15 +361,14 @@ class Ppu : public Device {
   // pre-computed OBJ pixel is passed in so main + sub resolution share one
   // FetchObjPixel call per dot. Returns {backdrop colour, layer_id=5} when
   // nothing opaque renders.
-  [[nodiscard]] ResolvedPixel ResolveScreenPixel(uint8_t layer_mask, uint32_t screen_x,
-                                                  uint32_t screen_y, const ObjPixel& obj_px) const;
+  [[nodiscard]] ResolvedPixel ResolveScreenPixel(uint8_t layer_mask, uint32_t screen_x, uint32_t screen_y,
+                                                 const ObjPixel& obj_px) const;
 
   // Apply $2131 CGADSUB math to the resolved main pixel. Sub source is the
   // sub-screen resolution when CGWSEL.1 is set and a sub-screen layer renders
   // here; otherwise the COLDATA fixed colour fills in. Returns BGR555.
-  [[nodiscard]] uint16_t ApplyColorMath(uint16_t main_bgr, uint8_t main_layer, bool main_obj_high,
-                                        uint32_t screen_x, uint32_t screen_y,
-                                        const ObjPixel& obj_px) const;
+  [[nodiscard]] uint16_t ApplyColorMath(uint16_t main_bgr, uint8_t main_layer, bool main_obj_high, uint32_t screen_x,
+                                        uint32_t screen_y, const ObjPixel& obj_px) const;
 
   // --- Register shadow + decoded fields ---
   std::array<uint8_t, sppu::regs::kShadowSize> shadow_{};
@@ -457,6 +457,19 @@ class Ppu : public Device {
   // start line (225 normally, 240 under overscan); cleared on RDNMI ($4210)
   // read or when V wraps back to 0 at frame start.
   bool vblank_nmi_flag_ = false;
+
+  // OPHCT/OPVCT latched H/V counters (9-bit) and per-register read-twice
+  // flipflops. The latch fires on $2137 (SLHV) dummy-read, on a WRIO ($4201)
+  // bit-7 1→0 transition, or on a lightgun pulse. We don't model WRIO yet —
+  // its reset value FFh has bit 7 set, which is the gating condition fullsnes
+  // calls out, so SLHV reads unconditionally trigger today. Both flipflops
+  // reset on a $213F (STAT78) read; the latch flag (STAT78.bit6) also clears
+  // on that read.
+  uint16_t ophct_ = 0;
+  uint16_t opvct_ = 0;
+  bool ophct_read_high_ = false;
+  bool opvct_read_high_ = false;
+  bool hv_latch_flag_ = false;
   // Cycles already consumed toward the current dot from prior CatchUpTo calls.
   // Range: [0, DotCost(h_, v_, field_)). Lets one dot span multiple calls
   // when target lands mid-dot — no overshoot permitted.

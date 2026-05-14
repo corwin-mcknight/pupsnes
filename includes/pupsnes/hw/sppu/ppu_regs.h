@@ -196,11 +196,25 @@ inline constexpr uint16_t kCgData = 0x2122;
 inline constexpr uint16_t kSetini = 0x2133;
 inline constexpr uint8_t kSetiniOverscanMask = 0x04;  // bit 2 (0=224 lines, 1=239)
 
+// $2137 SLHV — Software latch for H/V counter. Reading this port triggers
+// the same latch the lightgun / WRIO 1→0 transition would, capturing the
+// current H/V counters into OPHCT/OPVCT and setting STAT78.bit6.
+inline constexpr uint16_t kSlhv = 0x2137;
+
 // Read ports.
 inline constexpr uint16_t kRdOam = 0x2138;
 inline constexpr uint16_t kRdVramL = 0x2139;
 inline constexpr uint16_t kRdVramH = 0x213A;
 inline constexpr uint16_t kRdCgram = 0x213B;
+
+// $213C OPHCT — Horizontal counter latch (read-twice, 9-bit value).
+// $213D OPVCT — Vertical counter latch (read-twice, 9-bit value).
+// 1st read: bits 7:0 of the latched counter. 2nd read: bit 8 (only bit 0
+// driven; bits 7:1 are PPU2 open-bus). Per-register 1st/2nd flipflops both
+// reset on a STAT78 ($213F) read.
+inline constexpr uint16_t kOphct = 0x213C;
+inline constexpr uint16_t kOpvct = 0x213D;
+inline constexpr uint8_t kOpctHighDrivenMask = 0x01;  // only bit 0 driven on 2nd read
 
 // $213E STAT77 — sprite overflow / time-over / version.
 inline constexpr uint16_t kStat77 = 0x213E;
@@ -208,9 +222,10 @@ inline constexpr uint8_t kStat77VersionMask = 0x0F;  // bits 3:0
 
 // $213F STAT78 — field / PAL / version.
 inline constexpr uint16_t kStat78 = 0x213F;
-inline constexpr uint8_t kStat78VersionMask = 0x0F;  // bits 3:0
-inline constexpr uint8_t kStat78FieldMask = 0x80;    // bit 7
-inline constexpr uint8_t kStat78PalMask = 0x10;      // bit 4 (0=NTSC, 1=PAL)
+inline constexpr uint8_t kStat78VersionMask = 0x0F;    // bits 3:0
+inline constexpr uint8_t kStat78FieldMask = 0x80;      // bit 7
+inline constexpr uint8_t kStat78PalMask = 0x10;        // bit 4 (0=NTSC, 1=PAL)
+inline constexpr uint8_t kStat78LatchFlagMask = 0x40;  // bit 6 — H/V latched
 
 // Backing-store sizes.
 inline constexpr std::size_t kVramSize = 64 * 1024;  // 64 KiB, word-addressed as 32K × 16
