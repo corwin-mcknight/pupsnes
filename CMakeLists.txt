@@ -108,6 +108,7 @@ set(PUPSNES_TEST_SOURCES
   src/tests/opcode_bcd_tests.cpp
   src/tests/ppu_tests.cpp
   src/tests/nmi_tests.cpp
+  src/tests/hv_irq_tests.cpp
   src/tests/apu_stub_tests.cpp
   src/tests/fan_out_trace_sink_tests.cpp
   src/tests/file_trace_sink_tests.cpp
