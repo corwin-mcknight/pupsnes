@@ -25,14 +25,29 @@ class CpuMmio : public Device {
   // bit 7: VBlank NMI enable (gates the PPU /NMI line into the CPU's NMI
   //        flip-flop. Transition quirks are handled by
   //        CPU::OnNmiTimenChanged — see CpuMmio::WriteRegister).
-  // bit 5: V-IRQ enable (deferred — IRQ signal not yet modeled).
-  // bit 4: H-IRQ enable (deferred).
+  // bits 5:4: H/V-IRQ trigger mode — 00 disabled, 01 V-only, 10 H-only,
+  //           11 both. Mode 00 clears the TIMEUP latch and de-asserts /IRQ.
   // bit 0: auto-joypad read enable (deferred).
   static constexpr uint32_t kNmiTimenOffset = 0x4200U;
   static constexpr uint8_t kNmiTimenNmiEnableMask = 0x80U;
   static constexpr uint8_t kNmiTimenVIrqEnableMask = 0x20U;
   static constexpr uint8_t kNmiTimenHIrqEnableMask = 0x10U;
+  static constexpr uint8_t kNmiTimenIrqModeMask =
+      static_cast<uint8_t>(kNmiTimenVIrqEnableMask | kNmiTimenHIrqEnableMask);
   static constexpr uint8_t kNmiTimenAutoJoypadMask = 0x01U;
+
+  // HTIMEL/H ($4207-$4208), VTIMEL/H ($4209-$420A) — 9-bit H/V-IRQ targets.
+  // Write-only on hardware; the shadow is exposed for the debugger and tests.
+  static constexpr uint32_t kHTimeLOffset = 0x4207U;
+  static constexpr uint32_t kHTimeHOffset = 0x4208U;
+  static constexpr uint32_t kVTimeLOffset = 0x4209U;
+  static constexpr uint32_t kVTimeHOffset = 0x420AU;
+  static constexpr uint16_t kHvTimeFieldMask = 0x01FFU;  // 9-bit
+
+  // TIMEUP ($4211) — bit 7 is the H/V-IRQ latch. Reading clears the latch and
+  // de-asserts /IRQ. Bits 6:0 are open-bus.
+  static constexpr uint32_t kTimeUpOffset = 0x4211U;
+  static constexpr uint8_t kTimeUpFlagMask = 0x80U;
 
   // RDNMI ($4210): bit 7 = VBlank-NMI latch (set at VBlank entry, cleared on
   // read), bits 6:4 = open-bus, bits 3:0 = 5A22 CPU revision. Fullsnes notes
@@ -94,14 +109,52 @@ class CpuMmio : public Device {
   [[nodiscard]] bool GetHIrqEnable() const { return (nmitimen_ & kNmiTimenHIrqEnableMask) != 0U; }
   [[nodiscard]] bool GetAutoJoypadEnable() const { return (nmitimen_ & kNmiTimenAutoJoypadMask) != 0U; }
 
+  // 9-bit H/V-IRQ targets (assembled from the two-byte writes to $4207/$4208
+  // and $4209/$420A).
+  [[nodiscard]] uint16_t GetHTime() const { return htime_; }
+  [[nodiscard]] uint16_t GetVTime() const { return vtime_; }
+
+  // TIMEUP ($4211) bit 7 — true while an H/V-IRQ is pending and unacknowledged.
+  // This is the level the CPU's /IRQ pin sees: the CPU samples it at each
+  // instruction boundary. Reading $4211 clears the latch; the level is also
+  // cleared when NMITIMEN bits 5:4 transition to 00.
+  [[nodiscard]] bool SampleIrqLine() const { return timeup_latch_; }
+
+  // Scheduler-fence handler. Called from the kHIrqMatch signal at the master
+  // cycle a programmed H/V match lands on. Sets the TIMEUP latch and asserts
+  // /IRQ, then re-arms the next match according to the current trigger mode.
+  // Lives on CpuMmio because it owns the register surface and IRQ line state.
+  void HandleIrqMatch(TimeMasterT t);
+
   // HDMA execution is not yet implemented; expose the $420C shadow so the
   // debugger can show what the game has programmed.
   [[nodiscard]] uint8_t GetHdmaEn() const { return hdmaen_; }
 
  private:
+  // (Re)compute when the next H/V-IRQ match cycle lands given the current
+  // (nmitimen, htime, vtime) and master time, and schedule a kHIrqMatch
+  // signal for it. Called whenever any of those inputs changes, and from
+  // HandleIrqMatch after acknowledging a previous match. A no-op when the
+  // IRQ-mode bits are 00 — without those bits set, there is no match.
+  void RescheduleIrqMatchFrom(TimeMasterT now);
+
   uint8_t memsel_ = 0;
   uint8_t nmitimen_ = 0;
   uint8_t hdmaen_ = 0;
+
+  // H/V-IRQ target registers (9-bit each). Built from two-byte writes — the
+  // low byte writes to $4207/$4209 immediately and the high byte to $4208/
+  // $420A overwrites the upper 8 bits (we only honour the 9-bit field).
+  uint16_t htime_ = 0;
+  uint16_t vtime_ = 0;
+  // TIMEUP latch — set when the comparator matches, cleared on $4211 read or
+  // when NMITIMEN bits 5:4 → 00.
+  bool timeup_latch_ = false;
+  // Master cycle of the currently scheduled kHIrqMatch event, or kNoMatch when
+  // nothing is scheduled. Used to de-duplicate re-schedule requests when
+  // multiple register writes hit before the event fires.
+  static constexpr TimeMasterT kNoMatch = static_cast<TimeMasterT>(-1);
+  TimeMasterT scheduled_match_time_ = kNoMatch;
 };
 
 }  // namespace pupsnes

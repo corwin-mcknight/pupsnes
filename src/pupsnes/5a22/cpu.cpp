@@ -175,14 +175,20 @@ void CPU::SampleInterrupts(TimeMasterT t) {
     nmi_pending_ = true;
   }
   nmi_gated_prev_ = gated;
+
+  // /IRQ is a level line driven by CpuMmio's TIMEUP latch (and, in the future,
+  // by other peripherals OR'd in). Sample it directly — no edge tracking
+  // required, the CPU delivers as long as the level is asserted at an
+  // instruction boundary with P.I clear.
+  irq_line_asserted_ = (snes_ != nullptr && snes_->cpu_mmio != nullptr) ? snes_->cpu_mmio->SampleIrqLine() : false;
 }
 
 std::optional<InterruptKind> CPU::SelectPendingInterrupt() const {
-  // Priority per WDC §9: ABORT > NMI > IRQ. v1 only delivers NMI; ABORT and
-  // IRQ branches are present but unreachable so the ordering is locked in.
+  // Priority per WDC §9: ABORT > NMI > IRQ. ABORT is still placeholder; NMI
+  // and IRQ are live.
   // if (abort_pending_) return InterruptKind::kAbort;
   if (nmi_pending_) return InterruptKind::kNmi;
-  // if (irq_line_asserted_ && !regs_.P.I) return InterruptKind::kIrq;
+  if (irq_line_asserted_ && !regs_.P.I) return InterruptKind::kIrq;
   return std::nullopt;
 }
 
@@ -192,10 +198,13 @@ bool CPU::WaiShouldWake(TimeMasterT t) {
   // post-wake instruction-boundary sample — WAI wakes on masked interrupts
   // and simply resumes the instruction after WAI without entering a handler.
   const bool nmi_raw = (snes_ != nullptr && snes_->ppu != nullptr) ? snes_->ppu->SampleNmiLine(t) : false;
+  // /IRQ line driven by CpuMmio's TIMEUP latch (plus any future peripheral
+  // IRQ sources OR'd in). WAI wakes on level, even when P.I is set.
+  const bool irq_raw = (snes_ != nullptr && snes_->cpu_mmio != nullptr) ? snes_->cpu_mmio->SampleIrqLine() : false;
   // Also honour the edge-latched flip-flop: an NMI edge caught on a prior
   // sample (before V advanced past the VBlank-entry line) must still wake WAI
   // even once the raw line has de-asserted.
-  return nmi_pending_ || nmi_raw || abort_pending_ || irq_line_asserted_;
+  return nmi_pending_ || nmi_raw || abort_pending_ || irq_line_asserted_ || irq_raw;
 }
 
 void CPU::OnNmiTimenChanged(uint8_t prev_byte, uint8_t new_byte, TimeMasterT t) {
