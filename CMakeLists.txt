@@ -78,6 +78,7 @@ set(PUPSNES_TEST_SOURCES
   src/tests/dma_tests.cpp
   src/tests/dma_panel_tests.cpp
   src/tests/fastrom_tests.cpp
+  src/tests/hirom_tests.cpp
   src/tests/joypad_tests.cpp
   src/tests/rom_format_tests.cpp
   src/tests/rom_integration_tests.cpp

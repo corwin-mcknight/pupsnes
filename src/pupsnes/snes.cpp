@@ -56,6 +56,14 @@ void pupsnes::SNES::LoadLoRom(std::span<const uint8_t> rom_data) {
   cartridge->MapLoRom(*system_bus);
 }
 
+void pupsnes::SNES::LoadHiRom(std::span<const uint8_t> rom_data) {
+  // Same swap-time semantics as LoadLoRom: clear MEMSEL before remapping so
+  // the FASTROM cache and page table agree on the first cycle after load.
+  cpu_mmio->Reset();
+  cartridge->LoadHiRom(rom_data);
+  cartridge->MapHiRom(*system_bus);
+}
+
 void pupsnes::SNES::Reset() {
   time_now_ = 0;
   scheduler->Reset();

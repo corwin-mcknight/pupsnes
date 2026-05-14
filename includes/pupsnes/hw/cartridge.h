@@ -21,6 +21,9 @@ enum class MapperKind : uint8_t {
 class Cartridge : public Device {
  public:
   static constexpr std::size_t kLoROMWindowSize = 32U * 1024U;
+  // HiROM exposes a full 64 KiB CPU bank as ROM bytes; banks $00-$3F and
+  // $80-$BF mirror the upper half ($8000-$FFFF) of the same 64 KiB stride.
+  static constexpr std::size_t kHiROMBankSize = 64U * 1024U;
 
   // SRAM page offsets are tagged with this bit in the SystemBus page table's
   // `base_offset`, distinguishing them from ROM offsets so that the slow-path
@@ -36,10 +39,16 @@ class Cartridge : public Device {
   void LoadLoRom(std::span<const uint8_t> rom_data);
   void MapLoRom(SystemBus& bus);
 
-  // Re-map the LoROM fast-bank range ($80-$FD, pages $80-$FF) with the access
-  // speed selected by the supplied flag. 6 master cycles when fast=true (MEMSEL
-  // bit 0 set), 8 master cycles otherwise. No-op when LoROM is not currently
-  // mapped (e.g. before LoadLoRom + MapLoRom have run, or for a HiROM image).
+  void LoadHiRom(std::span<const uint8_t> rom_data);
+  void MapHiRom(SystemBus& bus);
+
+  // Re-map the active mapper's fast-bank range with the access speed selected
+  // by `fast`. 6 master cycles when MEMSEL bit 0 is set, 8 otherwise. No-op
+  // when no ROM is mapped (e.g. before Load*Rom + Map*Rom have run).
+  //
+  // LoROM: banks $80-$FF, pages $80-$FF.
+  // HiROM: banks $80-$BF pages $80-$FF (half-bank ROM) plus banks $C0-$FF
+  //        pages $00-$FF (full-bank ROM).
   void OnMemSelChanged(SystemBus& bus, bool fast);
 
   [[nodiscard]] MmioReadResult ReadRegister(uint32_t offset, TimeMasterT current_time) override;
@@ -73,9 +82,11 @@ class Cartridge : public Device {
   std::vector<uint8_t> sram_;
   bool sram_dirty_ = false;
   bool lorom_mapped_ = false;
+  bool hirom_mapped_ = false;
   MapperKind mapper_kind_ = MapperKind::kNone;
 
   void MapLoRomSram(SystemBus& bus);
+  void MapHiRomSram(SystemBus& bus);
 };
 
 }  // namespace pupsnes

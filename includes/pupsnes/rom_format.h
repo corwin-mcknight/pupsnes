@@ -18,12 +18,25 @@ inline constexpr std::size_t kSmcCopierHeaderSize = 512U;
 // sub-bank remainder we attempt to recognise here.
 inline constexpr std::size_t kLoRomBankSize = 32U * 1024U;
 
+// Size of a HiROM bank. HiROM exposes the full 64 KiB CPU bank as ROM in
+// banks $40-$7D / $C0-$FF and the upper half ($8000-$FFFF) in banks
+// $00-$3F / $80-$BF; both reference the same 64 KiB-strided byte offset.
+inline constexpr std::size_t kHiRomBankSize = 64U * 1024U;
+
 // File offset of the LoROM internal header. CPU address $00:FFB0-$FFDF maps
 // to file offset $7FB0-$7FDF in a raw LoROM image (no SMC copier header).
 inline constexpr std::size_t kLoRomHeaderOffset = 0x7FB0U;
 
 // File offset of the SRAM size byte inside the LoROM header.
 inline constexpr std::size_t kLoRomSramSizeOffset = 0x7FD8U;
+
+// File offset of the HiROM internal header. CPU address $00:FFB0-$FFDF lands
+// at file offset $FFB0-$FFDF in a raw HiROM image because HiROM exposes the
+// upper half of bank $00 ($8000-$FFFF) as file bytes $8000-$FFFF.
+inline constexpr std::size_t kHiRomHeaderOffset = 0xFFB0U;
+
+// File offset of the SRAM size byte inside the HiROM header.
+inline constexpr std::size_t kHiRomSramSizeOffset = 0xFFD8U;
 
 // Largest RAM-size byte we honour. The header encodes SRAM as 1024 << N
 // bytes, so N=9 maps to 512 KiB — the practical ceiling for cartridge SRAM
@@ -57,6 +70,19 @@ inline void StripSmcCopierHeader(std::vector<uint8_t>& rom) {
     return 0;
   }
   const uint8_t value = rom[kLoRomSramSizeOffset];
+  if (value == 0 || value > kMaxLoRomSramSizeByte) {
+    return 0;
+  }
+  return std::size_t{1024} << value;
+}
+
+// Returns the SRAM size in bytes declared by the HiROM internal header at
+// file offset $FFD8. Same encoding and clamp as LoRomSramSize.
+[[nodiscard]] inline std::size_t HiRomSramSize(std::span<const uint8_t> rom) noexcept {
+  if (rom.size() <= kHiRomSramSizeOffset) {
+    return 0;
+  }
+  const uint8_t value = rom[kHiRomSramSizeOffset];
   if (value == 0 || value > kMaxLoRomSramSizeByte) {
     return 0;
   }

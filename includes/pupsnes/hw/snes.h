@@ -53,6 +53,7 @@ class SNES {
   ~SNES();
 
   void LoadLoRom(std::span<const uint8_t> rom_data);
+  void LoadHiRom(std::span<const uint8_t> rom_data);
   void Reset();
 
   [[nodiscard]] TimeMasterT GetMasterTime() const { return time_now_; }
