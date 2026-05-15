@@ -278,6 +278,11 @@ bool DebuggerApp::InitWindow() {
   ImGuiIO& io = ImGui::GetIO();
   io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
   io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+  // Don't let nav focus auto-set io.WantCaptureKeyboard. Otherwise focusing any
+  // panel (PPU Viewer, etc.) would mask game input from any future code that
+  // gates on WantCaptureKeyboard. PollGameInput already gates only on
+  // WantTextInput, but keeping the flag honest prevents future regressions.
+  io.ConfigNavCaptureKeyboard = false;
   ImGui::StyleColorsDark();
   ImGuiStyle& style = ImGui::GetStyle();
   style.WindowPadding = ImVec2(4.0F, 2.0F);

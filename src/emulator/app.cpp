@@ -730,6 +730,10 @@ bool EmulatorApp::InitWindow() {
   ImGui::CreateContext();
   ImGuiIO& io = ImGui::GetIO();
   io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+  // Don't let nav focus auto-set io.WantCaptureKeyboard. Otherwise clicking any
+  // ImGui window (e.g., the About box) leaves it as the nav window forever, and
+  // PollControllerInput keeps releasing the joypad on every frame.
+  io.ConfigNavCaptureKeyboard = false;
   ImGui::StyleColorsDark();
   ImGuiStyle& style = ImGui::GetStyle();
   style.WindowRounding = 0.0F;
