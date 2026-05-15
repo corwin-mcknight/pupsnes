@@ -519,6 +519,13 @@ void DebuggerApp::RenderMenuBar() {
       ImGui::MenuItem("Errors", nullptr, &ui_state_.show_errors_panel);
       ImGui::MenuItem("Bus", nullptr, &ui_state_.show_bus_panel);
       ImGui::MenuItem("P1 Controller", nullptr, &ui_state_.show_controller_panel);
+      ImGui::MenuItem("SNES", nullptr, &ui_state_.show_snes_panel);
+      ImGui::EndMenu();
+    }
+    if (ImGui::BeginMenu("SNES")) {
+      if (ImGui::MenuItem("Reset", nullptr, false, loaded_rom_)) {
+        ResetMachine();
+      }
       ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Debug")) {
@@ -602,7 +609,7 @@ struct StringField {
   std::string UiState::* member;
 };
 
-constexpr std::array<BoolField, 15> kBoolFields{{
+constexpr std::array<BoolField, 16> kBoolFields{{
     {"show_registers_panel", &UiState::show_registers_panel},
     {"show_disasm_panel", &UiState::show_disasm_panel},
     {"show_memory_panel", &UiState::show_memory_panel},
@@ -618,6 +625,7 @@ constexpr std::array<BoolField, 15> kBoolFields{{
     {"show_errors_panel", &UiState::show_errors_panel},
     {"show_bus_panel", &UiState::show_bus_panel},
     {"show_controller_panel", &UiState::show_controller_panel},
+    {"show_snes_panel", &UiState::show_snes_panel},
 }};
 
 constexpr std::array<StringField, 3> kStringFields{{
@@ -672,6 +680,12 @@ void DebuggerApp::LoadAppConfig() {
       if (parsed > 0.0F) {
         ui_state_.speed_multiplier = std::clamp(parsed, 0.001F, 10.0F);
       }
+    } else if (key == "sdsp_mode") {
+      const int parsed = std::atoi(value.c_str());
+      if (parsed == static_cast<int>(SdspMode::kSimple) ||
+          parsed == static_cast<int>(SdspMode::kAccurate)) {
+        snes_.SetSdspModePending(static_cast<SdspMode>(parsed));
+      }
     }
   }
 }
@@ -690,6 +704,7 @@ void DebuggerApp::SaveAppConfig() {
     stream << f.key << "=" << (ui_state_.*f.member ? 1 : 0) << "\n";
   }
   stream << "speed_multiplier=" << ui_state_.speed_multiplier << "\n";
+  stream << "sdsp_mode=" << static_cast<int>(snes_.GetSdspModePending()) << "\n";
 }
 
 void DebuggerApp::PollGameInput() {
@@ -759,6 +774,7 @@ void DebuggerApp::Render() {
   RenderErrorsPanel(*this);
   RenderBusEventPanel(*this);
   RenderControllerPanel(*this);
+  RenderSnesPanel(*this);
   RenderLoadRomDialog(*this);
   RenderFatalModal();
 

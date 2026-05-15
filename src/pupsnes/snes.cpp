@@ -108,6 +108,10 @@ pupsnes::RomLoadResult pupsnes::SNES::LoadRom(std::span<const uint8_t> rom_data)
 }
 
 void pupsnes::SNES::Reset() {
+  // Apply any pending S-DSP backend selection. The real APU wrapper will
+  // consume this when it lands; until then we just track the value so the UI
+  // can show a consistent "live" vs "pending" view.
+  sdsp_mode_live_ = sdsp_mode_pending_;
   time_now_ = 0;
   scheduler->Reset();
   for (Device* device : devices_) {

@@ -5,6 +5,7 @@
 #include <span>
 #include <vector>
 
+#include "pupsnes/hw/sdsp/sdsp.h"
 #include "pupsnes/rom_format.h"
 #include "pupsnes/types.h"
 
@@ -105,5 +106,19 @@ class SNES {
 
   DeviceIdT RegisterDevice(Device* device);
   [[nodiscard]] Device* GetDevice(DeviceIdT id) const;
+  [[nodiscard]] std::size_t GetDeviceCount() const { return devices_.size(); }
+
+  // S-DSP backend selection. The "pending" value is what the debugger UI /
+  // config has chosen; the "live" value is what the active APU is running.
+  // Reset() copies pending into live so a startup-only switch actually takes
+  // effect on the next reset cycle. Both default to kSimple (the cheaper
+  // backend lands first and is the right dev-time default).
+  [[nodiscard]] SdspMode GetSdspModePending() const { return sdsp_mode_pending_; }
+  [[nodiscard]] SdspMode GetSdspModeLive() const { return sdsp_mode_live_; }
+  void SetSdspModePending(SdspMode mode) { sdsp_mode_pending_ = mode; }
+
+ private:
+  SdspMode sdsp_mode_pending_ = SdspMode::kSimple;
+  SdspMode sdsp_mode_live_ = SdspMode::kSimple;
 };
 }  // namespace pupsnes

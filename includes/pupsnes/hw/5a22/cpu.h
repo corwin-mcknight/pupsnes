@@ -147,6 +147,8 @@ class CPU : public MasterClockDriver {
   explicit CPU(SNES* snes);
   ~CPU() override = default;
 
+  [[nodiscard]] const char* DeviceName() const override { return "CPU"; }
+
   void Reset();
 
   [[nodiscard]] TickResult TickToTarget(TimeMasterT target_master_time) override;

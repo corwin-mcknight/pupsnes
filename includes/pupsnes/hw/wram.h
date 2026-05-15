@@ -18,6 +18,8 @@ class WRAM : public Device {
   explicit WRAM(SNES* snes);
   ~WRAM() override = default;
 
+  [[nodiscard]] const char* DeviceName() const override { return "WRAM"; }
+
   void MapSystemBus(SystemBus& bus);
 
   [[nodiscard]] MmioReadResult ReadRegister(uint32_t offset, TimeMasterT current_time) override;

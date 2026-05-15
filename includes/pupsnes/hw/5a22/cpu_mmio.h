@@ -87,6 +87,8 @@ class CpuMmio : public Device {
   explicit CpuMmio(SNES* snes);
   ~CpuMmio() override = default;
 
+  [[nodiscard]] const char* DeviceName() const override { return "CPU MMIO"; }
+
   void MapSystemBus(SystemBus& bus);
 
   // Clear all CPU MMIO register state. Called from SNES::Reset so a soft reset

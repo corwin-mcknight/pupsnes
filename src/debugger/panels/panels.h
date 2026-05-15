@@ -19,6 +19,7 @@ void RenderSchedulerPanel(DebuggerApp& app);
 void RenderErrorsPanel(DebuggerApp& app);
 void RenderBusEventPanel(DebuggerApp& app);
 void RenderControllerPanel(DebuggerApp& app);
+void RenderSnesPanel(DebuggerApp& app);
 void RenderLoadRomDialog(DebuggerApp& app);
 void InitFileShortcuts(DebuggerApp& app);
 

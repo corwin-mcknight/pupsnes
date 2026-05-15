@@ -56,6 +56,8 @@ class DmaController : public Device {
   explicit DmaController(SNES* snes);
   ~DmaController() override = default;
 
+  [[nodiscard]] const char* DeviceName() const override { return "DMA"; }
+
   void MapSystemBus(SystemBus& bus);
   void Reset();
 

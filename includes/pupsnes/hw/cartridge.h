@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <optional>
 #include <span>
+#include <string>
 #include <vector>
 
 #include "pupsnes/hw/device.h"
@@ -35,7 +36,22 @@ class Cartridge : public Device {
   explicit Cartridge(SNES* snes);
   ~Cartridge() override = default;
 
+  [[nodiscard]] const char* DeviceName() const override { return "Cartridge"; }
+
   [[nodiscard]] MapperKind GetMapperKind() const { return mapper_kind_; }
+
+  // Internal 21-byte ROM title from the header ($FFC0 HiROM / $7FC0 LoROM),
+  // trimmed of trailing spaces. Returns empty when no ROM is loaded.
+  [[nodiscard]] std::string GetInternalTitle() const;
+
+  // Country/region byte from the header ($FFD9 HiROM / $7FD9 LoROM). Returns
+  // 0xFF (open-bus shape) when no ROM is loaded.
+  [[nodiscard]] uint8_t GetCountryCode() const;
+
+  // True when the header map-mode byte advertises FastROM ($30 LoROM-fast,
+  // $31 HiROM-fast). Whether FastROM is currently *active* is a runtime
+  // MEMSEL state owned by CpuMmio; this is the cart-side capability.
+  [[nodiscard]] bool IsFastRomCapable() const;
 
   // Validate and ingest the bytes as a LoROM image. On success returns
   // {ok=true, detected_kind=kLoROM} and the cartridge is ready for MapLoRom;

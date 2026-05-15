@@ -80,6 +80,8 @@ class ApuStub : public Device {
   explicit ApuStub(SNES* snes);
   ~ApuStub() override = default;
 
+  [[nodiscard]] const char* DeviceName() const override { return "APU (stub)"; }
+
   void Reset();
 
   [[nodiscard]] MmioReadResult ReadRegister(uint32_t offset, TimeMasterT current_time) override;

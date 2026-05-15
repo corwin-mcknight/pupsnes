@@ -47,6 +47,8 @@ class Joypad : public Device {
   explicit Joypad(SNES* snes);
   ~Joypad() override = default;
 
+  [[nodiscard]] const char* DeviceName() const override { return "Joypad"; }
+
   // Reset clears the shift register, strobe latch, and shift counter so a
   // soft reset doesn't leave a partially-clocked manual read in flight. The
   // user-driven button state survives — the UI owns it and the user is the

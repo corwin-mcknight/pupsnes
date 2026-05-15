@@ -39,6 +39,11 @@ class Device {
   explicit Device(SNES* snes);
   virtual ~Device() = default;
 
+  // Human-readable short name used by the debugger UI to list registered
+  // devices. Subclasses override with a string literal; default keeps the
+  // build green if an override is missed.
+  [[nodiscard]] virtual const char* DeviceName() const { return "?"; }
+
   // Advance this device's internal state to exactly `target` master time.
   // Passive devices override; master-clock drivers leave the default no-op
   // because they advance master_time during their own TickToTarget.

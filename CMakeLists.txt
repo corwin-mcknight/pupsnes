@@ -12,6 +12,8 @@ set(PUPSNES_LIB_SOURCES
   src/pupsnes/dma_controller.cpp
   src/pupsnes/joypad.cpp
   src/pupsnes/scheduler.cpp
+  src/pupsnes/sdsp/accurate_sdsp.cpp
+  src/pupsnes/sdsp/simple_sdsp.cpp
   src/pupsnes/snes.cpp
   src/pupsnes/sppu/ppu.cpp
   src/pupsnes/token.cpp
@@ -53,6 +55,7 @@ set(PUPSNES_DEBUGGER_SOURCES
   src/debugger/panels/ppu_panel.cpp
   src/debugger/panels/registers_panel.cpp
   src/debugger/panels/scheduler_panel.cpp
+  src/debugger/panels/snes_panel.cpp
   src/debugger/panels/stack_panel.cpp
   src/debugger/panels/trace_panel.cpp
   src/debugger/panels/trace_record_panel.cpp

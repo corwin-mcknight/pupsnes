@@ -1,12 +1,71 @@
 #include "pupsnes/hw/cartridge.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <format>
+#include <string>
 
 #include "pupsnes/hw/systembus.h"
 #include "pupsnes/rom_format.h"
 
 namespace pupsnes {
+
+namespace {
+
+// Header offsets relative to the start of the LoROM/HiROM internal header.
+// Title: 21 ASCII bytes starting at $FFC0/$7FC0. Country: one byte at
+// $FFD9/$7FD9. Map mode byte already lives at kLoRomMapModeOffset /
+// kHiRomMapModeOffset in rom_format.h.
+constexpr std::size_t kTitleLength = 21U;
+constexpr std::size_t kLoRomTitleOffset = 0x7FC0U;
+constexpr std::size_t kHiRomTitleOffset = 0xFFC0U;
+constexpr std::size_t kLoRomCountryOffset = 0x7FD9U;
+constexpr std::size_t kHiRomCountryOffset = 0xFFD9U;
+
+}  // namespace
+
+std::string Cartridge::GetInternalTitle() const {
+  std::size_t offset = 0;
+  switch (mapper_kind_) {
+    case MapperKind::kLoROM: offset = kLoRomTitleOffset; break;
+    case MapperKind::kHiROM: offset = kHiRomTitleOffset; break;
+    case MapperKind::kNone: return {};
+  }
+  if (rom_.size() < offset + kTitleLength) {
+    return {};
+  }
+  std::string title(reinterpret_cast<const char*>(rom_.data() + offset), kTitleLength);
+  // SNES titles are right-padded with $20 (space); trim. Strip any high-bit
+  // bytes too so a shift-JIS Japanese title doesn't render as control chars.
+  while (!title.empty() && (title.back() == ' ' || static_cast<uint8_t>(title.back()) >= 0x80U)) {
+    title.pop_back();
+  }
+  return title;
+}
+
+uint8_t Cartridge::GetCountryCode() const {
+  std::size_t offset = 0;
+  switch (mapper_kind_) {
+    case MapperKind::kLoROM: offset = kLoRomCountryOffset; break;
+    case MapperKind::kHiROM: offset = kHiRomCountryOffset; break;
+    case MapperKind::kNone: return 0xFFU;
+  }
+  return offset < rom_.size() ? rom_[offset] : 0xFFU;
+}
+
+bool Cartridge::IsFastRomCapable() const {
+  if (mapper_kind_ == MapperKind::kNone || rom_.empty()) {
+    return false;
+  }
+  const std::size_t offset =
+      (mapper_kind_ == MapperKind::kLoROM) ? kLoRomMapModeOffset : kHiRomMapModeOffset;
+  if (offset >= rom_.size()) {
+    return false;
+  }
+  // FastROM map-mode bytes: $30 (LoROM-fast), $31 (HiROM-fast). The high
+  // nibble's bit 4 is the FastROM flag; the low nibble is the mapper.
+  return (rom_[offset] & 0x10U) != 0U;
+}
 
 namespace {
 
