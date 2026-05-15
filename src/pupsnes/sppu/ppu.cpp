@@ -29,8 +29,22 @@ constexpr uint16_t OamByteSlot(uint16_t byte_addr) {
   return static_cast<uint16_t>(0x200U | (addr & 0x1FU));
 }
 
-constexpr std::array<uint8_t, 4> kTmMaskForBg = {sppu::regs::kTmBg1Mask, sppu::regs::kTmBg2Mask, sppu::regs::kTmBg3Mask,
-                                                 sppu::regs::kTmBg4Mask};
+constexpr std::array<uint8_t, sppu::regs::kBgCount> kTmMaskForBg = {
+    sppu::regs::kTmBg1Mask, sppu::regs::kTmBg2Mask, sppu::regs::kTmBg3Mask, sppu::regs::kTmBg4Mask};
+
+// 5-bit BGR555 channels.
+struct Bgr5 {
+  uint8_t r;
+  uint8_t g;
+  uint8_t b;
+};
+constexpr Bgr5 UnpackBgr555(uint16_t bgr) {
+  return {static_cast<uint8_t>(bgr & 0x1FU), static_cast<uint8_t>((bgr >> 5U) & 0x1FU),
+          static_cast<uint8_t>((bgr >> 10U) & 0x1FU)};
+}
+constexpr uint16_t PackBgr555(uint8_t r, uint8_t g, uint8_t b) {
+  return static_cast<uint16_t>(r | (static_cast<uint16_t>(g) << 5U) | (static_cast<uint16_t>(b) << 10U));
+}
 
 }  // namespace
 
@@ -136,8 +150,8 @@ void Ppu::Reset() {
   // the signal fires when the frame boundary arrives so OnFrameEndSignal can
   // chain the next frame's signal.
   if (snes_ != nullptr && snes_->scheduler != nullptr) {
-    const TimeMasterT frame_mcyc = 262U * sppu::regs::kNormalLineCycles - (field_ ? 4U : 0U);
-    snes_->scheduler->ScheduleSignal(frame_mcyc, SignalKind::kFrameEnd, [this](TimeMasterT t) { OnFrameEndSignal(t); });
+    snes_->scheduler->ScheduleSignal(NextFramePeriod(), SignalKind::kFrameEnd,
+                                     [this](TimeMasterT t) { OnFrameEndSignal(t); });
     // VBlank-NMI boundary: the CPU's NMI flip-flop is edge-triggered on the
     // /NMI line's falling edge, which lands when V transitions onto the
     // VBlank entry line (225 normally, 240 with SETINI overscan — SETINI
@@ -145,8 +159,8 @@ void Ppu::Reset() {
     // gives a sync fence: the CPU cannot run past the assertion cycle in a
     // single tick budget, which is the only way to guarantee it can't
     // "time-travel over" an NMI that real hardware would have delivered.
-    const uint32_t vblank_start = overscan_ ? sppu::regs::kVisibleVEnd239 : sppu::regs::kVisibleVEnd224;
-    const TimeMasterT nmi_boundary_mcyc = static_cast<TimeMasterT>(vblank_start) * sppu::regs::kNormalLineCycles;
+    const TimeMasterT nmi_boundary_mcyc =
+        static_cast<TimeMasterT>(VblankStartLine()) * sppu::regs::kNormalLineCycles;
     snes_->scheduler->ScheduleSignal(nmi_boundary_mcyc, SignalKind::kVblankNmiBoundary,
                                      [this](TimeMasterT t) { OnVblankNmiBoundarySignal(t); });
   }
@@ -210,8 +224,7 @@ bool Ppu::PeekNmiLine() const {
   // The PPU /NMI output pin asserts for the duration of the VBlank entry line
   // (V == 225 normally, V == 240 with SETINI overscan). It releases as V
   // advances past that line. See fullsnes §PPU NMI.
-  const uint32_t vblank_start = overscan_ ? sppu::regs::kVisibleVEnd239 : sppu::regs::kVisibleVEnd224;
-  return v_ == vblank_start;
+  return v_ == VblankStartLine();
 }
 
 void Ppu::OnVblankNmiBoundarySignal(TimeMasterT master_time) {
@@ -235,11 +248,8 @@ void Ppu::OnVblankNmiBoundarySignal(TimeMasterT master_time) {
   // CPU's lazy-pull line check still sees the real assertion whenever the
   // PPU is caught up past the new threshold, so correctness holds — only
   // the sync-granularity is coarser in that edge case.
-  TimeMasterT period = static_cast<TimeMasterT>(sppu::regs::kLinesPerFrameNtsc) * sppu::regs::kNormalLineCycles;
-  if (field_) period -= 4U;
-  const TimeMasterT next_boundary = master_time + period;
   if (snes_ != nullptr && snes_->scheduler != nullptr) {
-    snes_->scheduler->ScheduleSignal(next_boundary, SignalKind::kVblankNmiBoundary,
+    snes_->scheduler->ScheduleSignal(master_time + NextFramePeriod(), SignalKind::kVblankNmiBoundary,
                                      [this](TimeMasterT t) { OnVblankNmiBoundarySignal(t); });
   }
 }
@@ -250,8 +260,7 @@ PpuHvbStatus Ppu::QueryHvbStatus(TimeMasterT current_time) {
   // SETINI overscan live — fullsnes notes the bit can flip mid-frame; v1
   // scaffold follows the current overscan_ value rather than a per-frame
   // latch.
-  const uint32_t vblank_start = overscan_ ? sppu::regs::kVisibleVEnd239 : sppu::regs::kVisibleVEnd224;
-  const bool vblank = v_ >= vblank_start;
+  const bool vblank = v_ >= VblankStartLine();
   // HBlank canonical boundary: H>=274 (fullsnes). Narrower than the
   // "outside visible window" definition by 4 dots, matching how games that
   // poll HVBJOY bit 6 expect the edge to land.
@@ -263,8 +272,7 @@ void Ppu::OnFrameEndSignal(TimeMasterT master_time) {
   // MachineSync has already called our CatchUpTo(master_time), so the frame
   // boundary (h==0, v==0) has already triggered OnEndOfFrame + buffer swap.
   // Schedule the next frame's boundary signal.
-  const TimeMasterT next_frame_mcyc = master_time + 262U * sppu::regs::kNormalLineCycles - (field_ ? 4U : 0U);
-  snes_->scheduler->ScheduleSignal(next_frame_mcyc, SignalKind::kFrameEnd,
+  snes_->scheduler->ScheduleSignal(master_time + NextFramePeriod(), SignalKind::kFrameEnd,
                                    [this](TimeMasterT t) { OnFrameEndSignal(t); });
 }
 
@@ -305,18 +313,12 @@ MmioReadResult Ppu::ReadRegister(uint32_t offset, TimeMasterT current_time) {
     }
     case sppu::regs::kRdVramL: {
       const uint8_t value = static_cast<uint8_t>(vram_prefetch_ & 0xFFU);
-      if ((vmain_ & sppu::regs::kVmainIncrementOnHighMask) == 0U) {
-        PrefetchVram();
-        vmadd_ = static_cast<uint16_t>(vmadd_ + VmainIncrementStep());
-      }
+      MaybeAdvanceVramReadOnPort(/*is_high_port=*/false);
       return {value, 0xFFU};
     }
     case sppu::regs::kRdVramH: {
       const uint8_t value = static_cast<uint8_t>((vram_prefetch_ >> 8) & 0xFFU);
-      if ((vmain_ & sppu::regs::kVmainIncrementOnHighMask) != 0U) {
-        PrefetchVram();
-        vmadd_ = static_cast<uint16_t>(vmadd_ + VmainIncrementStep());
-      }
+      MaybeAdvanceVramReadOnPort(/*is_high_port=*/true);
       return {value, 0xFFU};
     }
     case sppu::regs::kRdCgram: {
@@ -332,25 +334,8 @@ MmioReadResult Ppu::ReadRegister(uint32_t offset, TimeMasterT current_time) {
       // driven by the PPU. The bus merges the floating bit from the latch.
       return {high_byte, 0x7FU};
     }
-    case sppu::regs::kOphct: {
-      // Per-register read-twice flipflop. 1st read returns bits 7:0 of the
-      // 9-bit latched H counter; 2nd read returns bit 8 (only bit 0 driven —
-      // bits 7:1 fall to open-bus per fullsnes).
-      if (!ophct_read_high_) {
-        ophct_read_high_ = true;
-        return {static_cast<uint8_t>(ophct_ & 0xFFU), 0xFFU};
-      }
-      ophct_read_high_ = false;
-      return {static_cast<uint8_t>((ophct_ >> 8) & 0x01U), sppu::regs::kOpctHighDrivenMask};
-    }
-    case sppu::regs::kOpvct: {
-      if (!opvct_read_high_) {
-        opvct_read_high_ = true;
-        return {static_cast<uint8_t>(opvct_ & 0xFFU), 0xFFU};
-      }
-      opvct_read_high_ = false;
-      return {static_cast<uint8_t>((opvct_ >> 8) & 0x01U), sppu::regs::kOpctHighDrivenMask};
-    }
+    case sppu::regs::kOphct: return ReadOpct(ophct_, ophct_read_high_);
+    case sppu::regs::kOpvct: return ReadOpct(opvct_, opvct_read_high_);
     case sppu::regs::kStat77: {
       // Bits 3:0 = PPU1 version (1), bits 6:4 open-bus, bit 7 time-over
       // (stubbed 0). Only the driven bits set mask=1.
@@ -466,8 +451,7 @@ void Ppu::AdvanceHv() {
     // wrap so a subsequent VBlank can re-arm. Real hardware fires a pulse
     // from the NMI line at this boundary; we only need the latch until CPU
     // interrupt delivery lands.
-    const uint32_t vblank_start = overscan_ ? sppu::regs::kVisibleVEnd239 : sppu::regs::kVisibleVEnd224;
-    if (v_ == vblank_start) {
+    if (v_ == VblankStartLine()) {
       vblank_nmi_flag_ = true;
     } else if (v_ == 0) {
       vblank_nmi_flag_ = false;
@@ -602,9 +586,7 @@ uint16_t Ppu::ApplyColorMath(uint16_t main_bgr, uint8_t main_layer, bool main_ob
   // Build the sub-screen contribution. With CGWSEL.1 set the TS layer ladder
   // is resolved; if nothing renders there, the sub-screen pixel falls back to
   // the COLDATA fixed colour. CGWSEL.1 clear short-circuits to fixed.
-  const uint16_t coldata_fixed = static_cast<uint16_t>(coldata_r_ | (static_cast<uint16_t>(coldata_g_) << 5U) |
-                                                       (static_cast<uint16_t>(coldata_b_) << 10U));
-  uint16_t sub_bgr = coldata_fixed;
+  uint16_t sub_bgr = PackBgr555(coldata_r_, coldata_g_, coldata_b_);
   if ((cgwsel_ & sppu::regs::kCgwselSubScreenEnableMask) != 0U) {
     const ResolvedPixel sub = ResolveScreenPixel(sub_screen_layers_, screen_x, screen_y, obj_px);
     if (sub.layer_id != 5U) {
@@ -614,17 +596,13 @@ uint16_t Ppu::ApplyColorMath(uint16_t main_bgr, uint8_t main_layer, bool main_ob
 
   // Split BGR555 into per-channel intensities, apply add or subtract with
   // saturation, then optionally halve the final per channel.
-  const uint8_t m_r = static_cast<uint8_t>(main_bgr & 0x1FU);
-  const uint8_t m_g = static_cast<uint8_t>((main_bgr >> 5U) & 0x1FU);
-  const uint8_t m_b = static_cast<uint8_t>((main_bgr >> 10U) & 0x1FU);
-  const uint8_t s_r = static_cast<uint8_t>(sub_bgr & 0x1FU);
-  const uint8_t s_g = static_cast<uint8_t>((sub_bgr >> 5U) & 0x1FU);
-  const uint8_t s_b = static_cast<uint8_t>((sub_bgr >> 10U) & 0x1FU);
+  const Bgr5 m = UnpackBgr555(main_bgr);
+  const Bgr5 s = UnpackBgr555(sub_bgr);
 
   const bool subtract = (cgadsub_ & sppu::regs::kCgadsubSubtractMask) != 0U;
-  uint8_t r = subtract ? SatSub5(m_r, s_r) : SatAdd5(m_r, s_r);
-  uint8_t g = subtract ? SatSub5(m_g, s_g) : SatAdd5(m_g, s_g);
-  uint8_t b = subtract ? SatSub5(m_b, s_b) : SatAdd5(m_b, s_b);
+  uint8_t r = subtract ? SatSub5(m.r, s.r) : SatAdd5(m.r, s.r);
+  uint8_t g = subtract ? SatSub5(m.g, s.g) : SatAdd5(m.g, s.g);
+  uint8_t b = subtract ? SatSub5(m.b, s.b) : SatAdd5(m.b, s.b);
 
   if ((cgadsub_ & sppu::regs::kCgadsubHalfMask) != 0U) {
     // Per-channel right shift. fullsnes also documents a "skip halve when the
@@ -634,7 +612,7 @@ uint16_t Ppu::ApplyColorMath(uint16_t main_bgr, uint8_t main_layer, bool main_ob
     g >>= 1U;
     b >>= 1U;
   }
-  return static_cast<uint16_t>(r | (g << 5U) | (b << 10U));
+  return PackBgr555(r, g, b);
 }
 
 void Ppu::EmitPixel(uint32_t h, uint32_t v) {
@@ -807,58 +785,21 @@ void Ppu::ReplayWrite(uint16_t offset, uint8_t data) {
       break;
     }
 
-    case sppu::regs::kBg12Nba:
-      // Low nibble = BG1, high nibble = BG2. Each nibble × 0x1000 word steps.
-      bg_char_word_base_[0] = static_cast<uint16_t>(static_cast<uint16_t>(data & 0x0FU) << 12);
-      bg_char_word_base_[1] = static_cast<uint16_t>(static_cast<uint16_t>((data >> 4) & 0x0FU) << 12);
-      bg_row_dirty_[0] = true;
-      bg_row_dirty_[1] = true;
-      break;
-    case sppu::regs::kBg34Nba:
-      bg_char_word_base_[2] = static_cast<uint16_t>(static_cast<uint16_t>(data & 0x0FU) << 12);
-      bg_char_word_base_[3] = static_cast<uint16_t>(static_cast<uint16_t>((data >> 4) & 0x0FU) << 12);
-      bg_row_dirty_[2] = true;
-      bg_row_dirty_[3] = true;
-      break;
+    case sppu::regs::kBg12Nba: WriteBgCharBase(0U, data); break;
+    case sppu::regs::kBg34Nba: WriteBgCharBase(2U, data); break;
 
     case sppu::regs::kBg1Hofs:
     case sppu::regs::kBg2Hofs:
     case sppu::regs::kBg3Hofs:
-    case sppu::regs::kBg4Hofs: {
-      // BG_old shared latch + this BG's old high byte for low 3 bits. Per
-      // fullsnes: BGnHOFS = (Curr<<8) | (Prev & ~7) | ((Reg_old>>8) & 7).
-      // Store the full 16-bit shift-in unmasked: the feedback term reads
-      // the previous register's high byte (bits 15..8), which carries the
-      // previous "Curr" verbatim. Masking to 10 bits at storage would drop
-      // bit 10 (== Curr bit 2) and clear bit 2 of every smooth scroll step,
-      // producing visible 4-pixel backward/forward jitter. Rendering and
-      // the public accessor mask down to 10 bits at use.
-      const std::size_t bg = static_cast<std::size_t>((offset - sppu::regs::kBg1Hofs) >> 1U);
-      const uint16_t old_value = bg_hofs_[bg];
-      const uint16_t high = static_cast<uint16_t>(static_cast<uint16_t>(data) << 8);
-      const uint16_t mid = static_cast<uint16_t>(bg_scroll_prev_ & 0xF8U);  // Prev & ~7
-      const uint16_t low = static_cast<uint16_t>((old_value >> 8) & 0x07U);
-      bg_hofs_[bg] = static_cast<uint16_t>(high | mid | low);
-      bg_scroll_prev_ = data;
+    case sppu::regs::kBg4Hofs:
+      WriteBgScroll(static_cast<uint8_t>((offset - sppu::regs::kBg1Hofs) >> 1U), data, /*is_hofs=*/true);
       break;
-    }
     case sppu::regs::kBg1Vofs:
     case sppu::regs::kBg2Vofs:
     case sppu::regs::kBg3Vofs:
-    case sppu::regs::kBg4Vofs: {
-      // V scroll: (Curr<<8) | Prev. No old-register feedback term.
-      const std::size_t bg = static_cast<std::size_t>((offset - sppu::regs::kBg1Vofs) >> 1U);
-      const uint16_t high = static_cast<uint16_t>(static_cast<uint16_t>(data) << 8);
-      const uint16_t low = static_cast<uint16_t>(bg_scroll_prev_);
-      bg_vofs_[bg] = static_cast<uint16_t>((high | low) & sppu::regs::kBgScrollMask);
-      bg_scroll_prev_ = data;
-      // V scroll changes pixel_in_y → cached plane bytes are stale. H scroll
-      // intentionally does NOT dirty the cache: the (eff_x >> 3) cache key
-      // naturally re-keys when scroll crosses an 8-pixel boundary, and within
-      // a column hflip + bit-shift still produce the right pixel.
-      bg_row_dirty_[bg] = true;
+    case sppu::regs::kBg4Vofs:
+      WriteBgScroll(static_cast<uint8_t>((offset - sppu::regs::kBg1Vofs) >> 1U), data, /*is_hofs=*/false);
       break;
-    }
 
     case sppu::regs::kTm: main_screen_layers_ = data; break;
     case sppu::regs::kTs: sub_screen_layers_ = data; break;
@@ -886,30 +827,20 @@ void Ppu::ReplayWrite(uint16_t offset, uint8_t data) {
 uint16_t Ppu::TranslateVramAddress(uint16_t raw) const {
   // VMAIN bits 3:2 choose one of four address rotations (fullsnes "F" field):
   //   00: no translation
-  //   01: 8×8  2bpp — rotate low 8 bits: aaaaaaaa YYYxxxxx -> aaaaaaaa xxxxxYYY
-  //   10: 8×8  4bpp — rotate low 9 bits: aaaaaaa YYYxxxxxx -> aaaaaaa xxxxxxYYY
-  //   11: 8×8  8bpp — rotate low 10 bits: aaaaaa YYYxxxxxxx -> aaaaaa xxxxxxxYYY
+  //   01: rotate low 8 bits:  aaaaaaaa YYYxxxxx  ->  aaaaaaaa xxxxxYYY
+  //   10: rotate low 9 bits:  aaaaaaa YYYxxxxxx  ->  aaaaaaa xxxxxxYYY
+  //   11: rotate low 10 bits: aaaaaa YYYxxxxxxx  ->  aaaaaa xxxxxxxYYY
+  // Each rotation moves the top 3 bits of an n-bit field (YYY) to the bottom.
   const uint8_t mode =
       static_cast<uint8_t>((vmain_ & sppu::regs::kVmainTranslateMask) >> sppu::regs::kVmainTranslateShift);
-  switch (mode) {
-    case 0: return raw;
-    case 1: {
-      const uint16_t high = static_cast<uint16_t>(raw & 0xFF00U);
-      const uint16_t rotated = static_cast<uint16_t>(((raw & 0x00E0U) >> 5) | ((raw & 0x001FU) << 3));
-      return static_cast<uint16_t>(high | rotated);
-    }
-    case 2: {
-      const uint16_t high = static_cast<uint16_t>(raw & 0xFE00U);
-      const uint16_t rotated = static_cast<uint16_t>(((raw & 0x01C0U) >> 6) | ((raw & 0x003FU) << 3));
-      return static_cast<uint16_t>(high | rotated);
-    }
-    case 3: {
-      const uint16_t high = static_cast<uint16_t>(raw & 0xFC00U);
-      const uint16_t rotated = static_cast<uint16_t>(((raw & 0x0380U) >> 7) | ((raw & 0x007FU) << 3));
-      return static_cast<uint16_t>(high | rotated);
-    }
-    default: return raw;
-  }
+  if (mode == 0U) return raw;
+  static constexpr std::array<uint8_t, 4> kRotateWidth = {0U, 8U, 9U, 10U};
+  const uint8_t n = kRotateWidth[mode];
+  const uint8_t shift = static_cast<uint8_t>(n - 3U);
+  const uint16_t high = static_cast<uint16_t>(raw & static_cast<uint16_t>(~((1U << n) - 1U)));
+  const uint16_t yyy = static_cast<uint16_t>((raw >> shift) & 0x07U);
+  const uint16_t xxx = static_cast<uint16_t>(raw & ((1U << shift) - 1U));
+  return static_cast<uint16_t>(high | (xxx << 3U) | yyy);
 }
 
 uint16_t Ppu::VmainIncrementStep() const {
@@ -931,6 +862,62 @@ void Ppu::MaybeIncrementVmaddOnPort(bool is_high_port) {
   }
 }
 
+void Ppu::MaybeAdvanceVramReadOnPort(bool is_high_port) {
+  // RDVRAML/H reload the prefetch latch from the *current* vmadd_ and then
+  // advance vmadd_ — same gating as the write-side increment.
+  const bool increment_on_high = (vmain_ & sppu::regs::kVmainIncrementOnHighMask) != 0U;
+  if (is_high_port == increment_on_high) {
+    PrefetchVram();
+    vmadd_ = static_cast<uint16_t>(vmadd_ + VmainIncrementStep());
+  }
+}
+
+MmioReadResult Ppu::ReadOpct(uint16_t counter, bool& read_high) {
+  // Per-register read-twice flipflop. 1st read returns bits 7:0 of the 9-bit
+  // latched counter; 2nd read returns bit 8 (only bit 0 driven — bits 7:1 fall
+  // to open-bus per fullsnes).
+  if (!read_high) {
+    read_high = true;
+    return {static_cast<uint8_t>(counter & 0xFFU), 0xFFU};
+  }
+  read_high = false;
+  return {static_cast<uint8_t>((counter >> 8) & 0x01U), sppu::regs::kOpctHighDrivenMask};
+}
+
+void Ppu::WriteBgCharBase(uint8_t bg_pair_base, uint8_t data) {
+  // Low nibble = first BG, high nibble = second BG. Each nibble × 0x1000 word
+  // steps. Used for both BG12NBA (bg_pair_base=0) and BG34NBA (bg_pair_base=2).
+  bg_char_word_base_[bg_pair_base + 0U] = static_cast<uint16_t>(static_cast<uint16_t>(data & 0x0FU) << 12);
+  bg_char_word_base_[bg_pair_base + 1U] = static_cast<uint16_t>(static_cast<uint16_t>((data >> 4) & 0x0FU) << 12);
+  bg_row_dirty_[bg_pair_base + 0U] = true;
+  bg_row_dirty_[bg_pair_base + 1U] = true;
+}
+
+void Ppu::WriteBgScroll(uint8_t bg, uint8_t data, bool is_hofs) {
+  // Shared latch update. Per fullsnes:
+  //   BGnHOFS = (Curr<<8) | (Prev & ~7) | ((Reg_old>>8) & 7)
+  //   BGnVOFS = (Curr<<8) | Prev
+  // HOFS: store the full 16-bit shift-in unmasked — the feedback term reads
+  // the previous register's high byte (bits 15..8), which carries the prior
+  // "Curr" verbatim. Masking to 10 bits at storage would drop bit 10 (== Curr
+  // bit 2) and clear bit 2 of every smooth scroll step, producing visible
+  // 4-pixel jitter. Render path masks with kBgScrollMask.
+  // VOFS: no feedback term; mask to 10 bits at storage.
+  // V scroll changes pixel_in_y → dirty the cache. H scroll intentionally
+  // doesn't: the (eff_x >> 3) cache key re-keys naturally at column crossings.
+  const uint16_t high = static_cast<uint16_t>(static_cast<uint16_t>(data) << 8);
+  if (is_hofs) {
+    const uint16_t mid = static_cast<uint16_t>(bg_scroll_prev_ & 0xF8U);
+    const uint16_t low = static_cast<uint16_t>((bg_hofs_[bg] >> 8) & 0x07U);
+    bg_hofs_[bg] = static_cast<uint16_t>(high | mid | low);
+  } else {
+    const uint16_t low = static_cast<uint16_t>(bg_scroll_prev_);
+    bg_vofs_[bg] = static_cast<uint16_t>((high | low) & sppu::regs::kBgScrollMask);
+    bg_row_dirty_[bg] = true;
+  }
+  bg_scroll_prev_ = data;
+}
+
 void Ppu::WriteOamByte(uint16_t byte_addr, uint8_t data) { (*oam_)[OamByteSlot(byte_addr)] = data; }
 
 uint8_t Ppu::ReadOamByte(uint16_t byte_addr) const { return (*oam_)[OamByteSlot(byte_addr)]; }
@@ -946,7 +933,7 @@ uint16_t Ppu::ReadVramWord(uint16_t word_addr) const {
 }
 
 Ppu::BgPixel Ppu::FetchBgPixel(uint8_t bg, uint8_t bpp, uint32_t screen_x, uint32_t screen_y) const {
-  if (bg >= 4U) {
+  if (bg >= sppu::regs::kBgCount) {
     return {0U, true, false};
   }
   const bool bg_is_2bpp = (bpp == 2U);
@@ -1019,15 +1006,14 @@ Ppu::BgPixel Ppu::FetchBgPixel(uint8_t bg, uint8_t bpp, uint32_t screen_x, uint3
     const uint32_t tile_byte_addr =
         char_byte_base + (static_cast<uint32_t>(char_index) * bytes_per_char) + (pixel_in_y * 2U);
 
-    auto vram_byte = [&](uint32_t addr) { return (*vram_)[addr & 0xFFFFU]; };
-    cache.plane0 = vram_byte(tile_byte_addr + 0U);
-    cache.plane1 = vram_byte(tile_byte_addr + 1U);
+    cache.plane0 = GetVramByte(tile_byte_addr + 0U);
+    cache.plane1 = GetVramByte(tile_byte_addr + 1U);
     if (bg_is_2bpp) {
       cache.plane2 = 0;
       cache.plane3 = 0;
     } else {
-      cache.plane2 = vram_byte(tile_byte_addr + 16U);
-      cache.plane3 = vram_byte(tile_byte_addr + 17U);
+      cache.plane2 = GetVramByte(tile_byte_addr + 16U);
+      cache.plane3 = GetVramByte(tile_byte_addr + 17U);
     }
     cache.palette_group = palette_group;
     cache.priority = priority;
@@ -1167,13 +1153,11 @@ Ppu::ObjPixel Ppu::FetchObjPixel(uint32_t screen_x, uint32_t screen_y) const {
     const uint32_t tile_byte_addr =
         (static_cast<uint32_t>(region_word_base) << 1U) + (static_cast<uint32_t>(tile_in_region) * 32U) + (in_y * 2U);
 
-    auto vram_byte = [&](uint32_t addr) { return (*vram_)[addr & 0xFFFFU]; };
-
     const uint8_t shift = static_cast<uint8_t>(7U - in_x);
-    const uint8_t p0 = (vram_byte(tile_byte_addr + 0U) >> shift) & 1U;
-    const uint8_t p1 = (vram_byte(tile_byte_addr + 1U) >> shift) & 1U;
-    const uint8_t p2 = (vram_byte(tile_byte_addr + 16U) >> shift) & 1U;
-    const uint8_t p3 = (vram_byte(tile_byte_addr + 17U) >> shift) & 1U;
+    const uint8_t p0 = (GetVramByte(tile_byte_addr + 0U) >> shift) & 1U;
+    const uint8_t p1 = (GetVramByte(tile_byte_addr + 1U) >> shift) & 1U;
+    const uint8_t p2 = (GetVramByte(tile_byte_addr + 16U) >> shift) & 1U;
+    const uint8_t p3 = (GetVramByte(tile_byte_addr + 17U) >> shift) & 1U;
     const uint8_t color_index = static_cast<uint8_t>(p0 | (p1 << 1U) | (p2 << 2U) | (p3 << 3U));
     if (color_index == 0U) {
       continue;

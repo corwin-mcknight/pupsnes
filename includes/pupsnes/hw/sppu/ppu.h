@@ -109,11 +109,10 @@ class Ppu : public Device {
   // dimensions (256 × 224/239 today; wider when interlace/hires land later).
   [[nodiscard]] FrameBufferView BuildFrontView() const;
 
-  // Drawn-mask accessors — one bit per framebuffer pixel, set when CatchUpTo
+  // Drawn-mask accessor — one bit per framebuffer pixel, set when CatchUpTo
   // emits that pixel. Consumers (tests, PPU panel overlay) read this to know
   // which pixels in the back buffer are valid for the current in-progress frame.
   [[nodiscard]] const uint8_t* GetDrawnMask() const { return drawn_mask_->data(); }
-  [[nodiscard]] std::size_t GetDrawnMaskByteSize() const { return drawn_mask_->size(); }
 
   // Debugger / test accessors.
   [[nodiscard]] uint8_t GetShadow(uint16_t reg) const {
@@ -125,9 +124,11 @@ class Ppu : public Device {
   // bg_hofs_ stores the raw 16-bit shift-in (see BG_old feedback term in
   // ReplayWrite). Mask to the 10-bit effective offset used by rendering.
   [[nodiscard]] uint16_t GetBgHofs(uint8_t bg) const {
-    return bg < 4U ? static_cast<uint16_t>(bg_hofs_[bg] & sppu::regs::kBgScrollMask) : uint16_t{0};
+    return bg < sppu::regs::kBgCount ? static_cast<uint16_t>(bg_hofs_[bg] & sppu::regs::kBgScrollMask) : uint16_t{0};
   }
-  [[nodiscard]] uint16_t GetBgVofs(uint8_t bg) const { return bg < 4U ? bg_vofs_[bg] : uint16_t{0}; }
+  [[nodiscard]] uint16_t GetBgVofs(uint8_t bg) const {
+    return bg < sppu::regs::kBgCount ? bg_vofs_[bg] : uint16_t{0};
+  }
   [[nodiscard]] uint32_t GetPendingWriteCount() const { return pending_writes_count_ - pending_writes_cursor_; }
   void SetForceOverscanDraw(bool v) { force_overscan_draw_ = v; }
   [[nodiscard]] bool GetForceOverscanDraw() const { return force_overscan_draw_; }
@@ -148,12 +149,18 @@ class Ppu : public Device {
   [[nodiscard]] uint8_t GetColdataB() const { return coldata_b_; }
   [[nodiscard]] uint8_t GetBgMode() const { return bg_mode_; }
   [[nodiscard]] bool GetBg3Priority() const { return bg3_priority_; }
-  [[nodiscard]] bool GetBgTile16x16(uint8_t bg) const { return bg < 4U ? bg_tile_16x16_[bg] : false; }
-  [[nodiscard]] uint8_t GetBgTilemapLayout(uint8_t bg) const { return bg < 4U ? bg_tilemap_layout_[bg] : uint8_t{0}; }
-  [[nodiscard]] uint16_t GetBgTilemapWordBase(uint8_t bg) const {
-    return bg < 4U ? bg_tilemap_word_base_[bg] : uint16_t{0};
+  [[nodiscard]] bool GetBgTile16x16(uint8_t bg) const {
+    return bg < sppu::regs::kBgCount ? bg_tile_16x16_[bg] : false;
   }
-  [[nodiscard]] uint16_t GetBgCharWordBase(uint8_t bg) const { return bg < 4U ? bg_char_word_base_[bg] : uint16_t{0}; }
+  [[nodiscard]] uint8_t GetBgTilemapLayout(uint8_t bg) const {
+    return bg < sppu::regs::kBgCount ? bg_tilemap_layout_[bg] : uint8_t{0};
+  }
+  [[nodiscard]] uint16_t GetBgTilemapWordBase(uint8_t bg) const {
+    return bg < sppu::regs::kBgCount ? bg_tilemap_word_base_[bg] : uint16_t{0};
+  }
+  [[nodiscard]] uint16_t GetBgCharWordBase(uint8_t bg) const {
+    return bg < sppu::regs::kBgCount ? bg_char_word_base_[bg] : uint16_t{0};
+  }
   [[nodiscard]] uint8_t GetObjSizeSelect() const { return obj_size_select_; }
   [[nodiscard]] uint16_t GetObjRegion0Word() const { return obj_region0_word_; }
   [[nodiscard]] uint16_t GetObjRegion1Word() const { return obj_region1_word_; }
@@ -230,6 +237,21 @@ class Ppu : public Device {
   }
 
  private:
+  // First V where VBlank is asserted — tracks SETINI overscan live.
+  [[nodiscard]] uint32_t VblankStartLine() const {
+    return overscan_ ? sppu::regs::kVisibleVEnd239 : sppu::regs::kVisibleVEnd224;
+  }
+
+  // Frame length in master cycles, accounting for the short-line saving at
+  // V=240 on field=1 NTSC frames.
+  [[nodiscard]] TimeMasterT NextFramePeriod() const {
+    return static_cast<TimeMasterT>(sppu::regs::kLinesPerFrameNtsc) * sppu::regs::kNormalLineCycles -
+           (field_ ? 4U : 0U);
+  }
+
+  // 64K-wrapped VRAM byte read; shared by FetchBgPixel and FetchObjPixel.
+  [[nodiscard]] uint8_t GetVramByte(uint32_t addr) const { return (*vram_)[addr & 0xFFFFU]; }
+
   // Append a same-clock MMIO write to the pending log. Returns true on
   // success, false when the log is full (caller triggers an internal flush via
   // Tick in that case).
@@ -278,6 +300,17 @@ class Ppu : public Device {
   [[nodiscard]] uint16_t VmainIncrementStep() const;
   void PrefetchVram();
   void MaybeIncrementVmaddOnPort(bool is_high_port);
+  // RDVRAML/H side: same gate as MaybeIncrementVmaddOnPort, but the read port
+  // first refreshes the prefetch latch with the word at the *current* vmadd_,
+  // then advances vmadd_.
+  void MaybeAdvanceVramReadOnPort(bool is_high_port);
+
+  // Decoded BGxHOFS / BGxVOFS write through the shared "BG_old" latch.
+  void WriteBgScroll(uint8_t bg, uint8_t data, bool is_hofs);
+  // Decoded BG12NBA / BG34NBA character-base nibble pair (low → bg+0, high → bg+1).
+  void WriteBgCharBase(uint8_t bg_pair_base, uint8_t data);
+  // Read-twice flipflop body shared by OPHCT and OPVCT.
+  [[nodiscard]] MmioReadResult ReadOpct(uint16_t counter, bool& read_high);
 
   // OAM helpers. Handles the byte-address wrap for the 32-byte high table
   // mirroring above $220; writes and reads all go through these.
@@ -381,15 +414,15 @@ class Ppu : public Device {
   // BG1=0..BG4=3; only BG1..BG3 participate in Mode 1.
   uint8_t bg_mode_ = 0;
   bool bg3_priority_ = false;
-  std::array<bool, 4> bg_tile_16x16_{};
-  std::array<uint16_t, 4> bg_tilemap_word_base_{};
-  std::array<uint8_t, 4> bg_tilemap_layout_{};  // 0=32x32, 1=64x32, 2=32x64, 3=64x64
-  std::array<uint16_t, 4> bg_char_word_base_{};
+  std::array<bool, sppu::regs::kBgCount> bg_tile_16x16_{};
+  std::array<uint16_t, sppu::regs::kBgCount> bg_tilemap_word_base_{};
+  std::array<uint8_t, sppu::regs::kBgCount> bg_tilemap_layout_{};  // 0=32x32, 1=64x32, 2=32x64, 3=64x64
+  std::array<uint16_t, sppu::regs::kBgCount> bg_char_word_base_{};
   // bg_hofs_ holds the raw 16-bit shift-in: the high byte preserves the
   // previous "Curr" so the next write's `(Reg_old>>8) & 7` feedback term
   // recovers all 3 of its low bits. Render path masks with kBgScrollMask.
-  std::array<uint16_t, 4> bg_hofs_{};
-  std::array<uint16_t, 4> bg_vofs_{};  // 10-bit (no feedback term, masked at write)
+  std::array<uint16_t, sppu::regs::kBgCount> bg_hofs_{};
+  std::array<uint16_t, sppu::regs::kBgCount> bg_vofs_{};  // 10-bit (no feedback term, masked at write)
   // Shared "BG_old" latch byte. Per fullsnes: BGxHOFS = (Curr<<8) | (Prev&~7) |
   // ((BGxHOFS_old>>8)&7); BGxVOFS = (Curr<<8) | Prev. Prev = Curr after either.
   uint8_t bg_scroll_prev_ = 0;
@@ -490,8 +523,8 @@ class Ppu : public Device {
   // same 8-pixel column; bg_row_dirty_ flags register writes that change the
   // underlying bytes (VRAM, scroll, BGnSC/NBA, BGMODE) and force the next
   // fetch to refresh. Mutable for the same reason as the OAM cache.
-  mutable std::array<BgRowCache, 4> bg_row_cache_{};
-  mutable std::array<bool, 4> bg_row_dirty_{};
+  mutable std::array<BgRowCache, sppu::regs::kBgCount> bg_row_cache_{};
+  mutable std::array<bool, sppu::regs::kBgCount> bg_row_dirty_{};
 
   // --- Backing storage ---
   // Heap-allocated via unique_ptr<array> to keep the parent SNES object small

@@ -227,6 +227,9 @@ inline constexpr uint8_t kStat78FieldMask = 0x80;      // bit 7
 inline constexpr uint8_t kStat78PalMask = 0x10;        // bit 4 (0=NTSC, 1=PAL)
 inline constexpr uint8_t kStat78LatchFlagMask = 0x40;  // bit 6 — H/V latched
 
+// Number of background layers (BG1..BG4).
+inline constexpr uint8_t kBgCount = 4;
+
 // Backing-store sizes.
 inline constexpr std::size_t kVramSize = 64 * 1024;  // 64 KiB, word-addressed as 32K × 16
 inline constexpr std::size_t kOamSize = 544;         // 512 B primary + 32 B high table
