@@ -4,7 +4,7 @@
 #include "imgui.h"
 #include "panel_utils.h"
 #include "panels.h"
-#include "pupsnes/hw/joypad.h"
+#include "pupsnes/hw/input/joypad.h"
 
 namespace pupsnes::debugger {
 

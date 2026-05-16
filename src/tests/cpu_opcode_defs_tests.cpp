@@ -5,7 +5,7 @@
 #include <string_view>
 
 #include "cpu_spec_oracle.h"
-#include "pupsnes/5a22/cpu_opcode_defs_internal.h"
+#include "pupsnes/hw/5a22/cpu_opcode_defs_internal.h"
 
 using namespace pupsnes;                        // NOLINT(google-build-using-namespace)
 using namespace pupsnes::opcode_defs_internal;  // NOLINT(google-build-using-namespace)

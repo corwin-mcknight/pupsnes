@@ -4,8 +4,8 @@
 #include <unordered_set>
 #include <vector>
 
-#include "pupsnes/hw/debugger_contract.h"
-#include "pupsnes/types.h"
+#include "pupsnes/core/debugger_contract.h"
+#include "pupsnes/core/types.h"
 
 namespace pupsnes::debugger {
 

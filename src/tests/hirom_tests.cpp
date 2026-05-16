@@ -11,10 +11,10 @@
 #include <vector>
 
 #include "pupsnes/hw/5a22/cpu_mmio.h"
-#include "pupsnes/hw/cartridge.h"
-#include "pupsnes/hw/snes.h"
-#include "pupsnes/hw/systembus.h"
-#include "pupsnes/rom_format.h"
+#include "pupsnes/hw/rom/cartridge.h"
+#include "pupsnes/core/snes.h"
+#include "pupsnes/memory/systembus.h"
+#include "pupsnes/hw/rom/rom_format.h"
 #include "systembus_test_access.h"
 
 using namespace pupsnes;  // NOLINT(google-build-using-namespace)

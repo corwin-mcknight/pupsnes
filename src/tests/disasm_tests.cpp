@@ -3,8 +3,8 @@
 
 #include "pupsnes/debugger/disasm.h"
 #include "pupsnes/hw/5a22/opcode_metadata.h"
-#include "pupsnes/hw/cartridge.h"
-#include "pupsnes/hw/snes.h"
+#include "pupsnes/hw/rom/cartridge.h"
+#include "pupsnes/core/snes.h"
 
 using namespace pupsnes;            // NOLINT(google-build-using-namespace)
 using namespace pupsnes::debugger;  // NOLINT(google-build-using-namespace)

@@ -3,9 +3,9 @@
 #include <cstddef>
 #include <cstdint>
 
-#include "pupsnes/hw/scheduler.h"
-#include "pupsnes/hw/signal_event.h"
-#include "pupsnes/hw/token.h"
+#include "pupsnes/core/scheduler.h"
+#include "pupsnes/core/signal_event.h"
+#include "pupsnes/core/token.h"
 
 namespace pupsnes {
 

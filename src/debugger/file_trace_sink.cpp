@@ -6,7 +6,7 @@
 #include <utility>
 
 #include "pupsnes/debugger/disasm.h"
-#include "pupsnes/hw/snes.h"
+#include "pupsnes/core/snes.h"
 
 namespace pupsnes::debugger {
 

@@ -1,9 +1,9 @@
 #include <catch2/catch_test_macros.hpp>
 #include <cstdint>
 
-#include "pupsnes/hw/joypad.h"
-#include "pupsnes/hw/snes.h"
-#include "pupsnes/hw/systembus.h"
+#include "pupsnes/hw/input/joypad.h"
+#include "pupsnes/core/snes.h"
+#include "pupsnes/memory/systembus.h"
 
 using namespace pupsnes;  // NOLINT(google-build-using-namespace)
 

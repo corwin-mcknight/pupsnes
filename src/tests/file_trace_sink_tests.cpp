@@ -10,8 +10,8 @@
 #include <vector>
 
 #include "pupsnes/debugger/file_trace_sink.h"
-#include "pupsnes/hw/cartridge.h"
-#include "pupsnes/hw/snes.h"
+#include "pupsnes/hw/rom/cartridge.h"
+#include "pupsnes/core/snes.h"
 
 using pupsnes::TraceEntry;
 using pupsnes::debugger::FileTraceSink;

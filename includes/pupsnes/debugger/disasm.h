@@ -6,7 +6,7 @@
 #include <string>
 
 #include "pupsnes/hw/5a22/opcode_metadata.h"
-#include "pupsnes/hw/snes.h"
+#include "pupsnes/core/snes.h"
 
 namespace pupsnes::debugger {
 

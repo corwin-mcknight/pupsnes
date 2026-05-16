@@ -1,7 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
-#include "pupsnes/hw/apu_stub.h"
-#include "pupsnes/hw/snes.h"
+#include "pupsnes/hw/apu/apu_stub.h"
+#include "pupsnes/core/snes.h"
 
 using pupsnes::ApuStub;
 using pupsnes::SNES;

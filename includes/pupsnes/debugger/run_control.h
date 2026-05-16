@@ -7,9 +7,9 @@
 #include "pupsnes/debugger/breakpoints.h"
 #include "pupsnes/debugger/error_log.h"
 #include "pupsnes/debugger/trace.h"
-#include "pupsnes/hw/debugger_contract.h"
-#include "pupsnes/hw/device.h"
-#include "pupsnes/hw/snes.h"
+#include "pupsnes/core/debugger_contract.h"
+#include "pupsnes/core/device.h"
+#include "pupsnes/core/snes.h"
 
 namespace pupsnes::debugger {
 

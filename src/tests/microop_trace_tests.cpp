@@ -129,8 +129,8 @@ TEST_CASE("MicroOpTrace clear resets state", "[microop]") {
 #include <span>
 #include <vector>
 
-#include "pupsnes/hw/cartridge.h"
-#include "pupsnes/hw/snes.h"
+#include "pupsnes/hw/rom/cartridge.h"
+#include "pupsnes/core/snes.h"
 
 namespace pupsnes {
 namespace {

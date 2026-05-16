@@ -25,11 +25,11 @@
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
 #include "pupsnes/hw/5a22/cpu.h"
-#include "pupsnes/hw/cartridge.h"
-#include "pupsnes/hw/joypad.h"
-#include "pupsnes/hw/scheduler.h"
+#include "pupsnes/hw/rom/cartridge.h"
+#include "pupsnes/hw/input/joypad.h"
+#include "pupsnes/core/scheduler.h"
 #include "pupsnes/hw/sppu/ppu.h"
-#include "pupsnes/rom_format.h"
+#include "pupsnes/hw/rom/rom_format.h"
 
 namespace pupsnes::emulator {
 

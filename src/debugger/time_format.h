@@ -3,7 +3,7 @@
 #include <cstdint>
 #include <string>
 
-#include "pupsnes/types.h"
+#include "pupsnes/core/types.h"
 
 namespace pupsnes::debugger {
 

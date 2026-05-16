@@ -3,7 +3,7 @@
 #include <exception>
 
 #include "pupsnes/hw/5a22/cpu.h"
-#include "pupsnes/hw/scheduler.h"
+#include "pupsnes/core/scheduler.h"
 
 namespace pupsnes::debugger {
 

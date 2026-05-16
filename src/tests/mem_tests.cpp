@@ -1,6 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
-#include "pupsnes/mem.h"
+#include "pupsnes/memory/mem.h"
 
 TEST_CASE("WrapAddr masks to 24 bits", "[unit]") {
   using pupsnes::SnesAddrT;

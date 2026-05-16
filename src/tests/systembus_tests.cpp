@@ -1,12 +1,12 @@
 #include <array>
 #include <catch2/catch_test_macros.hpp>
 
-#include "pupsnes/hw/cartridge.h"
-#include "pupsnes/hw/device.h"
-#include "pupsnes/hw/scheduler.h"
-#include "pupsnes/hw/snes.h"
-#include "pupsnes/hw/systembus.h"
-#include "pupsnes/hw/wram.h"
+#include "pupsnes/hw/rom/cartridge.h"
+#include "pupsnes/core/device.h"
+#include "pupsnes/core/scheduler.h"
+#include "pupsnes/core/snes.h"
+#include "pupsnes/memory/systembus.h"
+#include "pupsnes/memory/wram.h"
 #include "systembus_test_access.h"
 
 using namespace pupsnes;  // NOLINT(google-build-using-namespace)

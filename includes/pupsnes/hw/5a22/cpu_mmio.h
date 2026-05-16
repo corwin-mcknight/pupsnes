@@ -3,7 +3,7 @@
 #include <cstdint>
 #include <optional>
 
-#include "pupsnes/hw/device.h"
+#include "pupsnes/core/device.h"
 
 namespace pupsnes {
 

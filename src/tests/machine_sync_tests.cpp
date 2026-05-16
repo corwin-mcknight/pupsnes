@@ -1,9 +1,9 @@
 #include <catch2/catch_test_macros.hpp>
 
-#include "pupsnes/hw/device.h"
-#include "pupsnes/hw/scheduler.h"
-#include "pupsnes/hw/signal_event.h"
-#include "pupsnes/hw/snes.h"
+#include "pupsnes/core/device.h"
+#include "pupsnes/core/scheduler.h"
+#include "pupsnes/core/signal_event.h"
+#include "pupsnes/core/snes.h"
 #include "pupsnes/hw/sppu/ppu.h"
 
 using namespace pupsnes;

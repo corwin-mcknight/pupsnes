@@ -7,7 +7,7 @@
 #include <vector>
 
 #include "pupsnes/hw/5a22/cpu.h"
-#include "pupsnes/hw/systembus.h"
+#include "pupsnes/memory/systembus.h"
 
 namespace pupsnes::debugger {
 

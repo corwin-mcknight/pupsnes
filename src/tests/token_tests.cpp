@@ -1,6 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
-#include "pupsnes/hw/token.h"
+#include "pupsnes/core/token.h"
 
 TEST_CASE("TokenTable creates tokens with sequential IDs", "[unit]") {
   pupsnes::TokenTable table;

@@ -4,9 +4,9 @@
 #include <utility>
 #include <vector>
 
-#include "pupsnes/hw/scheduler.h"
-#include "pupsnes/hw/signal_event.h"
-#include "pupsnes/hw/snes.h"
+#include "pupsnes/core/scheduler.h"
+#include "pupsnes/core/signal_event.h"
+#include "pupsnes/core/snes.h"
 
 using namespace pupsnes;
 

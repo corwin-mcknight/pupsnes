@@ -6,9 +6,9 @@
 #include <initializer_list>
 
 #include "pupsnes/hw/5a22/cpu.h"
-#include "pupsnes/hw/cartridge.h"
-#include "pupsnes/hw/snes.h"
-#include "pupsnes/hw/wram.h"
+#include "pupsnes/hw/rom/cartridge.h"
+#include "pupsnes/core/snes.h"
+#include "pupsnes/memory/wram.h"
 
 namespace pupsnes::test {
 

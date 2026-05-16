@@ -2,11 +2,11 @@
 #include <cstdint>
 #include <cstring>
 
-#include "pupsnes/hw/scheduler.h"
-#include "pupsnes/hw/snes.h"
+#include "pupsnes/core/scheduler.h"
+#include "pupsnes/core/snes.h"
 #include "pupsnes/hw/sppu/ppu.h"
 #include "pupsnes/hw/sppu/ppu_regs.h"
-#include "pupsnes/hw/systembus.h"
+#include "pupsnes/memory/systembus.h"
 
 // PPU register / port behavior tests. Every test goes through the SystemBus
 // so it exercises the real lazy-replay path: writes enqueue without catch-up,
@@ -2158,7 +2158,7 @@ TEST_CASE("CGADSUB layer mask gates math per-layer", "[unit][ppu]") {
 #include <iterator>
 
 #include "pupsnes/hw/5a22/cpu.h"
-#include "pupsnes/rom_format.h"
+#include "pupsnes/hw/rom/rom_format.h"
 
 namespace {
 std::vector<uint8_t> ReadRomFile(const std::filesystem::path& p) {

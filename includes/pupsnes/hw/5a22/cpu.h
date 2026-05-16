@@ -4,10 +4,10 @@
 #include <optional>
 
 #include "pupsnes/hw/5a22/cpu_regs.h"
-#include "pupsnes/hw/debugger_contract.h"
-#include "pupsnes/hw/master_clock_driver.h"
-#include "pupsnes/hw/systembus.h"
-#include "pupsnes/types.h"
+#include "pupsnes/core/debugger_contract.h"
+#include "pupsnes/core/master_clock_driver.h"
+#include "pupsnes/memory/systembus.h"
+#include "pupsnes/core/types.h"
 
 namespace pupsnes {
 
@@ -117,7 +117,7 @@ enum class HaltState : uint8_t {
 };
 
 // Forward declaration only — the InstructionEntry layout lives in
-// src/pupsnes/5a22/cpu_internal.h. CPU::current_instr_ holds a pointer to
+// src/pupsnes/hw/5a22/cpu_internal.h. CPU::current_instr_ holds a pointer to
 // entries in the opcode table defined alongside cpu.cpp; no caller of cpu.h
 // needs the complete type.
 struct InstructionEntry;

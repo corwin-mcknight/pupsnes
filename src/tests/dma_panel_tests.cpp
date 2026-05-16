@@ -1,9 +1,9 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "pupsnes/hw/5a22/cpu_mmio.h"
-#include "pupsnes/hw/dma_controller.h"
-#include "pupsnes/hw/snes.h"
-#include "pupsnes/hw/systembus.h"
+#include "pupsnes/hw/5a22/dma_controller.h"
+#include "pupsnes/core/snes.h"
+#include "pupsnes/memory/systembus.h"
 
 using namespace pupsnes;  // NOLINT
 

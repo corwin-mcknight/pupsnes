@@ -24,10 +24,10 @@
 #include "panels/panels.h"
 #include "pupsnes/debugger/file_trace_sink.h"
 #include "pupsnes/debugger/sha1.h"
-#include "pupsnes/hw/cartridge.h"
-#include "pupsnes/hw/joypad.h"
+#include "pupsnes/hw/rom/cartridge.h"
+#include "pupsnes/hw/input/joypad.h"
 #include "pupsnes/hw/sppu/ppu.h"
-#include "pupsnes/rom_format.h"
+#include "pupsnes/hw/rom/rom_format.h"
 
 namespace pupsnes::debugger {
 

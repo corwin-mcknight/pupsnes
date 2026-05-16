@@ -2,7 +2,7 @@
 
 #include "debugger/ui_utils.h"
 #include "imgui.h"
-#include "pupsnes/types.h"
+#include "pupsnes/core/types.h"
 
 namespace pupsnes::debugger {
 

@@ -1,7 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "pupsnes/debugger/fan_out_trace_sink.h"
-#include "pupsnes/hw/debugger_contract.h"
+#include "pupsnes/core/debugger_contract.h"
 
 using pupsnes::TraceEntry;
 using pupsnes::TraceSink;

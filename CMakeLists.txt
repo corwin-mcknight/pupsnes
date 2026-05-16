@@ -3,22 +3,22 @@ cmake_minimum_required(VERSION 3.24)
 project(pupsnes LANGUAGES CXX)
 
 set(PUPSNES_LIB_SOURCES
-  src/pupsnes/5a22/cpu.cpp
-  src/pupsnes/5a22/cpu_mmio.cpp
-  src/pupsnes/5a22/cpu_opcodes.cpp
-  src/pupsnes/5a22/micro_op_strings.cpp
-  src/pupsnes/apu_stub.cpp
-  src/pupsnes/cartridge.cpp
-  src/pupsnes/dma_controller.cpp
-  src/pupsnes/joypad.cpp
-  src/pupsnes/scheduler.cpp
-  src/pupsnes/sdsp/accurate_sdsp.cpp
-  src/pupsnes/sdsp/simple_sdsp.cpp
-  src/pupsnes/snes.cpp
-  src/pupsnes/sppu/ppu.cpp
-  src/pupsnes/token.cpp
-  src/pupsnes/systembus.cpp
-  src/pupsnes/wram.cpp
+  src/pupsnes/core/scheduler.cpp
+  src/pupsnes/core/snes.cpp
+  src/pupsnes/core/token.cpp
+  src/pupsnes/memory/systembus.cpp
+  src/pupsnes/memory/wram.cpp
+  src/pupsnes/hw/5a22/cpu.cpp
+  src/pupsnes/hw/5a22/cpu_mmio.cpp
+  src/pupsnes/hw/5a22/cpu_opcodes.cpp
+  src/pupsnes/hw/5a22/dma_controller.cpp
+  src/pupsnes/hw/5a22/micro_op_strings.cpp
+  src/pupsnes/hw/apu/accurate_sdsp.cpp
+  src/pupsnes/hw/apu/apu_stub.cpp
+  src/pupsnes/hw/apu/simple_sdsp.cpp
+  src/pupsnes/hw/input/joypad.cpp
+  src/pupsnes/hw/rom/cartridge.cpp
+  src/pupsnes/hw/sppu/ppu.cpp
 )
 
 set(PUPSNES_DEBUGGER_CORE_SOURCES

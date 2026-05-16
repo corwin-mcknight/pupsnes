@@ -9,7 +9,7 @@
 #include "panel_utils.h"
 #include "panels.h"
 #include "pupsnes/hw/5a22/cpu_mmio.h"
-#include "pupsnes/hw/dma_controller.h"
+#include "pupsnes/hw/5a22/dma_controller.h"
 
 namespace pupsnes::debugger {
 

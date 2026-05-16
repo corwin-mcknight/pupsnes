@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-#include "pupsnes/types.h"
+#include "pupsnes/core/types.h"
 
 namespace pupsnes {
 

@@ -8,10 +8,10 @@
 #include "imgui.h"
 #include "panel_utils.h"
 #include "panels.h"
-#include "pupsnes/hw/cartridge.h"
-#include "pupsnes/hw/device.h"
-#include "pupsnes/hw/sdsp/sdsp.h"
-#include "pupsnes/hw/snes.h"
+#include "pupsnes/hw/rom/cartridge.h"
+#include "pupsnes/core/device.h"
+#include "pupsnes/hw/apu/sdsp.h"
+#include "pupsnes/core/snes.h"
 
 namespace pupsnes::debugger {
 

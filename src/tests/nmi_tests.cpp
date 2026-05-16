@@ -26,12 +26,12 @@
 #include "cpu_test_fixture.h"
 #include "pupsnes/hw/5a22/cpu.h"
 #include "pupsnes/hw/5a22/cpu_mmio.h"
-#include "pupsnes/hw/cartridge.h"
-#include "pupsnes/hw/scheduler.h"
-#include "pupsnes/hw/snes.h"
+#include "pupsnes/hw/rom/cartridge.h"
+#include "pupsnes/core/scheduler.h"
+#include "pupsnes/core/snes.h"
 #include "pupsnes/hw/sppu/ppu.h"
 #include "pupsnes/hw/sppu/ppu_regs.h"
-#include "pupsnes/hw/systembus.h"
+#include "pupsnes/memory/systembus.h"
 
 using namespace pupsnes;  // NOLINT(google-build-using-namespace)
 using pupsnes::test::ResetFixture;

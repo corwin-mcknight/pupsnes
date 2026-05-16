@@ -15,11 +15,11 @@
 #include <vector>
 
 #include "pupsnes/hw/5a22/cpu.h"
-#include "pupsnes/hw/cartridge.h"
-#include "pupsnes/hw/scheduler.h"
-#include "pupsnes/hw/snes.h"
+#include "pupsnes/hw/rom/cartridge.h"
+#include "pupsnes/core/scheduler.h"
+#include "pupsnes/core/snes.h"
 #include "pupsnes/hw/sppu/ppu.h"
-#include "pupsnes/rom_format.h"
+#include "pupsnes/hw/rom/rom_format.h"
 #include "pupsnes/tools/trace_runner.h"  // for kMasterCyclesPerFrame
 
 namespace {

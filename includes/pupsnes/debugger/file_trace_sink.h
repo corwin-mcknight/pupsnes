@@ -7,7 +7,7 @@
 #include <string>
 
 #include "pupsnes/debugger/sha1.h"
-#include "pupsnes/hw/debugger_contract.h"
+#include "pupsnes/core/debugger_contract.h"
 
 namespace pupsnes {
 class SNES;

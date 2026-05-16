@@ -5,8 +5,8 @@
 #include "imgui.h"
 #include "panel_utils.h"
 #include "panels.h"
-#include "pupsnes/hw/scheduler.h"
-#include "pupsnes/hw/signal_event.h"
+#include "pupsnes/core/scheduler.h"
+#include "pupsnes/core/signal_event.h"
 
 namespace pupsnes::debugger {
 

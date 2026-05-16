@@ -6,8 +6,8 @@
 #include <string>
 #include <vector>
 
-#include "pupsnes/hw/snes.h"
-#include "pupsnes/types.h"
+#include "pupsnes/core/snes.h"
+#include "pupsnes/core/types.h"
 
 struct GLFWwindow;
 

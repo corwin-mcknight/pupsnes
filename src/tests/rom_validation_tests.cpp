@@ -12,9 +12,9 @@
 #include <cstdint>
 #include <vector>
 
-#include "pupsnes/hw/cartridge.h"
-#include "pupsnes/hw/snes.h"
-#include "pupsnes/rom_format.h"
+#include "pupsnes/hw/rom/cartridge.h"
+#include "pupsnes/core/snes.h"
+#include "pupsnes/hw/rom/rom_format.h"
 
 using namespace pupsnes;  // NOLINT(google-build-using-namespace)
 using Catch::Matchers::ContainsSubstring;

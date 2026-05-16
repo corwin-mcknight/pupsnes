@@ -3,7 +3,7 @@
 #include <cstddef>
 #include <vector>
 
-#include "pupsnes/hw/debugger_contract.h"
+#include "pupsnes/core/debugger_contract.h"
 
 namespace pupsnes::debugger {
 

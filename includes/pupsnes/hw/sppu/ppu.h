@@ -5,7 +5,7 @@
 #include <cstdint>
 #include <memory>
 
-#include "pupsnes/hw/device.h"
+#include "pupsnes/core/device.h"
 #include "pupsnes/hw/sppu/ppu_regs.h"
 
 namespace pupsnes {

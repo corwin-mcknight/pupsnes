@@ -4,10 +4,10 @@
 #include <span>
 #include <vector>
 
-#include "pupsnes/hw/cartridge.h"
-#include "pupsnes/hw/snes.h"
-#include "pupsnes/hw/systembus.h"
-#include "pupsnes/rom_format.h"
+#include "pupsnes/hw/rom/cartridge.h"
+#include "pupsnes/core/snes.h"
+#include "pupsnes/memory/systembus.h"
+#include "pupsnes/hw/rom/rom_format.h"
 
 using pupsnes::BusAccessType;
 using pupsnes::Cartridge;

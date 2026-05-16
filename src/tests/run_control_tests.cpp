@@ -7,9 +7,9 @@
 #include "pupsnes/debugger/fan_out_trace_sink.h"
 #include "pupsnes/debugger/run_control.h"
 #include "pupsnes/debugger/trace.h"
-#include "pupsnes/hw/cartridge.h"
-#include "pupsnes/hw/scheduler.h"
-#include "pupsnes/hw/snes.h"
+#include "pupsnes/hw/rom/cartridge.h"
+#include "pupsnes/core/scheduler.h"
+#include "pupsnes/core/snes.h"
 #include "pupsnes/hw/sppu/ppu_regs.h"
 
 using namespace pupsnes;            // NOLINT(google-build-using-namespace)

@@ -21,7 +21,7 @@ struct GLFWwindow;
 #include "pupsnes/debugger/run_control.h"
 #include "pupsnes/debugger/sha1.h"
 #include "pupsnes/debugger/trace.h"
-#include "pupsnes/hw/snes.h"
+#include "pupsnes/core/snes.h"
 #include "time_format.h"
 
 namespace pupsnes::debugger {

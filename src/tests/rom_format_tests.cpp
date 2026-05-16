@@ -2,7 +2,7 @@
 #include <cstdint>
 #include <vector>
 
-#include "pupsnes/rom_format.h"
+#include "pupsnes/hw/rom/rom_format.h"
 
 using pupsnes::HasSmcCopierHeader;
 using pupsnes::kLoRomBankSize;

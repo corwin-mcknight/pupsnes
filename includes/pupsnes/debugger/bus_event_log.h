@@ -4,7 +4,7 @@
 #include <vector>
 
 #include "pupsnes/debugger/ring_buffer.h"
-#include "pupsnes/hw/bus_event.h"
+#include "pupsnes/core/bus_event.h"
 
 namespace pupsnes::debugger {
 

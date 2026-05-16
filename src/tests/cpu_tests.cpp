@@ -5,11 +5,11 @@
 
 #include "cpu_test_fixture.h"
 #include "pupsnes/hw/5a22/cpu.h"
-#include "pupsnes/hw/cartridge.h"
-#include "pupsnes/hw/device.h"
-#include "pupsnes/hw/snes.h"
-#include "pupsnes/hw/systembus.h"
-#include "pupsnes/hw/wram.h"
+#include "pupsnes/hw/rom/cartridge.h"
+#include "pupsnes/core/device.h"
+#include "pupsnes/core/snes.h"
+#include "pupsnes/memory/systembus.h"
+#include "pupsnes/memory/wram.h"
 
 using namespace pupsnes;  // NOLINT(google-build-using-namespace)
 

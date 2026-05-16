@@ -5,7 +5,7 @@
 #include "imgui_internal.h"
 #include "panels.h"
 #include "pupsnes/hw/5a22/cpu_mmio.h"
-#include "pupsnes/hw/cartridge.h"
+#include "pupsnes/hw/rom/cartridge.h"
 
 namespace pupsnes::debugger {
 
