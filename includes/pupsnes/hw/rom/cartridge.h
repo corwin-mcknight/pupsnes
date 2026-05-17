@@ -7,18 +7,16 @@
 #include <string>
 #include <vector>
 
+#include <memory>
+
 #include "pupsnes/core/device.h"
+#include "pupsnes/hw/rom/cart_profile.h"
 #include "pupsnes/hw/rom/rom_format.h"
 
 namespace pupsnes {
 
+class Mapper;
 class SystemBus;
-
-enum class MapperKind : uint8_t {
-  kNone = 0,
-  kLoROM = 1,
-  kHiROM = 2,
-};
 
 class Cartridge : public Device {
  public:
@@ -34,7 +32,7 @@ class Cartridge : public Device {
   static constexpr uint32_t kSramOffsetTag = 0x80000000U;
 
   explicit Cartridge(SNES* snes);
-  ~Cartridge() override = default;
+  ~Cartridge() override;
 
   [[nodiscard]] const char* DeviceName() const override { return "Cartridge"; }
 
@@ -63,6 +61,12 @@ class Cartridge : public Device {
   // Same as LoadLoRom for HiROM images.
   RomLoadResult LoadHiRom(std::span<const uint8_t> rom_data);
   void MapHiRom(SystemBus& bus);
+
+  // ExHiROM (Tales of Phantasia, Dai Kaiju Monogatari 2). Header at
+  // $40FFB0; banks $00-$7D see the smaller half of ROM, banks $80-$FF see
+  // the bigger 4 MiB half.
+  RomLoadResult LoadExHiRom(std::span<const uint8_t> rom_data);
+  void MapExHiRom(SystemBus& bus);
 
   // Re-map the active mapper's fast-bank range with the access speed selected
   // by `fast`. 6 master cycles when MEMSEL bit 0 is set, 8 otherwise. No-op
@@ -99,16 +103,23 @@ class Cartridge : public Device {
   [[nodiscard]] bool SramDirty() const { return sram_dirty_; }
   void ClearSramDirty() { sram_dirty_ = false; }
 
+  // Mapper-facing accessors. The Mapper strategy object reads ROM bytes to
+  // wire page-table fast_read_ptr windows, and reads/writes SRAM bytes
+  // through the slow path so dirty tracking stays accurate. These spans are
+  // safe to hold across MapInitial / OnMemSelChanged because Cartridge
+  // never resizes its buffers after construction.
+  [[nodiscard]] std::span<const uint8_t> RomView() const { return rom_; }
+  [[nodiscard]] uint8_t* SramData() { return sram_.empty() ? nullptr : sram_.data(); }
+
  private:
   std::vector<uint8_t> rom_;
   std::vector<uint8_t> sram_;
+  std::unique_ptr<Mapper> mapper_;
   bool sram_dirty_ = false;
   bool lorom_mapped_ = false;
   bool hirom_mapped_ = false;
+  bool exhirom_mapped_ = false;
   MapperKind mapper_kind_ = MapperKind::kNone;
-
-  void MapLoRomSram(SystemBus& bus);
-  void MapHiRomSram(SystemBus& bus);
 };
 
 }  // namespace pupsnes

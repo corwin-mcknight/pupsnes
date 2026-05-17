@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "pupsnes/hw/apu/sdsp.h"
+#include "pupsnes/hw/rom/cart_registry.h"
 #include "pupsnes/hw/rom/rom_format.h"
 #include "pupsnes/core/types.h"
 
@@ -59,12 +60,23 @@ class SNES {
   // failure the previous cartridge state is left untouched and the result's
   // `message` explains specifically what was wrong (empty, copier header
   // present, mapper mismatch, etc.).
-  RomLoadResult LoadLoRom(std::span<const uint8_t> rom_data);
-  RomLoadResult LoadHiRom(std::span<const uint8_t> rom_data);
-  // Auto-detect the mapper from the header and load. Returns the same
-  // result type; `detected_kind` names which path was taken when ok=true,
-  // and on failure `message` describes why no mapper claimed the ROM.
-  RomLoadResult LoadRom(std::span<const uint8_t> rom_data);
+  // Auto-detect the cart profile from the ROM header and dispatch through
+  // the registry. The returned BuildResult carries the new Cartridge (when
+  // ok=true) which has already been installed on this SNES; the unique_ptr
+  // remains live in BuildResult only so the caller can inspect the cart
+  // alongside the message and profile fields.
+  BuildResult LoadRom(std::span<const uint8_t> rom_data);
+
+  // Same as LoadRom but skips detection and uses the caller-supplied profile.
+  // Used for homebrew with broken headers ("force LoROM despite the bogus
+  // map mode byte"), debug tooling, and tests that want to exercise a
+  // specific (mapper, coproc) builder.
+  BuildResult LoadRomWithProfile(const CartProfile& profile, std::span<const uint8_t> rom_data);
+
+  // Access to the registry for tests and host code that want to register a
+  // custom builder (e.g. a homebrew mapper not present in fullsnes).
+  [[nodiscard]] CartridgeRegistry& Registry() { return registry_; }
+  [[nodiscard]] const CartridgeRegistry& Registry() const { return registry_; }
   void Reset();
 
   [[nodiscard]] TimeMasterT GetMasterTime() const { return time_now_; }
@@ -105,8 +117,16 @@ class SNES {
   }
 
   DeviceIdT RegisterDevice(Device* device);
+  // Null the slot at `id` and clear any page-table entries that point at
+  // this DeviceId. Monotonic: slots are never reused, so future Devices get
+  // fresh IDs even after deregistration. No-op when destroying_ is true
+  // (SNES destruction is destroying member Devices in cascade; the
+  // SystemBus is already gone or about to be, and we don't want to scrub
+  // page-table state that will die anyway).
+  void DeregisterDevice(DeviceIdT id);
   [[nodiscard]] Device* GetDevice(DeviceIdT id) const;
   [[nodiscard]] std::size_t GetDeviceCount() const { return devices_.size(); }
+  [[nodiscard]] bool IsDestroying() const { return destroying_; }
 
   // S-DSP backend selection. The "pending" value is what the debugger UI /
   // config has chosen; the "live" value is what the active APU is running.
@@ -118,7 +138,9 @@ class SNES {
   void SetSdspModePending(SdspMode mode) { sdsp_mode_pending_ = mode; }
 
  private:
+  CartridgeRegistry registry_;
   SdspMode sdsp_mode_pending_ = SdspMode::kSimple;
   SdspMode sdsp_mode_live_ = SdspMode::kSimple;
+  bool destroying_ = false;
 };
 }  // namespace pupsnes

@@ -58,7 +58,7 @@ struct DeterminismFixture {
   }
 
   void ResetMachine() {
-    snes.LoadLoRom(rom);
+    snes.LoadRom(rom);
     snes.Reset();
   }
 };

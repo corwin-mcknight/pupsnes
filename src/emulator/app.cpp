@@ -142,7 +142,7 @@ bool EmulatorApp::LoadRomFromPath(const std::string& path) {
   FlushSramToDisk();
 
   try {
-    const RomLoadResult load_result = snes_.LoadRom(rom);
+    const BuildResult load_result = snes_.LoadRom(rom);
     if (!load_result.ok) {
       ui_state_.load_rom_error = path + ": " + load_result.message;
       return false;

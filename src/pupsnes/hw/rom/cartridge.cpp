@@ -5,8 +5,9 @@
 #include <format>
 #include <string>
 
-#include "pupsnes/memory/systembus.h"
+#include "pupsnes/hw/rom/mapper.h"
 #include "pupsnes/hw/rom/rom_format.h"
+#include "pupsnes/memory/systembus.h"
 
 namespace pupsnes {
 
@@ -19,8 +20,10 @@ namespace {
 constexpr std::size_t kTitleLength = 21U;
 constexpr std::size_t kLoRomTitleOffset = 0x7FC0U;
 constexpr std::size_t kHiRomTitleOffset = 0xFFC0U;
+constexpr std::size_t kExHiRomTitleOffset = 0x40FFC0U;
 constexpr std::size_t kLoRomCountryOffset = 0x7FD9U;
 constexpr std::size_t kHiRomCountryOffset = 0xFFD9U;
+constexpr std::size_t kExHiRomCountryOffset = 0x40FFD9U;
 
 }  // namespace
 
@@ -29,6 +32,7 @@ std::string Cartridge::GetInternalTitle() const {
   switch (mapper_kind_) {
     case MapperKind::kLoROM: offset = kLoRomTitleOffset; break;
     case MapperKind::kHiROM: offset = kHiRomTitleOffset; break;
+    case MapperKind::kExHiROM: offset = kExHiRomTitleOffset; break;
     case MapperKind::kNone: return {};
   }
   if (rom_.size() < offset + kTitleLength) {
@@ -48,6 +52,7 @@ uint8_t Cartridge::GetCountryCode() const {
   switch (mapper_kind_) {
     case MapperKind::kLoROM: offset = kLoRomCountryOffset; break;
     case MapperKind::kHiROM: offset = kHiRomCountryOffset; break;
+    case MapperKind::kExHiROM: offset = kExHiRomCountryOffset; break;
     case MapperKind::kNone: return 0xFFU;
   }
   return offset < rom_.size() ? rom_[offset] : 0xFFU;
@@ -152,82 +157,10 @@ namespace {
                      csum ? "ok" : "bad");
 }
 
-void MapLoRomBankRange(SystemBus& bus, DeviceIdT device_id, uint8_t bank, const uint8_t* rom_data, std::size_t rom_size,
-                       uint8_t access_speed) {
-  const uint32_t bank_offset = static_cast<uint32_t>(bank & 0x7FU) * static_cast<uint32_t>(Cartridge::kLoROMWindowSize);
-
-  for (uint16_t page = 0x80; page <= 0xFF; ++page) {
-    const uint32_t page_offset = static_cast<uint32_t>(page - 0x80U) * 0x100U;
-    const uint32_t absolute_offset = bank_offset + page_offset;
-
-    // Only enable the fast-pointer path when the whole 256-byte window lands
-    // inside the ROM. Short ROMs rely on the modulo-wrap in ReadRegister, which
-    // can't be expressed as a contiguous pointer window.
-    const uint8_t* fast_ptr = nullptr;
-    if (rom_data != nullptr && absolute_offset + 0x100U <= rom_size) {
-      fast_ptr = rom_data + absolute_offset;
-    }
-
-    bus.MapPage({bank, static_cast<uint8_t>(page), device_id, absolute_offset, PageDeviceKind::kMemory, access_speed,
-                 fast_ptr, nullptr});
-  }
-}
-
-// Map SRAM into pages $00-$7F of a single LoROM SRAM bank. Each 256-byte page
-// resolves to (page_offset % sram_size) inside the SRAM buffer, which gives
-// every cartridge mirror Super Metroid relies on for its piracy check (the
-// $702000 / $700000 alias) for free. Writes go through the slow path
-// (fast_write_ptr = nullptr) so WriteRegister can update the dirty flag.
-void MapLoRomSramBank(SystemBus& bus, DeviceIdT device_id, uint8_t bank, uint8_t* sram_data, std::size_t sram_size) {
-  for (uint16_t page = 0x00; page <= 0x7F; ++page) {
-    const uint32_t page_offset = static_cast<uint32_t>(page) * 0x100U;
-    const uint32_t sram_offset = page_offset % static_cast<uint32_t>(sram_size);
-    bus.MapPage({bank, static_cast<uint8_t>(page), device_id, Cartridge::kSramOffsetTag | sram_offset,
-                 PageDeviceKind::kMemory, 8, sram_data + sram_offset, nullptr});
-  }
-}
-
-// Map a contiguous page run [first_page, last_page] of a HiROM bank into the
-// 64 KiB-strided ROM byte layout. bank_index_mask selects which 6 low bank
-// bits feed into the 64 KiB stride; both the $00-$3F / $80-$BF half-bank
-// space and the $40-$7D / $C0-$FF full-bank space share the same `(bank &
-// 0x3F) << 16 | (page << 8)` mapping, so the FASTROM mirrors land on the
-// same ROM bytes as the slow banks.
-void MapHiRomBankPages(SystemBus& bus, DeviceIdT device_id, uint8_t bank, uint8_t first_page, uint8_t last_page,
-                       const uint8_t* rom_data, std::size_t rom_size, uint8_t access_speed) {
-  const uint32_t bank_offset = static_cast<uint32_t>(bank & 0x3FU) * static_cast<uint32_t>(Cartridge::kHiROMBankSize);
-
-  for (uint16_t page = first_page; page <= last_page; ++page) {
-    const uint32_t page_offset = static_cast<uint32_t>(page) * 0x100U;
-    const uint32_t absolute_offset = bank_offset + page_offset;
-
-    // Fast pointer only when the whole 256-byte window fits the ROM. Short
-    // ROMs fall back to the slow path's modulo wrap (see ReadRegister).
-    const uint8_t* fast_ptr = nullptr;
-    if (rom_data != nullptr && absolute_offset + 0x100U <= rom_size) {
-      fast_ptr = rom_data + absolute_offset;
-    }
-
-    bus.MapPage({bank, static_cast<uint8_t>(page), device_id, absolute_offset, PageDeviceKind::kMemory, access_speed,
-                 fast_ptr, nullptr});
-  }
-}
-
-// Map SRAM into pages $60-$7F (CPU $6000-$7FFF) of a HiROM SRAM bank. The
-// HiROM SRAM window is 8 KiB per bank; smaller SRAMs mirror inside that
-// window via (page_offset % sram_size), matching real hardware decoding.
-void MapHiRomSramBank(SystemBus& bus, DeviceIdT device_id, uint8_t bank, uint8_t* sram_data, std::size_t sram_size) {
-  for (uint16_t page = 0x60; page <= 0x7F; ++page) {
-    const uint32_t window_offset = static_cast<uint32_t>(page - 0x60U) * 0x100U;
-    const uint32_t sram_offset = window_offset % static_cast<uint32_t>(sram_size);
-    bus.MapPage({bank, static_cast<uint8_t>(page), device_id, Cartridge::kSramOffsetTag | sram_offset,
-                 PageDeviceKind::kMemory, 8, sram_data + sram_offset, nullptr});
-  }
-}
-
 }  // namespace
 
 Cartridge::Cartridge(SNES* snes) : Device(snes) {}
+Cartridge::~Cartridge() = default;
 
 RomLoadResult Cartridge::LoadLoRom(std::span<const uint8_t> rom_data) {
   RomLoadResult result{};
@@ -254,45 +187,10 @@ RomLoadResult Cartridge::LoadLoRom(std::span<const uint8_t> rom_data) {
 }
 
 void Cartridge::MapLoRom(SystemBus& bus) {
-  const uint8_t* const rom_data = rom_.empty() ? nullptr : rom_.data();
-  const std::size_t rom_size = rom_.size();
-
-  // Slow banks $00-$7D always tick at 8 master cycles per access. FASTROM only
-  // affects the upper bank range.
-  for (uint16_t bank = 0x00; bank <= 0x7D; ++bank) {
-    MapLoRomBankRange(bus, GetDeviceId(), static_cast<uint8_t>(bank), rom_data, rom_size, 8);
-  }
-
-  // Fast-bank range ($80-$FF) starts in slow mode; MEMSEL will remap to 6
-  // master cycles once the ROM's init code sets $420D bit 0.
-  for (uint16_t bank = 0x80; bank <= 0xFF; ++bank) {
-    MapLoRomBankRange(bus, GetDeviceId(), static_cast<uint8_t>(bank), rom_data, rom_size, 8);
-  }
-
-  MapLoRomSram(bus);
-
+  mapper_ = std::make_unique<LoRomMapper>(*this, bus);
+  mapper_->MapInitial();
   lorom_mapped_ = true;
   mapper_kind_ = MapperKind::kLoROM;
-}
-
-void Cartridge::MapLoRomSram(SystemBus& bus) {
-  if (sram_.empty()) {
-    return;
-  }
-
-  uint8_t* const sram_data = sram_.data();
-  const std::size_t sram_size = sram_.size();
-
-  // LoROM SRAM lives in pages $00-$7F of banks $70-$7D (banks $7E-$7F are
-  // WRAM-only) and the same pages of the FASTROM-mirror banks $F0-$FF. Real
-  // carts wire SRAM through both half-spaces; Super Metroid happens to use
-  // bank $70 explicitly, but games that touch $F0+ rely on the upper mirror.
-  for (uint16_t bank = 0x70; bank <= 0x7D; ++bank) {
-    MapLoRomSramBank(bus, GetDeviceId(), static_cast<uint8_t>(bank), sram_data, sram_size);
-  }
-  for (uint16_t bank = 0xF0; bank <= 0xFF; ++bank) {
-    MapLoRomSramBank(bus, GetDeviceId(), static_cast<uint8_t>(bank), sram_data, sram_size);
-  }
 }
 
 RomLoadResult Cartridge::LoadHiRom(std::span<const uint8_t> rom_data) {
@@ -320,81 +218,72 @@ RomLoadResult Cartridge::LoadHiRom(std::span<const uint8_t> rom_data) {
 }
 
 void Cartridge::MapHiRom(SystemBus& bus) {
-  const uint8_t* const rom_data = rom_.empty() ? nullptr : rom_.data();
-  const std::size_t rom_size = rom_.size();
-
-  // Half-bank ROM at $00-$3F & $80-$BF lives in pages $80-$FF. Pages $00-$7F
-  // are the LowRAM mirror / B-bus / CPU MMIO / (optionally) SRAM, all owned
-  // by other devices that have already mapped those page-table slots in
-  // SNES::SNES(). Skipping them here preserves those mappings.
-  for (uint16_t bank = 0x00; bank <= 0x3F; ++bank) {
-    MapHiRomBankPages(bus, GetDeviceId(), static_cast<uint8_t>(bank), 0x80U, 0xFFU, rom_data, rom_size, 8);
-  }
-  for (uint16_t bank = 0x80; bank <= 0xBF; ++bank) {
-    // Fast-bank half lives here; starts in slow mode and MEMSEL bit 0 will
-    // flip the pages we just wrote to 6 master cycles.
-    MapHiRomBankPages(bus, GetDeviceId(), static_cast<uint8_t>(bank), 0x80U, 0xFFU, rom_data, rom_size, 8);
-  }
-
-  // Full-bank ROM at $40-$7D & $C0-$FF — pages $00-$FF land on contiguous
-  // 64 KiB ROM windows. Banks $7E-$7F are WRAM only, so the slow-bank loop
-  // stops at $7D; the FASTROM mirror $C0-$FF has no WRAM hole.
-  for (uint16_t bank = 0x40; bank <= 0x7D; ++bank) {
-    MapHiRomBankPages(bus, GetDeviceId(), static_cast<uint8_t>(bank), 0x00U, 0xFFU, rom_data, rom_size, 8);
-  }
-  for (uint16_t bank = 0xC0; bank <= 0xFF; ++bank) {
-    MapHiRomBankPages(bus, GetDeviceId(), static_cast<uint8_t>(bank), 0x00U, 0xFFU, rom_data, rom_size, 8);
-  }
-
-  MapHiRomSram(bus);
-
+  mapper_ = std::make_unique<HiRomMapper>(*this, bus);
+  mapper_->MapInitial();
   hirom_mapped_ = true;
   mapper_kind_ = MapperKind::kHiROM;
 }
 
-void Cartridge::MapHiRomSram(SystemBus& bus) {
-  if (sram_.empty()) {
-    return;
+RomLoadResult Cartridge::LoadExHiRom(std::span<const uint8_t> rom_data) {
+  // ExHiROM header lives at file offset $40FFB0; the cart must be at least
+  // 4 MiB + a few hundred bytes for the header to fit. Accept anything large
+  // enough to host the header offset; the mapper handles smaller-half
+  // mirroring for sizes below 8 MiB.
+  RomLoadResult result{};
+  constexpr std::size_t kExHiRomMapModeOffset = 0x40FFD5U;
+  if (rom_data.empty()) {
+    result.ok = false;
+    result.detected_kind = MapperKind::kNone;
+    result.message = "ROM is empty (0 bytes)";
+    return result;
+  }
+  if (HasSmcCopierHeader(rom_data.size())) {
+    result.ok = false;
+    result.detected_kind = MapperKind::kNone;
+    result.message = std::format(
+        "ROM still has a {}-byte SMC copier header (file size {} bytes is "
+        "{} bytes off a 32 KiB bank boundary). Strip the copier header "
+        "with StripSmcCopierHeader before loading.",
+        kSmcCopierHeaderSize, rom_data.size(), kSmcCopierHeaderSize);
+    return result;
+  }
+  if (rom_data.size() <= kExHiRomMapModeOffset) {
+    result.ok = false;
+    result.detected_kind = MapperKind::kNone;
+    result.message = std::format(
+        "ROM is too small for ExHiROM ({} bytes; need at least {} bytes to "
+        "cover the internal header at $40FFB0).",
+        rom_data.size(), kExHiRomMapModeOffset + 1U);
+    return result;
   }
 
-  uint8_t* const sram_data = sram_.data();
-  const std::size_t sram_size = sram_.size();
+  rom_.assign(rom_data.begin(), rom_data.end());
 
-  // HiROM SRAM lives in banks $20-$3F (and the FASTROM mirror $A0-$BF) at
-  // CPU $6000-$7FFF — pages $60-$7F. The half-bank ROM mapping only writes
-  // pages $80-$FF, so these page-table slots are unowned until SRAM claims
-  // them here.
-  for (uint16_t bank = 0x20; bank <= 0x3F; ++bank) {
-    MapHiRomSramBank(bus, GetDeviceId(), static_cast<uint8_t>(bank), sram_data, sram_size);
-  }
-  for (uint16_t bank = 0xA0; bank <= 0xBF; ++bank) {
-    MapHiRomSramBank(bus, GetDeviceId(), static_cast<uint8_t>(bank), sram_data, sram_size);
-  }
+  // SRAM size byte at $40FFD8 (same encoding as LoROM/HiROM SRAM bytes).
+  constexpr std::size_t kExHiRomSramSizeOffset = 0x40FFD8U;
+  const uint8_t sram_byte = rom_[kExHiRomSramSizeOffset];
+  const std::size_t sram_size =
+      (sram_byte == 0 || sram_byte > kMaxLoRomSramSizeByte) ? 0 : (std::size_t{1024} << sram_byte);
+  sram_.assign(sram_size, 0xFFU);
+  sram_dirty_ = false;
+
+  result.ok = true;
+  result.detected_kind = MapperKind::kExHiROM;
+  result.message =
+      std::format("Loaded ExHiROM ({} bytes, map mode 0x{:02X})", rom_data.size(), rom_data[kExHiRomMapModeOffset]);
+  return result;
 }
 
-void Cartridge::OnMemSelChanged(SystemBus& bus, bool fast) {
-  const uint8_t* const rom_data = rom_.empty() ? nullptr : rom_.data();
-  const std::size_t rom_size = rom_.size();
-  const uint8_t access_speed = fast ? 6U : 8U;
+void Cartridge::MapExHiRom(SystemBus& bus) {
+  mapper_ = std::make_unique<ExHiRomMapper>(*this, bus);
+  mapper_->MapInitial();
+  exhirom_mapped_ = true;
+  mapper_kind_ = MapperKind::kExHiROM;
+}
 
-  if (lorom_mapped_) {
-    for (uint16_t bank = 0x80; bank <= 0xFF; ++bank) {
-      MapLoRomBankRange(bus, GetDeviceId(), static_cast<uint8_t>(bank), rom_data, rom_size, access_speed);
-    }
-    return;
-  }
-
-  if (hirom_mapped_) {
-    // Only the ROM-bearing pages of the fast-bank half-space flip speed.
-    // Half-bank mirror $80-$BF: only pages $80-$FF. The lower half is WRAM
-    // mirror / MMIO / SRAM — not ours to retime.
-    for (uint16_t bank = 0x80; bank <= 0xBF; ++bank) {
-      MapHiRomBankPages(bus, GetDeviceId(), static_cast<uint8_t>(bank), 0x80U, 0xFFU, rom_data, rom_size, access_speed);
-    }
-    // Full-bank mirror $C0-$FF: all pages are ROM, so retime the whole bank.
-    for (uint16_t bank = 0xC0; bank <= 0xFF; ++bank) {
-      MapHiRomBankPages(bus, GetDeviceId(), static_cast<uint8_t>(bank), 0x00U, 0xFFU, rom_data, rom_size, access_speed);
-    }
+void Cartridge::OnMemSelChanged(SystemBus& /*bus*/, bool fast) {
+  if (mapper_) {
+    mapper_->OnMemSelChanged(fast);
   }
 }
 

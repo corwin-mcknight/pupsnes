@@ -82,7 +82,7 @@ TraceRunResult RunTrace(const TraceRunOptions& opts) {
   const debugger::Sha1Digest rom_sha1 = ComputeSha1(rom_bytes);
 
   SNES snes;
-  const RomLoadResult load_result = snes.LoadRom(rom_bytes);
+  const BuildResult load_result = snes.LoadRom(rom_bytes);
   if (!load_result.ok) {
     result.error = "ROM load failed: " + load_result.message;
     return result;

@@ -24,6 +24,12 @@ pupsnes::Device::Device(SNES* snes) : snes_(snes) {
   }
 }
 
+pupsnes::Device::~Device() {
+  if (snes_ != nullptr) {
+    snes_->DeregisterDevice(device_id_);
+  }
+}
+
 // --- SNES ---
 
 pupsnes::SNES::SNES()
@@ -37,74 +43,67 @@ pupsnes::SNES::SNES()
       apu_stub(std::make_unique<ApuStub>(this)),
       joypad(std::make_unique<Joypad>(this)),
       ppu(std::make_unique<Ppu>(this)) {
+  registry_.RegisterBuiltins();
   wram->MapSystemBus(*system_bus);
   cpu_mmio->MapSystemBus(*system_bus);
   dma->MapSystemBus(*system_bus);
   ppu->MapSystemBus(*system_bus);
 }
 
-pupsnes::SNES::~SNES() = default;
+pupsnes::SNES::~SNES() {
+  // Set the flag BEFORE member dtors fire. Member-reverse-destruction destroys
+  // ppu first, then joypad, ..., then system_bus, then scheduler, then
+  // cartridge, then cpu. Each Device's dtor calls DeregisterDevice via the
+  // base class — checking destroying_ short-circuits those calls so we don't
+  // try to scrub page-table state on a SystemBus that's already being torn
+  // down (it sits between cartridge and cpu in destruction order).
+  destroying_ = true;
+}
+
 pupsnes::Device* pupsnes::SNES::GetDevice(DeviceIdT id) const { return id < devices_.size() ? devices_[id] : nullptr; }
 
-pupsnes::RomLoadResult pupsnes::SNES::LoadLoRom(std::span<const uint8_t> rom_data) {
-  // Validate before touching MMIO state. A rejected load must leave the
-  // previous cartridge mapping intact — clearing MEMSEL up front would
-  // visibly disturb a running game even though no new ROM ended up loaded.
-  RomLoadResult result = cartridge->LoadLoRom(rom_data);
-  if (!result.ok) {
-    return result;
+void pupsnes::SNES::DeregisterDevice(DeviceIdT id) {
+  if (destroying_) {
+    return;
   }
-  // Mirror power-cycle semantics: a fresh cartridge insert drops FASTROM back
-  // to slow regardless of what the previous ROM left in $420D. Reset the MMIO
-  // register so the cached memsel_ and the new page table agree from the
-  // first cycle. Without this, the debugger's FASTROM indicator stays green
-  // after Load across cartridge swaps.
-  cpu_mmio->Reset();
-  cartridge->MapLoRom(*system_bus);
+  if (id < devices_.size()) {
+    devices_[id] = nullptr;
+  }
+  if (system_bus) {
+    system_bus->UnmapByDeviceId(id);
+  }
+}
+
+pupsnes::BuildResult pupsnes::SNES::LoadRomWithProfile(const CartProfile& profile,
+                                                       std::span<const uint8_t> rom_data) {
+  // The builder constructs a fresh Cartridge (registered with this SNES,
+  // gets a new DeviceId monotonically) and wires its pages into the
+  // SystemBus before we touch the old cartridge. On success we install the
+  // new cart by replacing the unique_ptr — the old cart's destructor then
+  // calls DeregisterDevice → UnmapByDeviceId, scrubbing any stale page
+  // entries that the new mapper didn't overwrite. On failure the old cart
+  // and its page mappings are left untouched.
+  BuildResult result = registry_.Build(this, rom_data, profile);
+  if (result.ok && result.cart) {
+    cartridge = std::move(result.cart);
+    cpu_mmio->Reset();  // power-cycle FASTROM (matches legacy LoadLoRom).
+  }
   return result;
 }
 
-pupsnes::RomLoadResult pupsnes::SNES::LoadHiRom(std::span<const uint8_t> rom_data) {
-  RomLoadResult result = cartridge->LoadHiRom(rom_data);
-  if (!result.ok) {
+pupsnes::BuildResult pupsnes::SNES::LoadRom(std::span<const uint8_t> rom_data) {
+  // Run the structured detector and dispatch through the registry. On
+  // detection failure (mapper == kNone) return a BuildResult that carries
+  // the detection diagnostic so the caller can surface a specific reason.
+  const auto detection = DetectCartProfile(rom_data);
+  if (detection.profile.mapper == MapperKind::kNone) {
+    BuildResult result;
+    result.ok = false;
+    result.profile = detection.profile;
+    result.message = detection.diagnostic.empty() ? std::string{"Unrecognised cart shape"} : detection.diagnostic;
     return result;
   }
-  cpu_mmio->Reset();
-  cartridge->MapHiRom(*system_bus);
-  return result;
-}
-
-pupsnes::RomLoadResult pupsnes::SNES::LoadRom(std::span<const uint8_t> rom_data) {
-  // Score both header candidates and dispatch to the winning loader. The
-  // map mode byte is the primary signal; a valid checksum on one candidate
-  // breaks ties when neither map mode byte is in range.
-  if (rom_data.empty()) {
-    return {false, MapperKind::kNone, "ROM is empty (0 bytes)"};
-  }
-  if (HasSmcCopierHeader(rom_data.size())) {
-    return {false, MapperKind::kNone,
-            std::format("ROM still has a {}-byte SMC copier header; strip it before loading.", kSmcCopierHeaderSize)};
-  }
-  const bool lorom_map = IsLoRomMapModeByte(LoRomMapModeByte(rom_data));
-  const bool hirom_map = IsHiRomMapModeByte(HiRomMapModeByte(rom_data));
-  const bool lorom_csum = LoRomChecksumValid(rom_data);
-  const bool hirom_csum = HiRomChecksumValid(rom_data);
-
-  if (hirom_map && !lorom_map) return LoadHiRom(rom_data);
-  if (lorom_map && !hirom_map) return LoadLoRom(rom_data);
-  if (lorom_map && hirom_map) {
-    // Both map mode bytes legal — break with the checksum, then default to
-    // LoROM which is the more common cartridge format.
-    if (hirom_csum && !lorom_csum) return LoadHiRom(rom_data);
-    return LoadLoRom(rom_data);
-  }
-  // Neither map mode byte recognised: fall back to checksum.
-  if (hirom_csum && !lorom_csum) return LoadHiRom(rom_data);
-  if (lorom_csum && !hirom_csum) return LoadLoRom(rom_data);
-  // No discriminator at all. Default to LoROM — homebrew / test ROMs without
-  // a real header almost always intend LoROM since that's what the standard
-  // ld65 LoROM linker config emits.
-  return LoadLoRom(rom_data);
+  return LoadRomWithProfile(detection.profile, rom_data);
 }
 
 void pupsnes::SNES::Reset() {

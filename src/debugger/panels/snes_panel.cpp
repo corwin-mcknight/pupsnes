@@ -27,6 +27,7 @@ constexpr const char* kSdspModeLabels[] = {"Simple", "Accurate"};
   switch (kind) {
     case MapperKind::kLoROM: return "LoROM";
     case MapperKind::kHiROM: return "HiROM";
+    case MapperKind::kExHiROM: return "ExHiROM";
     case MapperKind::kNone: return "None";
   }
   return "?";

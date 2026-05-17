@@ -283,7 +283,7 @@ TEST_CASE("Cartridge LoROM mapping exposes reset vector and program window", "[u
   rom[0x7FFC] = 0x00;
   rom[0x7FFD] = 0x80;
 
-  snes.LoadLoRom(rom);
+  snes.LoadRom(rom);
 
   BusFollowResult reset_lo =
       snes.system_bus->Follow(snes.system_bus->Plan(0x00FFFC, BusAccessType::kRead), 0, cartridge.GetDeviceId());

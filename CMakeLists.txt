@@ -17,7 +17,10 @@ set(PUPSNES_LIB_SOURCES
   src/pupsnes/hw/apu/apu_stub.cpp
   src/pupsnes/hw/apu/simple_sdsp.cpp
   src/pupsnes/hw/input/joypad.cpp
+  src/pupsnes/hw/rom/cart_profile.cpp
+  src/pupsnes/hw/rom/cart_registry.cpp
   src/pupsnes/hw/rom/cartridge.cpp
+  src/pupsnes/hw/rom/mapper.cpp
   src/pupsnes/hw/sppu/ppu.cpp
 )
 
@@ -80,9 +83,13 @@ set(PUPSNES_TEST_SOURCES
   src/tests/cpu_opcode_defs_tests.cpp
   src/tests/dma_tests.cpp
   src/tests/dma_panel_tests.cpp
+  src/tests/exhirom_tests.cpp
   src/tests/fastrom_tests.cpp
   src/tests/hirom_tests.cpp
   src/tests/joypad_tests.cpp
+  src/tests/cart_profile_tests.cpp
+  src/tests/cart_registry_tests.cpp
+  src/tests/device_lifecycle_tests.cpp
   src/tests/rom_format_tests.cpp
   src/tests/rom_integration_tests.cpp
   src/tests/rom_validation_tests.cpp

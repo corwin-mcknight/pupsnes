@@ -37,7 +37,10 @@ class Device {
 
  public:
   explicit Device(SNES* snes);
-  virtual ~Device() = default;
+  // Calls SNES::DeregisterDevice on the way out so the SNES device list and
+  // SystemBus page table forget this Device. SNES checks its `destroying_`
+  // flag and skips the call during SNES teardown — see snes.cpp.
+  virtual ~Device();
 
   // Human-readable short name used by the debugger UI to list registered
   // devices. Subclasses override with a string literal; default keeps the

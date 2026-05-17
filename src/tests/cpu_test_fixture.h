@@ -6,6 +6,7 @@
 #include <initializer_list>
 
 #include "pupsnes/hw/5a22/cpu.h"
+#include "pupsnes/hw/rom/cart_profile.h"
 #include "pupsnes/hw/rom/cartridge.h"
 #include "pupsnes/core/snes.h"
 #include "pupsnes/memory/wram.h"
@@ -14,12 +15,16 @@ namespace pupsnes::test {
 
 struct ResetFixture {
   SNES snes;
-  Cartridge& cartridge;
   WRAM& wram;
   CPU& cpu;
   std::array<uint8_t, Cartridge::kLoROMWindowSize> rom{};
 
-  ResetFixture() : cartridge(snes.GetCartridge()), wram(snes.GetWram()), cpu(snes.GetCpu()) {
+  // WRAM and CPU are stable members of SNES (constructed once, lifetime ==
+  // SNES lifetime), so caching references is safe. Cartridge is not cached:
+  // LoadRomWithProfile destroys and rebuilds the cart instance, which
+  // would dangle a captured reference. Tests that need the cart re-fetch
+  // via `snes.GetCartridge()` on demand.
+  ResetFixture() : wram(snes.GetWram()), cpu(snes.GetCpu()) {
     rom.fill(0xEA);
     SetResetVector(0x8000);
     SyncCartridge();
@@ -32,7 +37,15 @@ struct ResetFixture {
 
   void SetRomByte(std::size_t offset, uint8_t value) { rom[offset] = value; }
 
-  void SyncCartridge() { snes.LoadLoRom(rom); }
+  void SyncCartridge() {
+    // Test ROMs are NOP-filled (0xEA) without a real header — auto-detect
+    // would read 0xEA at $7FD6 as a Super Game Boy coprocessor and reject
+    // the build (no SGB builder yet). Force the (kLoROM, kNone) builder.
+    CartProfile profile{};
+    profile.mapper = MapperKind::kLoROM;
+    profile.coproc = Coprocessor::kNone;
+    snes.LoadRomWithProfile(profile, rom);
+  }
 
   // Writes the instruction bytes starting at the reset-vector entry point
   // (offset 0) and re-syncs the cartridge. Collapses the common

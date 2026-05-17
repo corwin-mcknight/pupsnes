@@ -54,14 +54,14 @@ TEST_CASE("LoRomSramSize: returns 0 when ROM is shorter than the header", "[unit
 TEST_CASE("Cartridge: LoadLoRom sizes SRAM from the internal header", "[unit][cartridge]") {
   SNES snes;
   const auto rom = MakeLoRomWithSramByte(0x03U);  // 8 KiB
-  snes.LoadLoRom(rom);
+  snes.LoadRom(rom);
   REQUIRE(snes.GetCartridge().SramSize() == 0x2000U);
 }
 
 TEST_CASE("Cartridge: SRAM is mapped into banks $70 and $F0 when present", "[unit][cartridge]") {
   SNES snes;
   auto rom = MakeLoRomWithSramByte(0x03U);  // 8 KiB SRAM
-  snes.LoadLoRom(rom);
+  snes.LoadRom(rom);
 
   Cartridge& cart = snes.GetCartridge();
   auto& bus = snes.GetSystemBus();
@@ -84,7 +84,7 @@ TEST_CASE("Cartridge: SRAM mirrors $702000 onto $700000 (Super Metroid piracy te
   // to alias.
   SNES snes;
   auto rom = MakeLoRomWithSramByte(0x03U);  // 8 KiB
-  snes.LoadLoRom(rom);
+  snes.LoadRom(rom);
 
   Cartridge& cart = snes.GetCartridge();
   auto& bus = snes.GetSystemBus();
@@ -107,7 +107,7 @@ TEST_CASE("Cartridge: SRAM mirrors $702000 onto $700000 (Super Metroid piracy te
 TEST_CASE("Cartridge: writing SRAM sets the dirty flag", "[unit][cartridge]") {
   SNES snes;
   auto rom = MakeLoRomWithSramByte(0x03U);
-  snes.LoadLoRom(rom);
+  snes.LoadRom(rom);
 
   Cartridge& cart = snes.GetCartridge();
   REQUIRE_FALSE(cart.SramDirty());
@@ -125,7 +125,7 @@ TEST_CASE("Cartridge: writing SRAM sets the dirty flag", "[unit][cartridge]") {
 TEST_CASE("Cartridge: LoadSram restores contents without dirtying", "[unit][cartridge]") {
   SNES snes;
   auto rom = MakeLoRomWithSramByte(0x03U);
-  snes.LoadLoRom(rom);
+  snes.LoadRom(rom);
 
   Cartridge& cart = snes.GetCartridge();
   std::vector<uint8_t> save(cart.SramSize(), 0x00U);
@@ -147,7 +147,7 @@ TEST_CASE("Cartridge: LoadSram restores contents without dirtying", "[unit][cart
 TEST_CASE("Cartridge: ROMs with no SRAM leave the SRAM banks unmapped", "[unit][cartridge]") {
   SNES snes;
   auto rom = MakeLoRomWithSramByte(0x00U);  // no SRAM
-  snes.LoadLoRom(rom);
+  snes.LoadRom(rom);
 
   Cartridge& cart = snes.GetCartridge();
   REQUIRE(cart.SramSize() == 0U);

@@ -167,7 +167,7 @@ Scope:
 - DMA/HDMA
 - IRQ/NMI/control signal region behavior
 - controller input plumbing
-- cartridge mapper expansion beyond the initial mapper
+- cartridge mapper expansion beyond the initial mapper (architectural slot in place via `Mapper` strategy + `CartridgeRegistry`; ExHiROM lands as the second concrete mapper, SA-1/GSU/DSP-n still pending)
 - bus-visible timing corner cases needed for software compatibility
 
 Exit criteria:

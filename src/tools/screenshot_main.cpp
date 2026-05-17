@@ -133,7 +133,7 @@ int main(int argc, char** argv) {
   pupsnes::StripSmcCopierHeader(rom_bytes);
 
   pupsnes::SNES snes;
-  const pupsnes::RomLoadResult load_result = snes.LoadRom(rom_bytes);
+  const pupsnes::BuildResult load_result = snes.LoadRom(rom_bytes);
   if (!load_result.ok) {
     std::cerr << "pupsnes-screenshot: ROM load failed: " << load_result.message << "\n";
     return 1;

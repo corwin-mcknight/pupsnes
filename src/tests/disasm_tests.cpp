@@ -65,7 +65,7 @@ TEST_CASE("Public opcode metadata exposes stable mnemonic and length information
 TEST_CASE("Disassembler formats width-dependent and long instructions", "[unit][debugger]") {
   SNES snes;
   const auto rom = MakeRom();
-  snes.LoadLoRom(rom);
+  snes.LoadRom(rom);
   snes.Reset();
 
   CpuFlags accumulator_16 = snes.GetCpu().GetRegs().P;

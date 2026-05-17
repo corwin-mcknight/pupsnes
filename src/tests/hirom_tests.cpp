@@ -42,6 +42,11 @@ std::vector<uint8_t> MakeHiRom(std::size_t size, uint8_t sram_byte = 0x00U) {
   for (std::size_t i = 0; i < rom.size(); ++i) {
     rom[i] = static_cast<uint8_t>(((i >> 8) & 0xFFU) ^ 0x5AU);
   }
+  // Header bytes — DetectCartProfile uses $FFD5 (map mode) and $FFD6
+  // (chipset). Without these the auto-detector falls back to LoROM and
+  // misreads the 0xA5 test-pattern byte at $FFD6 as a coprocessor chipset.
+  rom[kHiRomMapModeOffset] = 0x21U;  // HiROM, slow
+  rom[0xFFD6U] = 0x00U;              // plain ROM, no coprocessor
   // Reset vector — irrelevant for these tests but keeps the header well-formed.
   rom[kHiRomHeaderOffset + (0xFFFCU - 0xFFB0U)] = 0x00U;
   rom[kHiRomHeaderOffset + (0xFFFDU - 0xFFB0U)] = 0x80U;
@@ -99,7 +104,7 @@ TEST_CASE("HiRomSramSize: returns 0 when ROM is shorter than the header", "[unit
 TEST_CASE("HiROM: half-bank ROM at $00:8000-$00:FFFF maps to ROM bytes $8000-$FFFF", "[unit][hirom]") {
   SNES snes;
   auto rom = MakeHiRom(kFullHiRomSize);
-  snes.LoadHiRom(rom);
+  snes.LoadRom(rom);
 
   // Bank $00, page $80 → ROM byte $008000.
   const auto& entry_lo = GetEntry(snes, 0x00U, 0x80U);
@@ -114,7 +119,7 @@ TEST_CASE("HiROM: half-bank ROM at $00:8000-$00:FFFF maps to ROM bytes $8000-$FF
 TEST_CASE("HiROM: full-bank ROM at $40:0000-$7D:FFFF strides every 64 KiB", "[unit][hirom]") {
   SNES snes;
   auto rom = MakeHiRom(kFullHiRomSize);
-  snes.LoadHiRom(rom);
+  snes.LoadRom(rom);
 
   // Bank $40, page $00 → ROM byte $000000 (aliases the LowRAM mirror in
   // banks $00-$3F at the ROM byte level, even though the CPU sees WRAM there).
@@ -128,7 +133,7 @@ TEST_CASE("HiROM: full-bank ROM at $40:0000-$7D:FFFF strides every 64 KiB", "[un
 TEST_CASE("HiROM: FASTROM mirrors map to the same ROM bytes as the slow banks", "[unit][hirom]") {
   SNES snes;
   auto rom = MakeHiRom(kFullHiRomSize);
-  snes.LoadHiRom(rom);
+  snes.LoadRom(rom);
 
   // $80:80 mirrors $00:80, $C0:00 mirrors $40:00, $FF:FF mirrors $7F:FF.
   // Bank $7F is WRAM (so we compare against the underlying ROM byte formula
@@ -141,7 +146,7 @@ TEST_CASE("HiROM: FASTROM mirrors map to the same ROM bytes as the slow banks", 
 TEST_CASE("HiROM: kMemory page entries carry a fast pointer when the ROM is big enough", "[unit][hirom]") {
   SNES snes;
   auto rom = MakeHiRom(kFullHiRomSize);
-  snes.LoadHiRom(rom);
+  snes.LoadRom(rom);
 
   const auto& entry = GetEntry(snes, 0x40U, 0x00U);
   REQUIRE(entry.fast_read_ptr != nullptr);
@@ -157,7 +162,7 @@ TEST_CASE("HiROM: kMemory page entries carry a fast pointer when the ROM is big 
 TEST_CASE("HiROM: LowRAM mirror at banks $00-$3F pages $00-$1F stays WRAM-backed", "[unit][hirom]") {
   SNES snes;
   auto rom = MakeHiRom(kFullHiRomSize);
-  snes.LoadHiRom(rom);
+  snes.LoadRom(rom);
 
   // Drop a sentinel into WRAM via $7E:0000, observe it through the LowRAM
   // mirror at $00:0000 — proves the page-table slot still points at WRAM.
@@ -171,7 +176,7 @@ TEST_CASE("HiROM: LowRAM mirror at banks $00-$3F pages $00-$1F stays WRAM-backed
 TEST_CASE("HiROM: WRAM at banks $7E-$7F survives the full-bank ROM mapping", "[unit][hirom]") {
   SNES snes;
   auto rom = MakeHiRom(kFullHiRomSize);
-  snes.LoadHiRom(rom);
+  snes.LoadRom(rom);
 
   auto w = snes.system_bus->DebugWrite(0x7E'1234U, 0x77U);
   REQUIRE(w.ok);
@@ -183,7 +188,7 @@ TEST_CASE("HiROM: WRAM at banks $7E-$7F survives the full-bank ROM mapping", "[u
 TEST_CASE("HiROM: CPU MMIO page at $00:42xx still routes to CpuMmio", "[unit][hirom]") {
   SNES snes;
   auto rom = MakeHiRom(kFullHiRomSize);
-  snes.LoadHiRom(rom);
+  snes.LoadRom(rom);
 
   // $4210 (RDNMI) is a read-clear register inside the CPU MMIO region — that
   // its page entry isn't kMemory proves we didn't blanket-map ROM over the
@@ -200,14 +205,14 @@ TEST_CASE("HiROM: CPU MMIO page at $00:42xx still routes to CpuMmio", "[unit][hi
 TEST_CASE("Cartridge: LoadHiRom sizes SRAM from the internal header", "[unit][hirom]") {
   SNES snes;
   auto rom = MakeHiRom(kFullHiRomSize, 0x03U);  // 8 KiB
-  snes.LoadHiRom(rom);
+  snes.LoadRom(rom);
   REQUIRE(snes.GetCartridge().SramSize() == 0x2000U);
 }
 
 TEST_CASE("HiROM: SRAM round-trip at $20:6000 (round-trip through the bus)", "[unit][hirom]") {
   SNES snes;
   auto rom = MakeHiRom(kFullHiRomSize, 0x03U);  // 8 KiB
-  snes.LoadHiRom(rom);
+  snes.LoadRom(rom);
 
   Cartridge& cart = snes.GetCartridge();
   auto& bus = snes.GetSystemBus();
@@ -223,7 +228,7 @@ TEST_CASE("HiROM: SRAM round-trip at $20:6000 (round-trip through the bus)", "[u
 TEST_CASE("HiROM: SRAM mirror $A0:6000 aliases $20:6000 (FASTROM SRAM half)", "[unit][hirom]") {
   SNES snes;
   auto rom = MakeHiRom(kFullHiRomSize, 0x03U);
-  snes.LoadHiRom(rom);
+  snes.LoadRom(rom);
 
   Cartridge& cart = snes.GetCartridge();
   auto& bus = snes.GetSystemBus();
@@ -240,7 +245,7 @@ TEST_CASE("HiROM: SRAM mirrors across the 8 KiB window when SRAM is smaller", "[
   // $20:6800 must alias back to $20:6000.
   SNES snes;
   auto rom = MakeHiRom(kFullHiRomSize, 0x01U);  // 2 KiB
-  snes.LoadHiRom(rom);
+  snes.LoadRom(rom);
   REQUIRE(snes.GetCartridge().SramSize() == 0x800U);
 
   Cartridge& cart = snes.GetCartridge();
@@ -260,7 +265,7 @@ TEST_CASE("HiROM: SRAM mirrors across the 8 KiB window when SRAM is smaller", "[
 TEST_CASE("HiROM: fast-bank pages start at 8 mcyc and flip to 6 with MEMSEL=1", "[unit][hirom][fastrom]") {
   SNES snes;
   auto rom = MakeHiRom(kFullHiRomSize);
-  snes.LoadHiRom(rom);
+  snes.LoadRom(rom);
 
   // Half-bank ROM in the FASTROM mirror.
   REQUIRE(GetAccessSpeed(snes, 0x80U, 0x80U) == 8);
@@ -278,7 +283,7 @@ TEST_CASE("HiROM: fast-bank pages start at 8 mcyc and flip to 6 with MEMSEL=1", 
 TEST_CASE("HiROM: slow banks $00-$3F and $40-$7D never become fast", "[unit][hirom][fastrom]") {
   SNES snes;
   auto rom = MakeHiRom(kFullHiRomSize);
-  snes.LoadHiRom(rom);
+  snes.LoadRom(rom);
   WriteMemSel(snes, 0x01U);
 
   REQUIRE(GetAccessSpeed(snes, 0x00U, 0x80U) == 8);
@@ -290,7 +295,7 @@ TEST_CASE("HiROM: slow banks $00-$3F and $40-$7D never become fast", "[unit][hir
 TEST_CASE("HiROM: MEMSEL does not retime the LowRAM mirror or CPU MMIO", "[unit][hirom][fastrom]") {
   SNES snes;
   auto rom = MakeHiRom(kFullHiRomSize);
-  snes.LoadHiRom(rom);
+  snes.LoadRom(rom);
   WriteMemSel(snes, 0x01U);
 
   // LowRAM mirror under the fast-bank mirror $80-$BF pages $00-$1F.
@@ -303,7 +308,7 @@ TEST_CASE("HiROM: MEMSEL does not retime the LowRAM mirror or CPU MMIO", "[unit]
 TEST_CASE("HiROM: SNES::Reset clears MEMSEL and reverts HiROM fast banks to slow", "[unit][hirom][fastrom]") {
   SNES snes;
   auto rom = MakeHiRom(kFullHiRomSize);
-  snes.LoadHiRom(rom);
+  snes.LoadRom(rom);
   WriteMemSel(snes, 0x01U);
   REQUIRE(GetAccessSpeed(snes, 0xC0U, 0x00U) == 6);
 
@@ -324,7 +329,7 @@ TEST_CASE("HiROM: bus read at $40:1234 returns ROM[$001234]", "[unit][hirom]") {
   // Plant a deterministic byte that doesn't match the page-fill pattern.
   rom[0x001234U] = 0xDEU;
   rom[0x3D5678U] = 0xADU;
-  snes.LoadHiRom(rom);
+  snes.LoadRom(rom);
 
   auto r1 = snes.system_bus->DebugRead(0x40'1234U);
   REQUIRE(r1.ok);
@@ -340,7 +345,7 @@ TEST_CASE("HiROM: half-bank read at $00:F000 returns ROM[$00F000]", "[unit][hiro
   SNES snes;
   auto rom = MakeHiRom(kFullHiRomSize);
   rom[0x00F000U] = 0xBEU;
-  snes.LoadHiRom(rom);
+  snes.LoadRom(rom);
 
   auto r = snes.system_bus->DebugRead(0x00'F000U);
   REQUIRE(r.ok);
@@ -356,7 +361,7 @@ TEST_CASE("HiROM: Cartridge reports MapperKind::kHiROM after LoadHiRom", "[unit]
   REQUIRE(snes.GetCartridge().GetMapperKind() == MapperKind::kNone);
 
   auto rom = MakeHiRom(kFullHiRomSize);
-  snes.LoadHiRom(rom);
+  snes.LoadRom(rom);
   REQUIRE(snes.GetCartridge().GetMapperKind() == MapperKind::kHiROM);
 }
 
@@ -366,7 +371,7 @@ TEST_CASE("HiROM: short ROM falls back to slow-path modulo wrap (no fast pointer
   // there must drop its fast_read_ptr and rely on the modulo slow path.
   SNES snes;
   auto rom = MakeHiRom(0x10000U);
-  snes.LoadHiRom(rom);
+  snes.LoadRom(rom);
 
   // $40:00 is in-range (offset 0) — fast pointer must be live.
   REQUIRE(GetEntry(snes, 0x40U, 0x00U).fast_read_ptr != nullptr);

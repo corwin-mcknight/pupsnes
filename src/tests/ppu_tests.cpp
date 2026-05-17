@@ -2180,7 +2180,7 @@ TEST_CASE("SMW title-screen color-math fills the sky region", "[smwbug]") {
   StripSmcCopierHeader(rom);
 
   SNES snes;
-  snes.LoadLoRom(rom);
+  snes.LoadRom(rom);
   snes.Reset();
 
   const uint32_t kFrames = 600;

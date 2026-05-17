@@ -130,7 +130,7 @@ bool DebuggerApp::LoadRomFromPath(const std::string& path) {
   }
 
   try {
-    const RomLoadResult load_result = snes_.LoadRom(rom);
+    const BuildResult load_result = snes_.LoadRom(rom);
     if (!load_result.ok) {
       error_log_.Push({
           .master_time = snes_.GetMasterTime(),

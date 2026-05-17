@@ -35,7 +35,7 @@ struct FileSinkFixture {
     rom.fill(0xEA);
     rom[0x7FFC] = 0x00;
     rom[0x7FFD] = 0x80;
-    snes.LoadLoRom(rom);
+    snes.LoadRom(rom);
     rom_sha1.fill(0);
     rom_sha1[0] = 0xDE;
     rom_sha1[1] = 0xAD;
@@ -235,7 +235,7 @@ TEST_CASE("FileTraceSink latches open failure", "[unit][debugger]") {
   rom.fill(0xEA);
   rom[0x7FFC] = 0x00;
   rom[0x7FFD] = 0x80;
-  snes.LoadLoRom(rom);
+  snes.LoadRom(rom);
 
   // Deliberately impossible path — a non-existent directory.
   Sha1Digest sha{};

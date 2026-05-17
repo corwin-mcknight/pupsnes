@@ -420,7 +420,7 @@ RomExecutionResult RunScenario(const RomScenario& scenario) {
     WRAM& wram = snes.GetWram();
     CPU& cpu = snes.GetCpu();
 
-    snes.LoadLoRom(rom_bytes);
+    snes.LoadRom(rom_bytes);
 
     snes.Reset();
     if (scenario.initial_dbr.has_value()) {

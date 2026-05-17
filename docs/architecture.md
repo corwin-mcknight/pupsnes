@@ -72,13 +72,25 @@ Device code accesses state through typed overlays (POD structs placed at known o
 
 ## Memory Map
 
-Address decoding uses a flat **page table**: a 256×256 array indexed by bank and page (256-byte granularity). Each entry contains a target device pointer and a device-relative offset. The table is precalculated at ROM load time based on the cartridge mapper type (LoROM, HiROM, etc.).
+Address decoding uses a flat **page table**: a 256×256 array indexed by bank and page (256-byte granularity). Each entry contains a target device pointer and a device-relative offset. The table is precalculated at ROM load time based on the cartridge mapper type (LoROM, HiROM, ExHiROM, etc.).
 
 * Mirrors are free — multiple entries point to the same backing memory/handler.
 * I/O register ranges (`$2100`–`$44FF`) point to device handlers with a flag distinguishing them from raw memory.
 * Co-processor cartridges overlay their regions by modifying table entries.
 
 This is the hottest path in the emulator (called on every bus cycle), so O(1) lookup with no branching is critical.
+
+## Cartridge composition
+
+A cartridge is a `Device` (facade) composed of:
+
+* **ROM bytes** and **SRAM bytes** owned directly by the `Cartridge`.
+* A **`Mapper` strategy** (`LoRomMapper`, `HiRomMapper`, `ExHiRomMapper`, future SA-1/S-DD1/SPC7110 variants) that writes the initial page-table layout and handles FASTROM speed changes. Mappers are not `Device`s — they carry no bus identity.
+* Zero or more **coprocessor `Device`s** (planned: SA-1, GSU/SuperFX, DSP-n, CX4, SPC7110, S-RTC, OBC1, S-DD1). Each registers with `SNES` independently and gets its own `DeviceId`, MMIO entries, and `CatchUpTo` cadence.
+
+Cart construction goes through `CartridgeRegistry`, an instance member of `SNES`. `DetectCartProfile(bytes)` returns a structured `CartProfile { mapper, coproc, sram_bytes, has_battery, has_rtc, custom_subtype, fastrom_capable, region, ... }`; `SNES::LoadRomWithProfile(profile, bytes)` dispatches to a builder keyed by `(mapper, coproc)`. The auto-detect path `SNES::LoadRom(bytes)` runs detection and forwards. Both return a unified `BuildResult { ok, cart, profile, message }`.
+
+The cart lifecycle is **destroy-and-rebuild**: a successful build replaces the existing `unique_ptr<Cartridge>`, whose destructor cascades into any owned coprocessor `Device`s. Each `Device::~Device` calls `SNES::DeregisterDevice(id)`, which nulls the slot in `SNES::devices_` (monotonic — no slot reuse) and calls `SystemBus::UnmapByDeviceId(id)` to scrub stale page-table entries. `SNES::~SNES` sets a `destroying_` flag before member-reverse destruction so the cascading `Device` dtors don't touch a half-dead `SystemBus`.
 
 ## Frontend
 

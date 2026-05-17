@@ -1,7 +1,7 @@
 // ROM load-time validation tests.
 //
 // Make sure every shape of "wrong" cartridge image is rejected with a
-// specific, user-facing message — the LoadLoRom / LoadHiRom / LoadRom API
+// specific, user-facing message — the LoadRom / LoadRomWithProfile API
 // is the only path to a mapped cartridge, so anything ambiguous or
 // inconsistent has to bounce off here with enough detail for the user (or
 // the debugger error log) to fix.
@@ -12,6 +12,8 @@
 #include <cstdint>
 #include <vector>
 
+#include "pupsnes/hw/rom/cart_profile.h"
+#include "pupsnes/hw/rom/cart_registry.h"
 #include "pupsnes/hw/rom/cartridge.h"
 #include "pupsnes/core/snes.h"
 #include "pupsnes/hw/rom/rom_format.h"
@@ -23,6 +25,15 @@ namespace {
 
 constexpr std::size_t kLoRomSize = 32U * 1024U;
 constexpr std::size_t kHiRomSize = 1U * 1024U * 1024U;
+
+// Force the registry to dispatch to a specific (mapper, kNone) builder so
+// tests can exercise the mapper-mismatch validator inside Cartridge::LoadX.
+CartProfile ForceProfile(MapperKind mapper) {
+  CartProfile p{};
+  p.mapper = mapper;
+  p.coproc = Coprocessor::kNone;
+  return p;
+}
 
 // Build a LoROM that satisfies map-mode + checksum validation: byte $7FD5
 // gets $20, and the checksum / complement pair XORs to $FFFF.
@@ -59,7 +70,7 @@ std::vector<uint8_t> MakeValidHiRom() {
 TEST_CASE("LoadLoRom: empty buffer is rejected with a specific message", "[unit][rom_validation]") {
   SNES snes;
   std::vector<uint8_t> rom;
-  const RomLoadResult result = snes.LoadLoRom(rom);
+  const BuildResult result = snes.LoadRomWithProfile(ForceProfile(MapperKind::kLoROM), rom);
   REQUIRE_FALSE(result.ok);
   REQUIRE_THAT(result.message, ContainsSubstring("empty"));
   REQUIRE(snes.GetCartridge().GetMapperKind() == MapperKind::kNone);
@@ -68,7 +79,7 @@ TEST_CASE("LoadLoRom: empty buffer is rejected with a specific message", "[unit]
 TEST_CASE("LoadHiRom: empty buffer is rejected", "[unit][rom_validation]") {
   SNES snes;
   std::vector<uint8_t> rom;
-  const RomLoadResult result = snes.LoadHiRom(rom);
+  const BuildResult result = snes.LoadRomWithProfile(ForceProfile(MapperKind::kHiROM), rom);
   REQUIRE_FALSE(result.ok);
   REQUIRE_THAT(result.message, ContainsSubstring("empty"));
 }
@@ -76,7 +87,7 @@ TEST_CASE("LoadHiRom: empty buffer is rejected", "[unit][rom_validation]") {
 TEST_CASE("LoadRom: empty buffer is rejected with a specific message", "[unit][rom_validation]") {
   SNES snes;
   std::vector<uint8_t> rom;
-  const RomLoadResult result = snes.LoadRom(rom);
+  const BuildResult result = snes.LoadRom(rom);
   REQUIRE_FALSE(result.ok);
   REQUIRE_THAT(result.message, ContainsSubstring("empty"));
 }
@@ -84,7 +95,7 @@ TEST_CASE("LoadRom: empty buffer is rejected with a specific message", "[unit][r
 TEST_CASE("LoadLoRom: ROM shorter than LoROM header is rejected with a size hint", "[unit][rom_validation]") {
   SNES snes;
   std::vector<uint8_t> rom(1024U, 0xFFU);  // 1 KiB — way below $7FD5
-  const RomLoadResult result = snes.LoadLoRom(rom);
+  const BuildResult result = snes.LoadRomWithProfile(ForceProfile(MapperKind::kLoROM), rom);
   REQUIRE_FALSE(result.ok);
   REQUIRE_THAT(result.message, ContainsSubstring("too small"));
   REQUIRE_THAT(result.message, ContainsSubstring("LoROM"));
@@ -93,7 +104,7 @@ TEST_CASE("LoadLoRom: ROM shorter than LoROM header is rejected with a size hint
 TEST_CASE("LoadHiRom: ROM shorter than HiROM header is rejected", "[unit][rom_validation]") {
   SNES snes;
   std::vector<uint8_t> rom(kLoRomSize, 0xFFU);  // 32 KiB — never reaches $FFD5
-  const RomLoadResult result = snes.LoadHiRom(rom);
+  const BuildResult result = snes.LoadRomWithProfile(ForceProfile(MapperKind::kHiROM), rom);
   REQUIRE_FALSE(result.ok);
   REQUIRE_THAT(result.message, ContainsSubstring("too small"));
   REQUIRE_THAT(result.message, ContainsSubstring("HiROM"));
@@ -103,7 +114,7 @@ TEST_CASE("LoadLoRom: SMC copier header is detected and named in the error", "[u
   SNES snes;
   // 32 KiB LoROM + 512-byte copier header = size mod 32 KiB == 512.
   std::vector<uint8_t> rom(kLoRomSize + kSmcCopierHeaderSize, 0xFFU);
-  const RomLoadResult result = snes.LoadLoRom(rom);
+  const BuildResult result = snes.LoadRomWithProfile(ForceProfile(MapperKind::kLoROM), rom);
   REQUIRE_FALSE(result.ok);
   REQUIRE_THAT(result.message, ContainsSubstring("SMC copier header"));
   REQUIRE_THAT(result.message, ContainsSubstring("StripSmcCopierHeader"));
@@ -112,7 +123,7 @@ TEST_CASE("LoadLoRom: SMC copier header is detected and named in the error", "[u
 TEST_CASE("LoadRom: SMC copier header is rejected before mapper dispatch", "[unit][rom_validation]") {
   SNES snes;
   std::vector<uint8_t> rom(kLoRomSize + kSmcCopierHeaderSize, 0xFFU);
-  const RomLoadResult result = snes.LoadRom(rom);
+  const BuildResult result = snes.LoadRom(rom);
   REQUIRE_FALSE(result.ok);
   REQUIRE_THAT(result.message, ContainsSubstring("SMC copier header"));
 }
@@ -129,9 +140,8 @@ TEST_CASE("LoadLoRom: HiROM-flavoured header is refused with a use-LoadHiRom hin
   std::vector<uint8_t> rom = MakeValidHiRom();
   rom[kLoRomMapModeOffset] = 0xFFU;  // Make sure LoROM map mode is clearly invalid.
 
-  const RomLoadResult result = snes.LoadLoRom(rom);
+  const BuildResult result = snes.LoadRomWithProfile(ForceProfile(MapperKind::kLoROM), rom);
   REQUIRE_FALSE(result.ok);
-  REQUIRE(result.detected_kind == MapperKind::kHiROM);
   REQUIRE_THAT(result.message, ContainsSubstring("HiROM"));
   REQUIRE_THAT(result.message, ContainsSubstring("LoadHiRom"));
   // Detected map-mode byte should be quoted in the message so the user can
@@ -154,9 +164,8 @@ TEST_CASE("LoadHiRom: LoROM-flavoured header is refused with a use-LoadLoRom hin
   rom[kLoRomChecksumOffset + 1U] = 0xFFU;
   rom[kHiRomMapModeOffset] = 0xFFU;  // Clearly NOT HiROM
 
-  const RomLoadResult result = snes.LoadHiRom(rom);
+  const BuildResult result = snes.LoadRomWithProfile(ForceProfile(MapperKind::kHiROM), rom);
   REQUIRE_FALSE(result.ok);
-  REQUIRE(result.detected_kind == MapperKind::kLoROM);
   REQUIRE_THAT(result.message, ContainsSubstring("LoROM"));
   REQUIRE_THAT(result.message, ContainsSubstring("LoadLoRom"));
   REQUIRE_THAT(result.message, ContainsSubstring("0x20"));
@@ -165,14 +174,14 @@ TEST_CASE("LoadHiRom: LoROM-flavoured header is refused with a use-LoadLoRom hin
 TEST_CASE("Cartridge state is preserved when a load is rejected", "[unit][rom_validation]") {
   SNES snes;
   // Load a valid LoROM first.
-  const RomLoadResult first = snes.LoadLoRom(MakeValidLoRom());
+  const BuildResult first = snes.LoadRomWithProfile(ForceProfile(MapperKind::kLoROM), MakeValidLoRom());
   REQUIRE(first.ok);
   REQUIRE(snes.GetCartridge().GetMapperKind() == MapperKind::kLoROM);
   const std::size_t first_size = snes.GetCartridge().Size();
 
   // Then try to load garbage — should not disturb the live cartridge.
   std::vector<uint8_t> bogus;
-  const RomLoadResult second = snes.LoadLoRom(bogus);
+  const BuildResult second = snes.LoadRomWithProfile(ForceProfile(MapperKind::kLoROM), bogus);
   REQUIRE_FALSE(second.ok);
   REQUIRE(snes.GetCartridge().GetMapperKind() == MapperKind::kLoROM);
   REQUIRE(snes.GetCartridge().Size() == first_size);
@@ -184,17 +193,17 @@ TEST_CASE("Cartridge state is preserved when a load is rejected", "[unit][rom_va
 
 TEST_CASE("LoadRom: valid LoROM header routes through LoadLoRom", "[unit][rom_validation]") {
   SNES snes;
-  const RomLoadResult result = snes.LoadRom(MakeValidLoRom());
+  const BuildResult result = snes.LoadRom(MakeValidLoRom());
   REQUIRE(result.ok);
-  REQUIRE(result.detected_kind == MapperKind::kLoROM);
+  REQUIRE(result.profile.mapper == MapperKind::kLoROM);
   REQUIRE(snes.GetCartridge().GetMapperKind() == MapperKind::kLoROM);
 }
 
 TEST_CASE("LoadRom: valid HiROM header routes through LoadHiRom", "[unit][rom_validation]") {
   SNES snes;
-  const RomLoadResult result = snes.LoadRom(MakeValidHiRom());
+  const BuildResult result = snes.LoadRom(MakeValidHiRom());
   REQUIRE(result.ok);
-  REQUIRE(result.detected_kind == MapperKind::kHiROM);
+  REQUIRE(result.profile.mapper == MapperKind::kHiROM);
   REQUIRE(snes.GetCartridge().GetMapperKind() == MapperKind::kHiROM);
 }
 
@@ -208,9 +217,9 @@ TEST_CASE("LoadRom: ambiguous / headerless ROM falls back to LoROM", "[unit][rom
   rom[0x7FFCU] = 0x00U;
   rom[0x7FFDU] = 0x80U;
 
-  const RomLoadResult result = snes.LoadRom(rom);
+  const BuildResult result = snes.LoadRom(rom);
   REQUIRE(result.ok);
-  REQUIRE(result.detected_kind == MapperKind::kLoROM);
+  REQUIRE(result.profile.mapper == MapperKind::kLoROM);
 }
 
 // ---------------------------------------------------------------------------

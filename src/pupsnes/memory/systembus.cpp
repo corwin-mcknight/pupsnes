@@ -30,6 +30,16 @@ void SystemBus::MapPage(const PageMapParams& params) {
 
 void SystemBus::UnmapPage(uint8_t bank, uint8_t page) { page_table_[bank][page] = PageTableEntry{}; }
 
+void SystemBus::UnmapByDeviceId(DeviceIdT id) {
+  for (auto& row : page_table_) {
+    for (auto& entry : row) {
+      if (entry.device_id == id && entry.kind != PageDeviceKind::kUnmapped) {
+        entry = PageTableEntry{};
+      }
+    }
+  }
+}
+
 BusPlan SystemBus::Plan(SnesAddrT address, BusAccessType type, uint8_t write_data) const {
   SnesAddrT addr = NormalizeAddress(address);
   uint8_t bank = static_cast<uint8_t>(addr >> 16);

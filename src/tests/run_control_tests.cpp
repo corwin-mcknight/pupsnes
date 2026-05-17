@@ -40,7 +40,7 @@ struct DebuggerFixture {
   }
 
   RunControl BuildRunControl() {
-    snes.LoadLoRom(rom);
+    snes.LoadRom(rom);
     snes.Reset();
     return RunControl(snes, breakpoints, fan_out, errors);
   }

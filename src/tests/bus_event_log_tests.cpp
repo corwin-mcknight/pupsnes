@@ -51,7 +51,7 @@ TEST_CASE("SystemBus fast-path reads and writes emit bus events when a sink is a
   rom.fill(0xEA);
   rom[0x7FFCU] = 0x00;  // Reset vector low
   rom[0x7FFDU] = 0x80;  // Reset vector high → $008000
-  snes.LoadLoRom(rom);
+  snes.LoadRom(rom);
   snes.Reset();
 
   // snes.Reset() fetches the reset vector via the bus; at minimum those two
@@ -80,7 +80,7 @@ TEST_CASE("SystemBus emits no events when no sink is attached", "[unit][bus_even
   rom.fill(0xEA);
   rom[0x7FFCU] = 0x00;
   rom[0x7FFDU] = 0x80;
-  snes.LoadLoRom(rom);
+  snes.LoadRom(rom);
   snes.Reset();
 
   REQUIRE(log.Size() == 0);

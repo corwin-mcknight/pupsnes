@@ -181,7 +181,7 @@ struct MicroOpCpuHarness {
     for (std::size_t i = 0; i < program.size(); ++i) {
       rom[offset + i] = program[i];
     }
-    snes.LoadLoRom(rom);
+    snes.LoadRom(rom);
     snes.Reset();
   }
 

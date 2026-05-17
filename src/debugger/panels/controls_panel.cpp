@@ -26,6 +26,7 @@ const char* MapperLabel(MapperKind kind) {
     case MapperKind::kNone: return "—";
     case MapperKind::kLoROM: return "LoROM";
     case MapperKind::kHiROM: return "HiROM";
+    case MapperKind::kExHiROM: return "ExHiROM";
   }
   return "?";
 }

@@ -28,10 +28,13 @@ constexpr std::size_t kLoRomSize = 32U * 1024U;
 constexpr uint8_t kNopOpcode = 0xEAU;
 
 // 32 KiB LoROM pre-filled with NOPs and a reset vector pointing at $8000.
-// Big enough to populate fast-bank page windows with a contiguous pointer in
-// MapLoRomBankRange.
+// Sets the LoROM map-mode byte ($7FD5=0x20) and a plain chipset byte
+// ($7FD6=0x00) so DetectCartProfile routes through the LoROM builder
+// without spurious coprocessor detection.
 std::vector<uint8_t> MakeNopLoRom() {
   std::vector<uint8_t> rom(kLoRomSize, kNopOpcode);
+  rom[0x7FD5U] = 0x20U;
+  rom[0x7FD6U] = 0x00U;
   rom[0x7FFCU] = 0x00U;
   rom[0x7FFDU] = 0x80U;
   return rom;
@@ -74,7 +77,7 @@ TEST_CASE("FASTROM: MEMSEL bit 0 drives IsFastRomEnabled; other bits are ignored
 TEST_CASE("FASTROM: LoROM starts mapped with slow 8-cycle fast-bank pages", "[unit][fastrom]") {
   SNES snes;
   auto rom = MakeNopLoRom();
-  snes.LoadLoRom(rom);
+  snes.LoadRom(rom);
 
   for (uint8_t bank : {uint8_t{0x80U}, uint8_t{0xC0U}, uint8_t{0xFDU}}) {
     REQUIRE(GetAccessSpeed(snes, bank, 0x80U) == 8);
@@ -84,7 +87,7 @@ TEST_CASE("FASTROM: LoROM starts mapped with slow 8-cycle fast-bank pages", "[un
 TEST_CASE("FASTROM: enabling MEMSEL flips banks $80-$FD pages $80-$FF to 6 mcyc", "[unit][fastrom]") {
   SNES snes;
   auto rom = MakeNopLoRom();
-  snes.LoadLoRom(rom);
+  snes.LoadRom(rom);
   WriteMemSel(snes, 0x01U);
 
   for (uint8_t bank : {uint8_t{0x80U}, uint8_t{0xC0U}, uint8_t{0xFDU}}) {
@@ -97,7 +100,7 @@ TEST_CASE("FASTROM: enabling MEMSEL flips banks $80-$FD pages $80-$FF to 6 mcyc"
 TEST_CASE("FASTROM: disabling MEMSEL reverts fast banks to 8 mcyc", "[unit][fastrom]") {
   SNES snes;
   auto rom = MakeNopLoRom();
-  snes.LoadLoRom(rom);
+  snes.LoadRom(rom);
 
   WriteMemSel(snes, 0x01U);
   REQUIRE(GetAccessSpeed(snes, 0x80U, 0x80U) == 6);
@@ -113,7 +116,7 @@ TEST_CASE("FASTROM: disabling MEMSEL reverts fast banks to 8 mcyc", "[unit][fast
 TEST_CASE("FASTROM: slow banks $00-$7D never become fast", "[unit][fastrom]") {
   SNES snes;
   auto rom = MakeNopLoRom();
-  snes.LoadLoRom(rom);
+  snes.LoadRom(rom);
   WriteMemSel(snes, 0x01U);
 
   for (uint8_t bank : {uint8_t{0x00U}, uint8_t{0x40U}, uint8_t{0x7DU}}) {
@@ -124,7 +127,7 @@ TEST_CASE("FASTROM: slow banks $00-$7D never become fast", "[unit][fastrom]") {
 TEST_CASE("FASTROM: WRAM pages stay at 8 mcyc regardless of MEMSEL", "[unit][fastrom]") {
   SNES snes;
   auto rom = MakeNopLoRom();
-  snes.LoadLoRom(rom);
+  snes.LoadRom(rom);
   WriteMemSel(snes, 0x01U);
 
   // WRAM proper at $7E / $7F.
@@ -139,7 +142,7 @@ TEST_CASE("FASTROM: WRAM pages stay at 8 mcyc regardless of MEMSEL", "[unit][fas
 TEST_CASE("FASTROM: CPU MMIO pages ($42/$43) stay at 8 mcyc", "[unit][fastrom]") {
   SNES snes;
   auto rom = MakeNopLoRom();
-  snes.LoadLoRom(rom);
+  snes.LoadRom(rom);
   WriteMemSel(snes, 0x01U);
 
   REQUIRE(GetAccessSpeed(snes, 0x00U, 0x42U) == 8);
@@ -155,7 +158,7 @@ TEST_CASE("FASTROM: CPU MMIO pages ($42/$43) stay at 8 mcyc", "[unit][fastrom]")
 TEST_CASE("FASTROM: BusPlan access_cycles drops from 8 to 6 on fast-bank fetches", "[unit][fastrom]") {
   SNES snes;
   auto rom = MakeNopLoRom();
-  snes.LoadLoRom(rom);
+  snes.LoadRom(rom);
 
   BusPlan plan_slow = snes.system_bus->Plan(0x80'8000U, BusAccessType::kRead);
   REQUIRE(plan_slow.access_cycles == 8);
@@ -171,7 +174,7 @@ TEST_CASE("FASTROM: BusPlan access_cycles drops from 8 to 6 on fast-bank fetches
 TEST_CASE("FASTROM: BusPlan for slow-bank fetch is unaffected by MEMSEL", "[unit][fastrom]") {
   SNES snes;
   auto rom = MakeNopLoRom();
-  snes.LoadLoRom(rom);
+  snes.LoadRom(rom);
   WriteMemSel(snes, 0x01U);
 
   BusPlan plan = snes.system_bus->Plan(0x00'8000U, BusAccessType::kRead);
@@ -198,7 +201,7 @@ TEST_CASE("FASTROM: a NOP in a fast bank retires 12 mcyc when MEMSEL=1", "[unit]
   // Slow bank: 8 + 6 = 14. Fast bank with MEMSEL=1: 6 + 6 = 12.
   SNES snes;
   auto rom = MakeNopLoRom();
-  snes.LoadLoRom(rom);
+  snes.LoadRom(rom);
   WriteMemSel(snes, 0x01U);
 
   CPU& cpu = snes.GetCpu();
@@ -213,7 +216,7 @@ TEST_CASE("FASTROM: a NOP in a fast bank retires 12 mcyc when MEMSEL=1", "[unit]
 TEST_CASE("FASTROM: the same NOP retires 14 mcyc when MEMSEL=0", "[unit][fastrom]") {
   SNES snes;
   auto rom = MakeNopLoRom();
-  snes.LoadLoRom(rom);
+  snes.LoadRom(rom);
   // MEMSEL left at its reset default (0).
 
   CPU& cpu = snes.GetCpu();
@@ -228,7 +231,7 @@ TEST_CASE("FASTROM: the same NOP retires 14 mcyc when MEMSEL=0", "[unit][fastrom
 TEST_CASE("FASTROM: toggling MEMSEL mid-run changes retirement cost on the next NOP", "[unit][fastrom]") {
   SNES snes;
   auto rom = MakeNopLoRom();
-  snes.LoadLoRom(rom);
+  snes.LoadRom(rom);
 
   CPU& cpu = snes.GetCpu();
   cpu.Reset();
@@ -264,7 +267,7 @@ TEST_CASE("FASTROM: Cartridge reports MapperKind::kLoROM after LoadLoRom", "[uni
   REQUIRE(snes.GetCartridge().GetMapperKind() == MapperKind::kNone);
 
   auto rom = MakeNopLoRom();
-  snes.LoadLoRom(rom);
+  snes.LoadRom(rom);
   REQUIRE(snes.GetCartridge().GetMapperKind() == MapperKind::kLoROM);
 }
 
@@ -275,7 +278,7 @@ TEST_CASE("FASTROM: Cartridge reports MapperKind::kLoROM after LoadLoRom", "[uni
 TEST_CASE("FASTROM: SNES::Reset clears MEMSEL and remaps fast banks to slow", "[unit][fastrom]") {
   SNES snes;
   auto rom = MakeNopLoRom();
-  snes.LoadLoRom(rom);
+  snes.LoadRom(rom);
   WriteMemSel(snes, 0x01U);
   REQUIRE(snes.GetCpuMmio().IsFastRomEnabled());
   REQUIRE(GetAccessSpeed(snes, 0x80U, 0x80U) == 6);
@@ -290,12 +293,12 @@ TEST_CASE("FASTROM: SNES::Reset clears MEMSEL and remaps fast banks to slow", "[
 TEST_CASE("FASTROM: LoadLoRom clears MEMSEL from a prior cartridge", "[unit][fastrom]") {
   SNES snes;
   auto rom1 = MakeNopLoRom();
-  snes.LoadLoRom(rom1);
+  snes.LoadRom(rom1);
   WriteMemSel(snes, 0x01U);
   REQUIRE(snes.GetCpuMmio().IsFastRomEnabled());
 
   auto rom2 = MakeNopLoRom();
-  snes.LoadLoRom(rom2);
+  snes.LoadRom(rom2);
 
   REQUIRE_FALSE(snes.GetCpuMmio().IsFastRomEnabled());
   REQUIRE(GetAccessSpeed(snes, 0x80U, 0x80U) == 8);
@@ -322,7 +325,7 @@ TEST_CASE("FASTROM: running through sta $420D does not cause invariant violation
   rom[0x0007U] = 0xFEU;
   rom[0x7FFCU] = 0x00U;
   rom[0x7FFDU] = 0x80U;
-  snes.LoadLoRom(rom);
+  snes.LoadRom(rom);
   snes.Reset();
 
   // Drive CPU through many short slices, passing through the STA $420D

@@ -116,6 +116,14 @@ class SystemBus {
   void MapPage(const PageMapParams& params);
   void UnmapPage(uint8_t bank, uint8_t page);
 
+  // Walk every cell of the 256x256 page table and reset any entry whose
+  // device_id matches `id` to the unmapped default. Called by SNES when a
+  // Device is deregistered (typically when an old cartridge is destroyed
+  // during a mid-life cart swap) so the table never points at stale
+  // DeviceIds. O(64K) — fine for an event that happens at most a few times
+  // per session.
+  void UnmapByDeviceId(DeviceIdT id);
+
   [[nodiscard]] BusPlan Plan(SnesAddrT address, BusAccessType type, uint8_t write_data = 0) const;
   BusFollowResult Follow(const BusPlan& plan, TimeMasterT current_time, DeviceIdT source_device);
 

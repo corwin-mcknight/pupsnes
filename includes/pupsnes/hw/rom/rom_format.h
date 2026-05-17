@@ -6,13 +6,9 @@
 #include <string>
 #include <vector>
 
-namespace pupsnes {
+#include "pupsnes/hw/rom/cart_profile.h"
 
-// MapperKind is declared in cartridge.h, but the load-result type that uses
-// it is shared across cartridge.h / snes.h. Mirror the enum here so
-// rom_format.h doesn't have to depend on cartridge.h (which transitively
-// pulls in the Device/SystemBus surface).
-enum class MapperKind : uint8_t;
+namespace pupsnes {
 
 // Outcome of an attempt to load a cartridge image. `ok=true` means the
 // cartridge state has been updated; the message carries a one-line
