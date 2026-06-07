@@ -19,6 +19,7 @@
 #include "pupsnes/core/scheduler.h"
 #include "pupsnes/core/snes.h"
 #include "pupsnes/hw/sppu/ppu.h"
+#include "pupsnes/hw/sppu/pixel_format.h"
 #include "pupsnes/hw/rom/rom_format.h"
 #include "pupsnes/tools/trace_runner.h"  // for kMasterCyclesPerFrame
 
@@ -46,12 +47,6 @@ constexpr std::string_view kUsage =
   return {std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
 }
 
-// Expand a BGR555 5:5:5 channel to 8 bits by replicating high bits into low.
-[[nodiscard]] constexpr uint8_t Expand5To8(uint32_t c5) {
-  const uint32_t c = c5 & 0x1FU;
-  return static_cast<uint8_t>((c << 3U) | (c >> 2U));
-}
-
 void WritePpm(const std::filesystem::path& path, const pupsnes::FrameBufferView& view) {
   std::ofstream out(path, std::ios::binary);
   if (!out) {
@@ -64,9 +59,9 @@ void WritePpm(const std::filesystem::path& path, const pupsnes::FrameBufferView&
     const uint16_t* src = view.pixels + static_cast<std::size_t>(y) * view.stride;
     for (uint32_t x = 0; x < view.width; ++x) {
       const uint16_t bgr = src[x];
-      const uint8_t r = Expand5To8(bgr);
-      const uint8_t g = Expand5To8(static_cast<uint32_t>(bgr) >> 5U);
-      const uint8_t b = Expand5To8(static_cast<uint32_t>(bgr) >> 10U);
+      const auto r = static_cast<uint8_t>(pupsnes::sppu::Expand5To8(bgr));
+      const auto g = static_cast<uint8_t>(pupsnes::sppu::Expand5To8(static_cast<uint32_t>(bgr) >> 5U));
+      const auto b = static_cast<uint8_t>(pupsnes::sppu::Expand5To8(static_cast<uint32_t>(bgr) >> 10U));
       row[static_cast<std::size_t>(x) * 3U + 0U] = r;
       row[static_cast<std::size_t>(x) * 3U + 1U] = g;
       row[static_cast<std::size_t>(x) * 3U + 2U] = b;
@@ -144,38 +139,9 @@ int main(int argc, char** argv) {
   const pupsnes::TimeMasterT cap =
       start_master + static_cast<pupsnes::TimeMasterT>(frames) * pupsnes::tools::kMasterCyclesPerFrame;
 
-  // Defensive: bail out if the CPU stops making forward progress (STP / halt).
-  constexpr int kMaxStuckIterations = 16;
-  int stuck_iterations = 0;
-  pupsnes::TimeMasterT last_master = start_master;
-
-  while (true) {
-    const pupsnes::TimeMasterT now_master = snes.GetMasterTime();
-    if (now_master >= cap) break;
-
-    pupsnes::TimeMasterT target = snes.GetScheduler().NextEventMasterTime();
-    if (cap < target) target = cap;
-
-    try {
-      static_cast<void>(snes.GetCpu().TickToTarget(target));
-    } catch (const std::exception& ex) {
-      std::cerr << "pupsnes-screenshot: CPU exception: " << ex.what() << "\n";
-      return 1;
-    }
-    const pupsnes::TimeMasterT after_tick = snes.GetMasterTime();
-    snes.MachineSync(after_tick);
-    snes.GetScheduler().FireEventsThrough(after_tick);
-
-    if (after_tick == last_master) {
-      if (++stuck_iterations >= kMaxStuckIterations) {
-        std::cerr << "pupsnes-screenshot: CPU made no forward progress "
-                     "(STP/halt or tick budget too small)\n";
-        return 1;
-      }
-    } else {
-      stuck_iterations = 0;
-      last_master = after_tick;
-    }
+  if (auto err = pupsnes::tools::DriveMachineToMasterTime(snes, cap)) {
+    std::cerr << "pupsnes-screenshot: " << *err << "\n";
+    return 1;
   }
 
   const pupsnes::FrameBufferView view = snes.GetPpu().BuildFrontView();

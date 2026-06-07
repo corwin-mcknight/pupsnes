@@ -29,6 +29,7 @@
 #include "pupsnes/hw/input/joypad.h"
 #include "pupsnes/core/scheduler.h"
 #include "pupsnes/hw/sppu/ppu.h"
+#include "pupsnes/hw/sppu/pixel_format.h"
 #include "pupsnes/hw/rom/rom_format.h"
 
 namespace pupsnes::emulator {
@@ -39,9 +40,8 @@ namespace {
 // scales this by the speed multiplier each frame.
 constexpr uint64_t kMasterClockHz = 21477272U;
 
-// Maximum logical PPU framebuffer (256 wide × 239 with overscan). The unused
-// tail when overscan is off costs nothing.
-constexpr std::size_t kMaxLogicalPixels = 256U * 239U;
+using sppu::Bgr555ToRgba8;
+using sppu::kMaxLogicalPixels;
 
 // Defensive cap on TickToTarget loop iterations without forward progress —
 // breaks out of stalls (e.g., a STP) so the UI stays responsive.
@@ -56,15 +56,6 @@ std::string DeriveSavePath(const std::string& rom_path) {
   std::filesystem::path p(rom_path);
   p.replace_extension(".srm");
   return p.string();
-}
-
-constexpr uint32_t Expand5To8(uint32_t v5) { return (v5 << 3U) | (v5 >> 2U); }
-
-uint32_t Bgr555ToRgba8(uint16_t c) {
-  const uint32_t r = Expand5To8(static_cast<uint32_t>(c) & 0x1FU);
-  const uint32_t g = Expand5To8((static_cast<uint32_t>(c) >> 5U) & 0x1FU);
-  const uint32_t b = Expand5To8((static_cast<uint32_t>(c) >> 10U) & 0x1FU);
-  return r | (g << 8U) | (b << 16U) | (0xFFU << 24U);
 }
 
 std::array<uint32_t, kMaxLogicalPixels>& GetScratchBuffer() {

@@ -79,8 +79,9 @@ void DrawChannelRowExpansion(uint8_t ch, const DmaController::ChannelState& s) {
   ImGui::Separator();
   ImGui::Text("DMAP byte decode (0x%02X):", s.dmap);
   ImGui::BulletText("bit 7 direction:    %s", DirLabel(s.dmap));
-  ImGui::BulletText("bit 6 HDMA-indirect: %s", (s.dmap & 0x20U) != 0U ? "set" : "clear");
-  ImGui::BulletText("bit 6 HDMA type:    %s", IsHdmaChannel(s.dmap) ? "HDMA" : "DMA");
+  // DMAP bit 6 selects the HDMA table addressing mode: set = indirect, clear =
+  // direct. This matches the hardware decode in dma_controller.cpp (s.dmap & 0x40).
+  ImGui::BulletText("bit 6 HDMA addr:    %s", (s.dmap & kDmapHdmaBit) != 0U ? "indirect" : "direct");
   ImGui::BulletText("bits 4-3 A-step:    %s", StepLabel(s.dmap));
   ImGui::BulletText("bits 2-0 mode:      %u", static_cast<unsigned>(s.dmap & kDmapModeMask));
   ImGui::Unindent();

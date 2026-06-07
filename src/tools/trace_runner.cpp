@@ -2,6 +2,7 @@
 
 #include <fstream>
 #include <iterator>
+#include <limits>
 #include <stdexcept>
 #include <vector>
 
@@ -60,7 +61,51 @@ namespace {
   return true;  // unreachable — ValidateBudget rejects empty budgets
 }
 
+// One scheduler-bounded advance of the machine toward `cap`: tick the CPU to
+// min(next_event, cap), MachineSync, then fire due events. Returns the new
+// master time. This is the load-bearing cycle-accurate sequence; both the
+// trace run loop and DriveMachineToMasterTime route through it so the ordering
+// lives in exactly one place. May throw whatever TickToTarget throws — callers
+// decide how to report it.
+[[nodiscard]] TimeMasterT AdvanceOneStep(SNES& snes, TimeMasterT cap) {
+  TimeMasterT target = snes.GetScheduler().NextEventMasterTime();
+  if (cap < target) target = cap;  // clamp so we don't overshoot the budget
+  static_cast<void>(snes.GetCpu().TickToTarget(target));
+  const TimeMasterT after_tick = snes.GetMasterTime();
+  snes.MachineSync(after_tick);
+  snes.GetScheduler().FireEventsThrough(after_tick);
+  return after_tick;
+}
+
 }  // namespace
+
+std::optional<std::string> DriveMachineToMasterTime(SNES& snes, TimeMasterT cap) {
+  // Defensive cap: never run more than this many advance steps without making
+  // forward progress on master time. Prevents infinite loops if the CPU stalls
+  // (e.g. STP) while still short of the target.
+  constexpr int kMaxStuckIterations = 16;
+  int stuck_iterations = 0;
+  TimeMasterT last_master = snes.GetMasterTime();
+
+  while (snes.GetMasterTime() < cap) {
+    TimeMasterT after_tick = 0;
+    try {
+      after_tick = AdvanceOneStep(snes, cap);
+    } catch (const std::exception& ex) {
+      return std::string{"CPU exception: "} + ex.what();
+    }
+
+    if (after_tick == last_master) {
+      if (++stuck_iterations >= kMaxStuckIterations) {
+        return "CPU made no forward progress (STP/halt or tick budget too small)";
+      }
+    } else {
+      stuck_iterations = 0;
+      last_master = after_tick;
+    }
+  }
+  return std::nullopt;
+}
 
 TraceRunResult RunTrace(const TraceRunOptions& opts) {
   TraceRunResult result{};
@@ -103,9 +148,21 @@ TraceRunResult RunTrace(const TraceRunOptions& opts) {
   }
 
   const TimeMasterT start_master = snes.GetMasterTime();
-  // Defensive cap: never run more than this many TickToTarget loops without
-  // making forward progress on master time. Prevents infinite loops if the
-  // CPU stalls (e.g., STP) while the budget is in instruction-count mode.
+
+  // Master-time cap for this run. Time-based budgets give a concrete ceiling;
+  // instruction-count mode has no time cap (the CPU yields via step_target once
+  // N instructions retire), so we let the loop run to the max and rely on
+  // BudgetSatisfied(LineCount) to stop it.
+  TimeMasterT cap = std::numeric_limits<TimeMasterT>::max();
+  if (opts.budget.master_cycles.has_value()) {
+    cap = start_master + *opts.budget.master_cycles;
+  } else if (opts.budget.frames.has_value()) {
+    cap = start_master + static_cast<TimeMasterT>(*opts.budget.frames) * kMasterCyclesPerFrame;
+  }
+
+  // Defensive cap: never run more than this many advance steps without making
+  // forward progress on master time. Prevents infinite loops if the CPU stalls
+  // (e.g., STP) while the budget is in instruction-count mode.
   constexpr int kMaxStuckIterations = 16;
   int stuck_iterations = 0;
   TimeMasterT last_master = start_master;
@@ -116,28 +173,14 @@ TraceRunResult RunTrace(const TraceRunOptions& opts) {
       break;
     }
 
-    TimeMasterT next_event = snes.GetScheduler().NextEventMasterTime();
-    // Clamp to the configured budget so we don't overshoot.
-    TimeMasterT target = next_event;
-    if (opts.budget.master_cycles.has_value()) {
-      const TimeMasterT cap = start_master + *opts.budget.master_cycles;
-      if (cap < target) target = cap;
-    } else if (opts.budget.frames.has_value()) {
-      const TimeMasterT cap =
-          start_master + static_cast<TimeMasterT>(*opts.budget.frames) * kMasterCyclesPerFrame;
-      if (cap < target) target = cap;
-    }
-
+    TimeMasterT after_tick = 0;
     try {
-      static_cast<void>(snes.GetCpu().TickToTarget(target));
+      after_tick = AdvanceOneStep(snes, cap);
     } catch (const std::exception& ex) {
       result.error = std::string{"CPU exception: "} + ex.what();
       sink.Flush();
       return result;
     }
-    const TimeMasterT after_tick = snes.GetMasterTime();
-    snes.MachineSync(after_tick);
-    snes.GetScheduler().FireEventsThrough(after_tick);
 
     if (after_tick == last_master) {
       if (++stuck_iterations >= kMaxStuckIterations) {

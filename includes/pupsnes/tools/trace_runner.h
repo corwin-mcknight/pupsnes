@@ -7,7 +7,22 @@
 
 #include "pupsnes/core/types.h"
 
+namespace pupsnes {
+class SNES;
+}
+
 namespace pupsnes::tools {
+
+// Drives the SNES master clock forward until master time reaches `cap`, using
+// the canonical scheduler-bounded sequence (tick the CPU to min(next_event,
+// cap), MachineSync, then fire due events). Loops with a stuck-guard that
+// aborts if the CPU stops making forward progress (e.g. STP/halt or a tick
+// budget too small). Returns std::nullopt on reaching the cap; a human-readable
+// error string on a stall or a CPU exception.
+//
+// This is the single source of truth for the run-loop timing sequence shared by
+// the trace runner and the screenshot tool — keep cycle-accurate ordering here.
+[[nodiscard]] std::optional<std::string> DriveMachineToMasterTime(SNES& snes, TimeMasterT cap);
 
 // Stop-condition for a trace run. Exactly one of these must be set in
 // TraceRunOptions; the runner asserts when zero or more than one is supplied.

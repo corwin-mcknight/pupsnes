@@ -11,6 +11,7 @@
 #include "panel_utils.h"
 #include "panels.h"
 #include "pupsnes/hw/sppu/ppu.h"
+#include "pupsnes/hw/sppu/pixel_format.h"
 #include "pupsnes/hw/sppu/ppu_regs.h"
 
 namespace pupsnes::debugger {
@@ -335,26 +336,15 @@ PreviewTexture& GetOverlayTexture() {
   return tex;
 }
 
+using sppu::Bgr555ToRgba8;
+using sppu::Expand5To8;
+using sppu::kMaxLogicalPixels;
+
 // CPU-side conversion buffer: BGR555 -> RGBA8. Sized for the max logical
 // view (256 × 239 with overscan); the unused tail doesn't cost anything.
-constexpr std::size_t kMaxLogicalPixels = 256U * 239U;
 std::array<uint32_t, kMaxLogicalPixels>& GetScratchBuffer() {
   static std::array<uint32_t, kMaxLogicalPixels> buf{};
   return buf;
-}
-
-// 5-to-8 bit expansion: replicate the high bits into the low bits so the
-// 5-bit value 31 maps to 255, not 248. Correct for colour fidelity in the
-// debug preview; the emulator frontend may use its own table later.
-constexpr uint32_t Expand5To8(uint32_t v5) { return (v5 << 3U) | (v5 >> 2U); }
-
-uint32_t Bgr555ToRgba8(uint16_t c) {
-  const uint32_t r = Expand5To8(static_cast<uint32_t>(c) & 0x1FU);
-  const uint32_t g = Expand5To8((static_cast<uint32_t>(c) >> 5U) & 0x1FU);
-  const uint32_t b = Expand5To8((static_cast<uint32_t>(c) >> 10U) & 0x1FU);
-  // IM_COL32 and glTexSubImage2D(GL_RGBA, GL_UNSIGNED_BYTE) both expect
-  // RGBA byte order in memory on little-endian hosts: [R][G][B][A].
-  return r | (g << 8U) | (b << 16U) | (0xFFU << 24U);
 }
 
 void UploadFrameToTexture(const FrameBufferView& view, bool darkened = false) {
