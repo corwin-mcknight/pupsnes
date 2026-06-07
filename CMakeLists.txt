@@ -134,12 +134,12 @@ set(PUPSNES_PROFILE "PRODUCTION" CACHE STRING "Build profile: DEBUG, CI, or PROD
 set_property(CACHE PUPSNES_PROFILE PROPERTY STRINGS DEBUG CI PRODUCTION)
 
 # Consolidates the static-lib boilerplate every pupsnes target shares:
-# cxx_std_20 PUBLIC, `includes/` exposed PUBLIC, `src/` private, optional PUBLIC
+# cxx_std_23 PUBLIC, `includes/` exposed PUBLIC, `src/` private, optional PUBLIC
 # link deps. Keeps each library definition a single call.
 function(pupsnes_add_static_lib name)
   cmake_parse_arguments(P "" "" "SOURCES;LINK_PUBLIC" ${ARGN})
   add_library(${name} STATIC ${P_SOURCES})
-  target_compile_features(${name} PUBLIC cxx_std_20)
+  target_compile_features(${name} PUBLIC cxx_std_23)
   target_include_directories(${name} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/includes)
   target_include_directories(${name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
   if(P_LINK_PUBLIC)
@@ -162,17 +162,17 @@ pupsnes_add_static_lib(pupsnes_trace_runner SOURCES ${PUPSNES_TRACE_RUNNER_SOURC
 pupsnes_add_static_lib(pupsnes_trace_diff SOURCES ${PUPSNES_TRACE_DIFF_SOURCES})
 
 add_executable(pupsnes_trace_cli src/tools/trace_runner_main.cpp)
-target_compile_features(pupsnes_trace_cli PRIVATE cxx_std_20)
+target_compile_features(pupsnes_trace_cli PRIVATE cxx_std_23)
 target_link_libraries(pupsnes_trace_cli PRIVATE pupsnes_trace_runner)
 set_target_properties(pupsnes_trace_cli PROPERTIES OUTPUT_NAME pupsnes-trace)
 
 add_executable(pupsnes_trace_diff_cli src/tools/pupsnes_trace_diff_main.cpp)
-target_compile_features(pupsnes_trace_diff_cli PRIVATE cxx_std_20)
+target_compile_features(pupsnes_trace_diff_cli PRIVATE cxx_std_23)
 target_link_libraries(pupsnes_trace_diff_cli PRIVATE pupsnes_trace_diff)
 set_target_properties(pupsnes_trace_diff_cli PROPERTIES OUTPUT_NAME pupsnes-trace-diff)
 
 add_executable(pupsnes_screenshot_cli src/tools/screenshot_main.cpp)
-target_compile_features(pupsnes_screenshot_cli PRIVATE cxx_std_20)
+target_compile_features(pupsnes_screenshot_cli PRIVATE cxx_std_23)
 target_link_libraries(pupsnes_screenshot_cli PRIVATE pupsnes_trace_runner)
 set_target_properties(pupsnes_screenshot_cli PROPERTIES OUTPUT_NAME pupsnes-screenshot)
 
@@ -199,7 +199,7 @@ string(REGEX REPLACE "^\\$<\\$<CONFIG:[^>]+>:(.*)>$" "\\1" PUPSNES_IMGUI_INCLUDE
 get_filename_component(PUPSNES_IMGUI_ROOT "${PUPSNES_IMGUI_INCLUDE_DIR}" DIRECTORY)
 
 add_executable(pupsnes_debugger ${PUPSNES_DEBUGGER_SOURCES})
-target_compile_features(pupsnes_debugger PRIVATE cxx_std_20)
+target_compile_features(pupsnes_debugger PRIVATE cxx_std_23)
 target_include_directories(pupsnes_debugger PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/includes)
 target_include_directories(pupsnes_debugger PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -216,7 +216,7 @@ set_source_files_properties(
 set_target_properties(pupsnes_debugger PROPERTIES OUTPUT_NAME pupsnes-debugger)
 
 add_executable(pupsnes_emulator ${PUPSNES_EMULATOR_SOURCES})
-target_compile_features(pupsnes_emulator PRIVATE cxx_std_20)
+target_compile_features(pupsnes_emulator PRIVATE cxx_std_23)
 target_include_directories(pupsnes_emulator PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/includes)
 target_include_directories(pupsnes_emulator PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -349,7 +349,7 @@ if(BUILD_TESTING)
   add_custom_target(pupsnes_test_roms DEPENDS ${PUPSNES_TEST_ROM_OUTPUTS})
 
   add_executable(pupsnes_tests ${PUPSNES_TEST_SOURCES})
-  target_compile_features(pupsnes_tests PRIVATE cxx_std_20)
+  target_compile_features(pupsnes_tests PRIVATE cxx_std_23)
   target_include_directories(pupsnes_tests PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/includes)
   target_include_directories(pupsnes_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
   target_link_libraries(pupsnes_tests PRIVATE pupsnes pupsnes_debugger_core pupsnes_trace_runner pupsnes_trace_diff Catch2::Catch2WithMain)

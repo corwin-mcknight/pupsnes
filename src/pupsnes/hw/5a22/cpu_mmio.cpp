@@ -1,4 +1,5 @@
 #include "pupsnes/hw/5a22/cpu_mmio.h"
+#include <optional>
 
 #include "pupsnes/hw/5a22/cpu.h"
 #include "pupsnes/hw/rom/cartridge.h"
@@ -76,78 +77,87 @@ void CpuMmio::MapSystemBus(SystemBus& bus) {
 
 MmioReadResult CpuMmio::ReadRegister(uint32_t offset, TimeMasterT current_time) {
   const uint32_t reg = offset & 0xFFFFU;
-  if (reg == kMemSelOffset) {
-    return {memsel_, 0xFFU};
-  }
-  if (reg == kRdNmiOffset) {
-    // RDNMI read both samples and clears the VBlank NMI latch. Polling loops
-    // of the form `BIT $4210 / BPL` see bit 7 high once per frame at VBlank
-    // entry and fall back to 0 on the next read until the latch re-arms.
-    bool vblank_nmi = false;
-    if (snes_ != nullptr && snes_->ppu != nullptr) {
-      vblank_nmi = snes_->ppu->QueryAndClearVblankNmiFlag(current_time);
+  const bool k_has_joypad = (snes_ != nullptr && snes_->joypad != nullptr);
+  switch (reg) {
+    case kMemSelOffset:
+      return {memsel_, 0xFFU};
+
+    case kRdNmiOffset: {
+      // RDNMI read both samples and clears the VBlank NMI latch. Polling loops
+      // of the form `BIT $4210 / BPL` see bit 7 high once per frame at VBlank
+      // entry and fall back to 0 on the next read until the latch re-arms.
+      bool vblank_nmi = false;
+      if (snes_ != nullptr && snes_->ppu != nullptr) {
+        vblank_nmi = snes_->ppu->QueryAndClearVblankNmiFlag(current_time);
+      }
+      uint8_t value = kRdNmiCpuVersion;
+      if (vblank_nmi) value = static_cast<uint8_t>(value | kRdNmiVblankFlagMask);
+      return {value, kRdNmiDrivenMask};
     }
-    uint8_t value = kRdNmiCpuVersion;
-    if (vblank_nmi) value = static_cast<uint8_t>(value | kRdNmiVblankFlagMask);
-    return {value, kRdNmiDrivenMask};
-  }
-  if (reg == kTimeUpOffset) {
-    // TIMEUP read: bit 7 reports the latch; reading clears it and de-asserts
-    // /IRQ. Bits 6:0 are open-bus on hardware.
-    const uint8_t value = timeup_latch_ ? kTimeUpFlagMask : uint8_t{0};
-    timeup_latch_ = false;
-    return {value, kTimeUpFlagMask};
-  }
-  if (reg == kHvbJoyOffset) {
-    // Query the PPU directly so the flags reflect the bus cycle's master time.
-    // The PPU catches up internally; missing the call would leak stale h/v
-    // from whenever the PPU last advanced.
-    PpuHvbStatus status{false, false};
-    if (snes_ != nullptr && snes_->ppu != nullptr) {
-      status = snes_->ppu->QueryHvbStatus(current_time);
+
+    case kTimeUpOffset: {
+      // TIMEUP read: bit 7 reports the latch; reading clears it and de-asserts
+      // /IRQ. Bits 6:0 are open-bus on hardware.
+      const uint8_t value = timeup_latch_ ? kTimeUpFlagMask : uint8_t{0};
+      timeup_latch_ = false;
+      return {value, kTimeUpFlagMask};
     }
-    uint8_t value = 0;
-    if (status.vblank) value = static_cast<uint8_t>(value | kHvbJoyVblankMask);
-    if (status.hblank) value = static_cast<uint8_t>(value | kHvbJoyHblankMask);
-    // Auto-joypad busy bit stays 0 until the joypad auto-read controller lands.
-    return {value, kHvbJoyDrivenMask};
-  }
-  if (reg == kJoySer0Offset) {
-    // Manual serial port for P1. Only bit 0 carries pad data; leave bits 7-1
-    // as open-bus rather than fabricating zeros — real hardware exposes a few
-    // open I/O pins in that window.
-    if (snes_ != nullptr && snes_->joypad != nullptr) {
-      return {snes_->joypad->ReadJoySer0(), 0x01U};
+
+    case kHvbJoyOffset: {
+      // Query the PPU directly so the flags reflect the bus cycle's master time.
+      // The PPU catches up internally; missing the call would leak stale h/v
+      // from whenever the PPU last advanced.
+      PpuHvbStatus status{false, false};
+      if (snes_ != nullptr && snes_->ppu != nullptr) {
+        status = snes_->ppu->QueryHvbStatus(current_time);
+      }
+      uint8_t value = 0;
+      if (status.vblank) value = static_cast<uint8_t>(value | kHvbJoyVblankMask);
+      if (status.hblank) value = static_cast<uint8_t>(value | kHvbJoyHblankMask);
+      // Auto-joypad busy bit stays 0 until the joypad auto-read controller lands.
+      return {value, kHvbJoyDrivenMask};
     }
-    return {0x00U, 0x01U};
-  }
-  if (reg == kJoySer1Offset) {
-    // P2 manual serial port. No P2 controller, so the data line reads 0 with
-    // bit 0 driven; bits 7-1 stay open-bus.
-    if (snes_ != nullptr && snes_->joypad != nullptr) {
-      return {snes_->joypad->ReadJoySer1(), 0x01U};
+
+    case kJoySer0Offset:
+      // Manual serial port for P1. Only bit 0 carries pad data; leave bits 7-1
+      // as open-bus rather than fabricating zeros — real hardware exposes a few
+      // open I/O pins in that window.
+      if (snes_ != nullptr && snes_->joypad != nullptr) {
+        return {snes_->joypad->ReadJoySer0(), 0x01U};
+      }
+      return {0x00U, 0x01U};
+
+    case kJoySer1Offset:
+      // P2 manual serial port. No P2 controller, so the data line reads 0 with
+      // bit 0 driven; bits 7-1 stay open-bus.
+      if (snes_ != nullptr && snes_->joypad != nullptr) {
+        return {snes_->joypad->ReadJoySer1(), 0x01U};
+      }
+      return {0x00U, 0x01U};
+
+    case kAutoJoyResultFirst: {
+      // $4218 JOY1L — A, X, L, R in bits 7..4, controller-type ID in bits 3..0.
+      const uint8_t value = k_has_joypad ? snes_->joypad->ReadJoy1L() : 0x00U;
+      return {value, 0xFFU};
     }
-    return {0x00U, 0x01U};
+
+    case kAutoJoyResultFirst + 1U: {
+      // $4219 JOY1H — B, Y, Select, Start, Up, Down, Left, Right.
+      const uint8_t value = k_has_joypad ? snes_->joypad->ReadJoy1H() : 0x00U;
+      return {value, 0xFFU};
+    }
+
+    default:
+      if (reg > kAutoJoyResultFirst + 1U && reg <= kAutoJoyResultLast) {
+        // $421A-$421F: JOY2/JOY3/JOY4. No P2-P4 controllers; drive zero so
+        // polling doesn't pick up open-bus garbage as phantom button presses.
+        return {0x00U, 0xFFU};
+      }
+      // Stub: other CPU MMIO registers (NMITIMEN, RDNMI, HDMA) are not yet
+      // modeled. Return pure open-bus (mask=0) so the bus merges in the last
+      // data value instead of a hard zero.
+      return {0x00U, 0x00U};
   }
-  if (reg == kAutoJoyResultFirst) {
-    // $4218 JOY1L — A, X, L, R in bits 7..4, controller-type ID in bits 3..0.
-    const uint8_t value = (snes_ != nullptr && snes_->joypad != nullptr) ? snes_->joypad->ReadJoy1L() : 0x00U;
-    return {value, 0xFFU};
-  }
-  if (reg == kAutoJoyResultFirst + 1U) {
-    // $4219 JOY1H — B, Y, Select, Start, Up, Down, Left, Right.
-    const uint8_t value = (snes_ != nullptr && snes_->joypad != nullptr) ? snes_->joypad->ReadJoy1H() : 0x00U;
-    return {value, 0xFFU};
-  }
-  if (reg > kAutoJoyResultFirst + 1U && reg <= kAutoJoyResultLast) {
-    // $421A-$421F: JOY2/JOY3/JOY4. No P2-P4 controllers; drive zero so polling
-    // doesn't pick up open-bus garbage as phantom button presses.
-    return {0x00U, 0xFFU};
-  }
-  // Stub: other CPU MMIO registers (NMITIMEN, RDNMI, HDMA) are not yet
-  // modeled. Return pure open-bus (mask=0) so the bus merges in the last data
-  // value instead of a hard zero.
-  return {0x00U, 0x00U};
 }
 
 void CpuMmio::WriteRegister(uint32_t offset, uint8_t data, TimeMasterT current_time) {
@@ -242,27 +252,23 @@ void CpuMmio::WriteRegister(uint32_t offset, uint8_t data, TimeMasterT current_t
 }
 
 std::optional<uint8_t> CpuMmio::HandleDebugRead(uint32_t offset) const {
-  const uint32_t reg = offset & 0xFFFFU;
-  if (reg == kMemSelOffset) {
-    return memsel_;
+  switch (offset & 0xFFFFU) {
+    case kMemSelOffset:
+      return memsel_;
+    case kNmiTimenOffset:
+      // $4200 is write-only on real hardware; expose the shadow for the debugger.
+      return nmitimen_;
+    case kHTimeLOffset:
+      return static_cast<uint8_t>(htime_ & 0xFFU);
+    case kHTimeHOffset:
+      return static_cast<uint8_t>((htime_ >> 8U) & 0x01U);
+    case kVTimeLOffset:
+      return static_cast<uint8_t>(vtime_ & 0xFFU);
+    case kVTimeHOffset:
+      return static_cast<uint8_t>((vtime_ >> 8U) & 0x01U);
+    default:
+      return std::nullopt;
   }
-  if (reg == kNmiTimenOffset) {
-    // $4200 is write-only on real hardware; expose the shadow for the debugger.
-    return nmitimen_;
-  }
-  if (reg == kHTimeLOffset) {
-    return static_cast<uint8_t>(htime_ & 0xFFU);
-  }
-  if (reg == kHTimeHOffset) {
-    return static_cast<uint8_t>((htime_ >> 8U) & 0x01U);
-  }
-  if (reg == kVTimeLOffset) {
-    return static_cast<uint8_t>(vtime_ & 0xFFU);
-  }
-  if (reg == kVTimeHOffset) {
-    return static_cast<uint8_t>((vtime_ >> 8U) & 0x01U);
-  }
-  return 0x00U;
 }
 
 bool CpuMmio::HandleDebugWrite(uint32_t offset, uint8_t data) {
