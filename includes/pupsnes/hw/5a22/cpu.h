@@ -208,13 +208,11 @@ class CPU : public MasterClockDriver {
   };
 
   struct StepResult {
-    // Master-cycle cost of the micro-op that just retired. 0 means no
-    // micro-op was consumed (breakpoint / fault-before-retire); the caller
-    // checks master_cycles > 0 to decide whether to advance debugger state.
     // `stopped` is true when the step hit a breakpoint or fault; the caller
     // maps `reason` to kBreakpoint or kFault. kReachedTarget (stopped=false)
-    // means normal progress — the loop continues.
-    TimeMasterDeltaT master_cycles = 0;
+    // means normal progress — the loop continues. The micro-op's master-cycle
+    // cost is not reported here: TickToTarget advances master time from the
+    // pre-execution estimate (EstimateNextStepCostOrZero) before dispatching.
     TickStopReason reason = TickStopReason::kReachedTarget;
     bool stopped = false;
   };
@@ -280,13 +278,6 @@ class CPU : public MasterClockDriver {
   // Cached at Reset() from snes_->system_bus.get(). Lets the inline BusRead /
   // BusWrite fast path skip the unique_ptr<> deref (non-trivial in debug).
   SystemBus* system_bus_raw_ = nullptr;
-
-  // Master-cycle cost of the most recent bus access (BusRead / BusWrite).
-  // Populated by both the fast pointer path and the slow Plan+Follow path so
-  // the micro-op retirement code in Tick can advance cycle_time by the real
-  // access_speed (6 for FASTROM, 8 for slow ROM/WRAM/MMIO, 12 for joypad).
-  // Meaningless for micro-ops that don't issue a bus access.
-  TimeMasterDeltaT last_access_cycles_ = 0;
 
   // DRAM refresh state. next_refresh_time_ is the absolute master time at
   // which the next 40-cycle refresh window begins. refresh_cycles_remaining_

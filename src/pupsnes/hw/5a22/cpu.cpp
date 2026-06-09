@@ -322,7 +322,6 @@ uint8_t CPU::ReadResetVectorByte(SnesAddrT addr) {
 
 TickResult CPU::BusReadSlow(SnesAddrT addr, TimeMasterDeltaT cycle_time) {
   auto plan = snes_->system_bus->Plan(addr, BusAccessType::kRead, 0);
-  last_access_cycles_ = plan.access_cycles;
   auto result = snes_->system_bus->Follow(plan, local_time_ + cycle_time, device_id_);
   // Async bus scheduling is gone in the new model; WasScheduled() should not
   // fire, but if it does we treat it as a completed access (no blocking).
@@ -332,7 +331,6 @@ TickResult CPU::BusReadSlow(SnesAddrT addr, TimeMasterDeltaT cycle_time) {
 
 TickResult CPU::BusWriteSlow(SnesAddrT addr, uint8_t data, TimeMasterDeltaT cycle_time) {
   auto plan = snes_->system_bus->Plan(addr, BusAccessType::kWrite, data);
-  last_access_cycles_ = plan.access_cycles;
   auto result = snes_->system_bus->Follow(plan, local_time_ + cycle_time, device_id_);
   (void)result;
   return TickResult{0, TickStopReason::kReachedTarget};
@@ -344,8 +342,7 @@ TickResult CPU::BusWriteSlow(SnesAddrT addr, uint8_t data, TimeMasterDeltaT cycl
 // lets the compiler honor the attribute without ODR concerns.
 [[gnu::always_inline]] inline TickResult CPU::BusRead(SnesAddrT addr, TimeMasterDeltaT cycle_time) {
   uint8_t data;
-  if (system_bus_raw_ != nullptr &&
-      system_bus_raw_->TryFastRead(addr, local_time_ + cycle_time, data, last_access_cycles_)) {
+  if (system_bus_raw_ != nullptr && system_bus_raw_->TryFastRead(addr, local_time_ + cycle_time, data)) {
     fetch_data_ = data;
     return TickResult{0, TickStopReason::kReachedTarget};
   }
@@ -353,8 +350,7 @@ TickResult CPU::BusWriteSlow(SnesAddrT addr, uint8_t data, TimeMasterDeltaT cycl
 }
 
 [[gnu::always_inline]] inline TickResult CPU::BusWrite(SnesAddrT addr, uint8_t data, TimeMasterDeltaT cycle_time) {
-  if (system_bus_raw_ != nullptr &&
-      system_bus_raw_->TryFastWrite(addr, local_time_ + cycle_time, data, last_access_cycles_)) {
+  if (system_bus_raw_ != nullptr && system_bus_raw_->TryFastWrite(addr, local_time_ + cycle_time, data)) {
     return TickResult{0, TickStopReason::kReachedTarget};
   }
   return BusWriteSlow(addr, data, cycle_time);
@@ -1050,7 +1046,7 @@ CPU::StepResult CPU::FetchOpcode(TimeMasterDeltaT cycle_time) {
     if (debugger_contract_.suppressed_breakpoint_pc == opcode_address) {
       debugger_contract_.suppressed_breakpoint_pc.reset();
     } else {
-      return StepResult{0, TickStopReason::kBreakpoint, true};
+      return StepResult{TickStopReason::kBreakpoint, true};
     }
   }
 
@@ -1058,9 +1054,8 @@ CPU::StepResult CPU::FetchOpcode(TimeMasterDeltaT cycle_time) {
 
   TickResult bus_result = BusRead(opcode_address, cycle_time);
   if (bus_result.reason != TickStopReason::kReachedTarget) {
-    return StepResult{0, bus_result.reason, true};
+    return StepResult{bus_result.reason, true};
   }
-  const TimeMasterDeltaT fetch_cycles = last_access_cycles_;
   regs_.PC = static_cast<uint16_t>(regs_.PC + 1U);
   timing_context_ = TimingContext{};
 
@@ -1073,7 +1068,7 @@ CPU::StepResult CPU::FetchOpcode(TimeMasterDeltaT cycle_time) {
   }
   if (entry.disposition == InstructionDisposition::kFaultUnimplemented) {
     RecordFault(Fault::Type::kUnimplementedOpcode, fetch_data_, opcode_address);
-    return StepResult{fetch_cycles, TickStopReason::kFault, true};
+    return StepResult{TickStopReason::kFault, true};
   }
 
   current_instr_ = &entry;
@@ -1094,7 +1089,7 @@ CPU::StepResult CPU::FetchOpcode(TimeMasterDeltaT cycle_time) {
     micro_op_recorder_->OnMicroOp(rec);
   }
   DrainSkippedMicroOps();
-  return StepResult{fetch_cycles, TickStopReason::kReachedTarget, false};
+  return StepResult{TickStopReason::kReachedTarget, false};
 }
 
 TickResult CPU::PerformBusAction(MicroBusAction action, [[maybe_unused]] uint8_t params, TimeMasterDeltaT cycle_time) {
@@ -1191,13 +1186,8 @@ CPU::StepResult CPU::ExecuteMicroOp(TimeMasterDeltaT cycle_time) {
   const SnesAddrT pre_pc = PcAddr(regs_);
   TickResult bus_result = PerformBusAction(mop.bus_action, mop.params, cycle_time);
   if (bus_result.reason != TickStopReason::kReachedTarget) {
-    return StepResult{0, bus_result.reason, true};
+    return StepResult{bus_result.reason, true};
   }
-  // Bus micro-ops charge the targeted page's access_speed (set as a side
-  // effect of BusRead / BusWrite); internal-only micro-ops run at the CPU's
-  // intrinsic 6-master-cycle pace.
-  const TimeMasterDeltaT step_cycles =
-      (mop.bus_action == MicroBusAction::kNone) ? kInternalCpuCycleMaster : last_access_cycles_;
   ExecuteInternalOp(mop.internal_op, mop.params);
 
   if (micro_op_recorder_ != nullptr) {
@@ -1221,7 +1211,7 @@ CPU::StepResult CPU::ExecuteMicroOp(TimeMasterDeltaT cycle_time) {
   } else {
     DrainSkippedMicroOps();
   }
-  return StepResult{step_cycles, TickStopReason::kReachedTarget, false};
+  return StepResult{TickStopReason::kReachedTarget, false};
 }
 
 // Returns 0 when the CPU can't estimate (e.g., mid-fetch); loop still forward-progresses.
