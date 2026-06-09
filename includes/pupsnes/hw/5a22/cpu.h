@@ -3,11 +3,11 @@
 #include <cstdint>
 #include <optional>
 
-#include "pupsnes/hw/5a22/cpu_regs.h"
 #include "pupsnes/core/debugger_contract.h"
 #include "pupsnes/core/master_clock_driver.h"
-#include "pupsnes/memory/systembus.h"
 #include "pupsnes/core/types.h"
+#include "pupsnes/hw/5a22/cpu_regs.h"
+#include "pupsnes/memory/systembus.h"
 
 namespace pupsnes {
 
@@ -38,7 +38,6 @@ enum class MicroBusAction : uint8_t;
 enum class MicroInternalOp : uint8_t;
 struct MicroOpRecord;
 class MicroOpRecorder;
-
 
 // Typed enums for MicroOp::params packing. Populated in subsequent refactor
 // steps as each enum group collapses into a parameterized category. For now
@@ -201,6 +200,11 @@ class CPU : public MasterClockDriver {
     // EvaluateTimingRule; see the kDirectPageLowNonzero alias in
     // cpu_internal.h.
     bool dp_low_nonzero = false;
+    // Set by kSetAddrHighDbrAddIndex when an absolute-indexed read's low-16
+    // add carries across a 256-byte page boundary. Folded into the same
+    // bit-4 rule slot as branch_page_crossed via an OR in EvaluateTimingRule;
+    // see the kIndexedPageCrossed alias in cpu_internal.h.
+    bool indexed_page_crossed = false;
   };
 
   struct StepResult {

@@ -27,6 +27,8 @@ std::string_view ToString(MicroInternalOp op) {
     case MicroInternalOp::kSetBranchTakenCond: return "SetBranchTakenCond";
     case MicroInternalOp::kBranchRelative: return "BranchRelative";
     case MicroInternalOp::kAddIndexToAddr: return "AddIndexToAddr";
+    case MicroInternalOp::kSetAddrHighDbrAddIndex: return "SetAddrHighDbrAddIndex";
+    case MicroInternalOp::kSetAddrBankFromFetchAddX: return "SetAddrBankFromFetchAddX";
     case MicroInternalOp::kSetAddrFromDp: return "SetAddrFromDp";
     case MicroInternalOp::kSetAddrFromSp: return "SetAddrFromSp";
     case MicroInternalOp::kStashIndirectLow: return "StashIndirectLow";

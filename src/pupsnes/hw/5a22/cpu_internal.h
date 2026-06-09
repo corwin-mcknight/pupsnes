@@ -25,6 +25,12 @@ enum class TimingCondition : uint8_t {
   // never branch. CPU code sets timing_context_.branch_page_crossed from the
   // relevant source at opcode-fetch (DP-low-nonzero) or branch-apply time.
   kDirectPageLowNonzero = 4,
+  // Also shares bit 4. Set by kSetAddrHighDbrAddIndex when an absolute-indexed
+  // *read* crosses a 256-byte page boundary; OR'd into the bit-4 source in
+  // EvaluateTimingRule. Safe to alias: absolute-indexed reads never branch and
+  // never use direct-page addressing, so the three bit-4 sources are mutually
+  // exclusive per opcode.
+  kIndexedPageCrossed = 4,
 };
 
 // Bit index of each TimingCondition within the packed-condition word used to

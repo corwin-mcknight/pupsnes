@@ -6,11 +6,11 @@
 #include <optional>
 #include <stdexcept>
 
+#include "pupsnes/core/snes.h"
 #include "pupsnes/hw/5a22/cpu_bcd_internal.h"
 #include "pupsnes/hw/5a22/cpu_internal.h"
-#include "pupsnes/hw/5a22/cpu_opcode_defs_internal.h"
 #include "pupsnes/hw/5a22/cpu_mmio.h"
-#include "pupsnes/core/snes.h"
+#include "pupsnes/hw/5a22/cpu_opcode_defs_internal.h"
 #include "pupsnes/hw/sppu/ppu.h"
 #include "pupsnes/memory/systembus.h"
 
@@ -366,7 +366,8 @@ TickResult CPU::BusWriteSlow(SnesAddrT addr, uint8_t data, TimeMasterDeltaT cycl
       (static_cast<uint32_t>(IsAccumulator16Bit(regs_)) << static_cast<uint8_t>(TimingCondition::kAccumulator16)) |
       (static_cast<uint32_t>(IsIndex16Bit(regs_)) << static_cast<uint8_t>(TimingCondition::kIndex16)) |
       (static_cast<uint32_t>(regs_.P.E) << static_cast<uint8_t>(TimingCondition::kEmulationMode)) |
-      (static_cast<uint32_t>(timing_context_.branch_page_crossed || timing_context_.dp_low_nonzero)
+      (static_cast<uint32_t>(timing_context_.branch_page_crossed || timing_context_.dp_low_nonzero ||
+                             timing_context_.indexed_page_crossed)
        << static_cast<uint8_t>(TimingCondition::kBranchPageCrossed));
   return ((truth_table >> bits) & 1U) != 0U;
 }
@@ -506,8 +507,7 @@ void CPU::ExecuteInternalOp(MicroInternalOp op, [[maybe_unused]] uint8_t params)
       // cputest-full test 0x03C4: PEI $FF with D=$0200 reads pointer high
       // from $0300 rather than wrapping back to $0200).
       addr_scratch_ = static_cast<uint16_t>((addr_scratch_ & 0xFF00U) | fetch_data_);
-      const bool is_new_instr =
-          (current_instr_ != nullptr) && current_instr_->is_new_65816_instruction;
+      const bool is_new_instr = (current_instr_ != nullptr) && current_instr_->is_new_65816_instruction;
       if (regs_.P.E && (regs_.DP & 0x00FFU) == 0U && !is_new_instr) {
         addr_ = (addr_ & 0x00FFFF00U) | ((addr_ + 1U) & 0x000000FFU);
       } else {
@@ -578,6 +578,34 @@ void CPU::ExecuteInternalOp(MicroInternalOp op, [[maybe_unused]] uint8_t params)
       return;
     }
 
+    case MicroInternalOp::kSetAddrHighDbrAddIndex: {
+      // Place the just-fetched high byte and DBR bank, then add the index with
+      // 24-bit carry — the absolute-indexed read effective address is
+      // DBR:(abs + idx). Folding the add into this fetch cycle keeps the
+      // no-page-cross case one cycle cheaper than indexed stores; the extra
+      // cycle is billed by a following slot gated on kIndexedPageCrossed.
+      addr_ =
+          (addr_ & 0x0000FFU) | (static_cast<uint32_t>(fetch_data_) << 8U) | (static_cast<uint32_t>(regs_.DBR) << 16U);
+      const Reg reg = mp::UnpackAddIndex(params);
+      const uint16_t index = (reg == Reg::kY) ? regs_.Y : regs_.X;
+      const uint16_t masked = IsIndex16Bit(regs_) ? index : static_cast<uint16_t>(index & 0x00FFU);
+      const uint16_t base16 = static_cast<uint16_t>(addr_ & 0x00FFFFU);
+      const uint16_t sum16 = static_cast<uint16_t>(base16 + masked);
+      timing_context_.indexed_page_crossed = (base16 & 0xFF00U) != (sum16 & 0xFF00U);
+      addr_ = (addr_ + static_cast<uint32_t>(masked)) & 0x00FFFFFFU;
+      return;
+    }
+
+    case MicroInternalOp::kSetAddrBankFromFetchAddX: {
+      // Absolute-long-indexed-X: set the explicit bank byte, then add X with
+      // 24-bit carry. No page-cross penalty exists (bank is explicit), so the
+      // add is folded into the bank fetch — long,X is a flat 6-m cycles.
+      addr_ = (addr_ & 0x00FFFFU) | (static_cast<uint32_t>(fetch_data_) << 16U);
+      const uint16_t index = IsIndex16Bit(regs_) ? regs_.X : static_cast<uint16_t>(regs_.X & 0x00FFU);
+      addr_ = (addr_ + static_cast<uint32_t>(index)) & 0x00FFFFFFU;
+      return;
+    }
+
     case MicroInternalOp::kSetAddrByteFromFetch: {
       const ByteSel sel = mp::UnpackSetAddrByteSel(params);
       const unsigned shift = (sel == ByteSel::kLow) ? 0U : (sel == ByteSel::kHigh) ? 8U : 16U;
@@ -610,8 +638,7 @@ void CPU::ExecuteInternalOp(MicroInternalOp op, [[maybe_unused]] uint8_t params)
       // high byte is restored to $01 at end-of-instruction (handled in
       // FinishInstruction). For "old" 6502-compatible push/pull (PHA/PHP/PLA/
       // PLP/JSR abs/RTS/BRK/COP/IRQ/NMI/ABORT), keep the 8-bit page-1 wrap.
-      const bool wide =
-          (current_instr_ != nullptr) && current_instr_->is_new_65816_instruction;
+      const bool wide = (current_instr_ != nullptr) && current_instr_->is_new_65816_instruction;
       if (regs_.P.E && !wide) {
         regs_.SP = static_cast<uint16_t>(0x0100U | static_cast<uint8_t>(regs_.SP + delta));
       } else {
@@ -1137,8 +1164,7 @@ TickResult CPU::PerformBusAction(MicroBusAction action, [[maybe_unused]] uint8_t
       // Stack pulls: SP must point at the top of the stack before reading.
       // "New" 65C816 instructions in E=1 use 16-bit SP math (no page-1 wrap);
       // the high byte is restored to $01 at end-of-instruction.
-      const bool wide =
-          (current_instr_ != nullptr) && current_instr_->is_new_65816_instruction;
+      const bool wide = (current_instr_ != nullptr) && current_instr_->is_new_65816_instruction;
       if (regs_.P.E && !wide) {
         const uint8_t sp_lo = static_cast<uint8_t>(static_cast<uint8_t>(regs_.SP) + 1U);
         regs_.SP = static_cast<uint16_t>(0x0100U | sp_lo);
@@ -1229,8 +1255,7 @@ TimeMasterDeltaT CPU::EstimateNextStepCostOrZero() const {
       // page the real read will land on. Mirror the wide-mode logic from
       // PerformBusAction so the page estimate matches the live increment.
       CPU::Regs sim = regs_;
-      const bool wide =
-          (current_instr_ != nullptr) && current_instr_->is_new_65816_instruction;
+      const bool wide = (current_instr_ != nullptr) && current_instr_->is_new_65816_instruction;
       if (sim.P.E && !wide) {
         const uint8_t sp_lo = static_cast<uint8_t>(static_cast<uint8_t>(sim.SP) + 1U);
         sim.SP = static_cast<uint16_t>(0x0100U | sp_lo);

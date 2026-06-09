@@ -123,6 +123,31 @@ constexpr CycleFragment FetchAbsoluteIndexed(Reg index_reg) {
       .Build();
 }
 
+// Absolute-indexed effective address for *reads* (LDA/ORA/CMP/... abs,X|Y).
+// Unlike FetchAbsoluteIndexed (used by stores/RMW, which always pay the
+// index-add cycle), the index add is folded into the high-byte fetch
+// (kSetAddrHighDbrAddIndex) so the no-page-cross 8-bit-index case costs one
+// cycle less. The folded op records whether the low-16 add crossed a page
+// boundary; the trailing penalty slot then bills the extra cycle only when the
+// index is 16-bit (kIndex16 — always pays) or a page boundary was crossed
+// (kIndexedPageCrossed). Cycle formula 6-m-x+x*p (Bruce Clark §6.1.1.1).
+// index_reg must be Reg::kX or Reg::kY.
+constexpr CycleFragment FetchAbsoluteIndexedRead(Reg index_reg) {
+  return Fragment()
+      .Then(FetchAddrByte(ByteSel::kLow, false, Always(), "fetch address low"))
+      .Then(CycleSlotSpec{
+          MicroBusAction::kFetchPc,
+          MicroInternalOp::kSetAddrHighDbrAddIndex,
+          Always(),
+          "fetch address high, add index",
+          micro_op_params::PackAddIndex(index_reg, /*bank_wrap=*/false),
+      })
+      .Then(Internal(MicroInternalOp::kNone,
+                     AnyOf(Condition(TimingCondition::kIndex16), Condition(TimingCondition::kIndexedPageCrossed)),
+                     "index page-cross penalty"))
+      .Build();
+}
+
 // Stack-relative effective address: addr_ = bank 0, (SP + offset) & 0xFFFF.
 // Two cycles: fetch offset + compute, then an internal "add" cycle. Used by
 // sr,S addressing (e.g. LDA $nn,S). No DL penalty because no DP math.
@@ -141,21 +166,22 @@ constexpr CycleFragment FetchStackRelative() {
 
 // Absolute-long indexed effective address: fetch 3-byte operand (low, high,
 // bank) and add X to the low 16 bits with 24-bit carry into the bank byte.
-// Four fixed cycles (no page-cross penalty — bank is explicit). Used by long,X
-// addressing (e.g. LDA $FEDCBA,X). Cycle formula 6-m per Bruce Clark §6.1.1.1
-// (6 at m=1 for reads/writes, plus one more cycle for m=0 read/write of the
-// high byte through LoadRegFromAddr / StoreRegToAddr / AluFromAddr).
+// Three fixed cycles (no page-cross penalty — bank is explicit). Used by
+// long,X addressing (e.g. LDA $FEDCBA,X). Cycle formula 6-m per Bruce Clark
+// §6.1.1.1 (5 at m=1 for reads/writes, plus one more cycle for m=0 read/write
+// of the high byte through LoadRegFromAddr / StoreRegToAddr / AluFromAddr).
+// The X add is folded into the bank-byte fetch (kSetAddrBankFromFetchAddX) —
+// long,X never pays a separate index cycle, so there is no page-cross slot.
 constexpr CycleFragment FetchAbsoluteLongIndexedX() {
   return Fragment()
       .Then(FetchAddrByte(ByteSel::kLow, false, Always(), "fetch address low"))
       .Then(FetchAddrByte(ByteSel::kHigh, false, Always(), "fetch address high"))
-      .Then(FetchAddrByte(ByteSel::kBank, false, Always(), "fetch address bank"))
       .Then(CycleSlotSpec{
-          MicroBusAction::kNone,
-          MicroInternalOp::kAddIndexToAddr,
+          MicroBusAction::kFetchPc,
+          MicroInternalOp::kSetAddrBankFromFetchAddX,
           Always(),
-          "add X to addr",
-          micro_op_params::PackAddIndex(Reg::kX, /*bank_wrap=*/false),
+          "fetch address bank, add X",
+          0,
       })
       .Build();
 }
@@ -169,8 +195,8 @@ constexpr CycleFragment FetchDirectIndirect() {
   // crossing the DP-page boundary wraps back to DP base instead of advancing
   // into the next page (E=1 + DPL=$00 quirk per Bruce Clark §6.2).
   return Fragment()
-      .Then(CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kStashDpIndirectLow, Always(),
-                          "read pointer low", 0})
+      .Then(CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kStashDpIndirectLow, Always(), "read pointer low",
+                          0})
       .Then(CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kFormAddrFromScratchDbr, Always(),
                           "read pointer high, assemble", 0})
       .Build();
@@ -205,8 +231,8 @@ constexpr CycleFragment FetchDirectIndexedIndirectX() {
 // kIndexedPageCrossed condition).
 constexpr CycleFragment FetchDirectIndirectIndexedY() {
   return Fragment()
-      .Then(CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kStashDpIndirectLow, Always(),
-                          "read pointer low", 0})
+      .Then(CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kStashDpIndirectLow, Always(), "read pointer low",
+                          0})
       .Then(CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kFormAddrFromScratchDbr, Always(),
                           "read pointer high, assemble", 0})
       .Then(CycleSlotSpec{

@@ -11,10 +11,10 @@
 #include <string_view>
 #include <vector>
 
-#include "pupsnes/hw/5a22/cpu.h"
-#include "pupsnes/hw/rom/cartridge.h"
 #include "pupsnes/core/scheduler.h"
 #include "pupsnes/core/snes.h"
+#include "pupsnes/hw/5a22/cpu.h"
+#include "pupsnes/hw/rom/cartridge.h"
 #include "pupsnes/memory/wram.h"
 
 using namespace pupsnes;  // NOLINT(google-build-using-namespace)
@@ -434,8 +434,25 @@ RomExecutionResult RunScenario(const RomScenario& scenario) {
     // Under strict no-overshoot the CPU stops at the last micro-op boundary
     // that fits within the budget, so cpu_time may be slightly below
     // cycle_budget.  A time of zero (no progress at all) is a harness error.
+    // Record the budget-bounded time/master-time here, before any boundary
+    // completion below, so the cycle-budget tolerance assertions still hold.
     result.snapshot.cpu_time = cpu.GetTime();
     result.snapshot.master_time = snes.GetMasterTime();
+
+    // The budget can expire mid-instruction (micro-op index != 0). Goals that
+    // sample architectural state — e.g. a "parks at the loop label" cpu_pc
+    // check — are meaningless part-way through an opcode (PC sits past the
+    // operand bytes, before the branch/store micro-op applies). Finish the
+    // in-flight instruction so the snapshot reflects a real instruction
+    // boundary. This does not touch cpu_time/master_time recorded above.
+    if (cpu.GetMicroOpIndex() != 0) {
+      auto& contract = cpu.MutableDebuggerContract();
+      contract.step_target = 1;
+      contract.step_granularity = DebuggerContract::StepGranularity::kInstruction;
+      static_cast<void>(cpu.TickToTarget(snes.GetMasterTime() + 1000));
+      contract.step_target = 0;
+    }
+
     result.snapshot.cpu_regs = cpu.GetRegs();
     result.snapshot.cpu_micro_op_index = cpu.GetMicroOpIndex();
 

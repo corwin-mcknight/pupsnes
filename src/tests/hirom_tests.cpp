@@ -10,11 +10,11 @@
 #include <cstdint>
 #include <vector>
 
+#include "pupsnes/core/snes.h"
 #include "pupsnes/hw/5a22/cpu_mmio.h"
 #include "pupsnes/hw/rom/cartridge.h"
-#include "pupsnes/core/snes.h"
-#include "pupsnes/memory/systembus.h"
 #include "pupsnes/hw/rom/rom_format.h"
+#include "pupsnes/memory/systembus.h"
 #include "systembus_test_access.h"
 
 using namespace pupsnes;  // NOLINT(google-build-using-namespace)
@@ -301,8 +301,9 @@ TEST_CASE("HiROM: MEMSEL does not retime the LowRAM mirror or CPU MMIO", "[unit]
   // LowRAM mirror under the fast-bank mirror $80-$BF pages $00-$1F.
   REQUIRE(GetAccessSpeed(snes, 0x80U, 0x00U) == 8);
   REQUIRE(GetAccessSpeed(snes, 0x80U, 0x1FU) == 8);
-  // CPU MMIO under $80-$BF page $42 — same-clock MMIO at 8 mcyc by design.
-  REQUIRE(GetAccessSpeed(snes, 0x80U, 0x42U) == 8);
+  // CPU MMIO under $80-$BF page $42 — the 6-cycle fast bus class; MEMSEL
+  // does not retime it.
+  REQUIRE(GetAccessSpeed(snes, 0x80U, 0x42U) == 6);
 }
 
 TEST_CASE("HiROM: SNES::Reset clears MEMSEL and reverts HiROM fast banks to slow", "[unit][hirom][fastrom]") {

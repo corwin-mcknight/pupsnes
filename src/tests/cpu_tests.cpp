@@ -4,10 +4,10 @@
 #include <vector>
 
 #include "cpu_test_fixture.h"
-#include "pupsnes/hw/5a22/cpu.h"
-#include "pupsnes/hw/rom/cartridge.h"
 #include "pupsnes/core/device.h"
 #include "pupsnes/core/snes.h"
+#include "pupsnes/hw/5a22/cpu.h"
+#include "pupsnes/hw/rom/cartridge.h"
 #include "pupsnes/memory/systembus.h"
 #include "pupsnes/memory/wram.h"
 
@@ -1205,14 +1205,15 @@ TEST_CASE("Consecutive bus accesses within one TickToTarget use increasing absol
   MMIOProgramFixture f;
   f.LoadAt(0, {0xA9, 0x42});
 
-  // Run LDA #$42 — two bus reads: opcode fetch at t=0, immediate at t=8.
+  // Run LDA #$42 — two bus reads. Master time advances to each op's end
+  // BEFORE the access lands (op-end timestamping, see cf467b1), so the opcode
+  // fetch is timestamped at t=8 and the immediate at t=16.
   TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 16);
 
   REQUIRE(r.completed_cycles == 16);
-  // Each bus access timestamp equals local_time_ + cycle_time at the moment of
-  // the access. The second access's timestamp is the first plus the MMIO page's
-  // access_speed (8).
-  REQUIRE(f.program.read_times == std::vector<TimeMasterT>{0, 8});
+  // Each access lands at the end of its bus cycle; the two reads are one MMIO
+  // access_speed (8) apart.
+  REQUIRE(f.program.read_times == std::vector<TimeMasterT>{8, 16});
   REQUIRE(f.cpu.GetTime() == 16);
 }
 
@@ -1236,48 +1237,20 @@ TEST_CASE("CPU executes NOP then LDA via two successive TickToTarget slices", "[
   REQUIRE(f.cpu.GetTime() == 30);
 }
 
-TEST_CASE("TickToTarget faults on unimplemented opcode fetch", "[cpu]") {
-  TestFixture f;
-  f.LoadAt(0, {0x00});
-
-  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 8);
-
-  REQUIRE(r.reason == TickStopReason::kFault);
-  REQUIRE(f.cpu.GetRegs().PC == 0x8001);
-  const auto& fault = f.cpu.GetFault();
-  REQUIRE(fault.has_value());
-  if (!fault) return;
-  REQUIRE(fault->opcode == 0x00);
-  REQUIRE(fault->opcode_address == 0x008000U);
-}
-
-TEST_CASE("TickToTarget on unimplemented opcode returns kFault without advancing master time", "[cpu]") {
-  TestFixture f;
-  f.LoadAt(0, {0x00});
-
-  const TimeMasterT before = f.snes.GetMasterTime();
-  TickResult r = f.cpu.TickToTarget(before + 8);
-
-  REQUIRE(r.reason == TickStopReason::kFault);
-  const auto& fault = f.cpu.GetFault();
-  REQUIRE(fault.has_value());
-  if (!fault) return;
-  REQUIRE(fault->opcode == 0x00);
-}
-
 TEST_CASE("Same-master-time bus accesses within TickToTarget use increasing timestamps", "[cpu]") {
   MMIOProgramFixture f;
   f.LoadAt(0, {0xA9, 0x7F});
 
   // Set SNES master time to 100 and CPU local time to 100 so bus accesses
-  // are timestamped from there. LDA #$7F: opcode at t=100, immediate at t=108.
+  // are timestamped from there. With op-end timestamping (cf467b1), LDA #$7F
+  // lands its opcode fetch at t=108 and its immediate at t=116.
   f.snes.SetMasterTime(100);
   f.cpu.SetLocalTime(100);
 
   TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 16);
 
   REQUIRE(r.reason == TickStopReason::kReachedTarget);
-  REQUIRE(f.program.read_times == std::vector<TimeMasterT>{100, 108});
+  REQUIRE(f.program.read_times == std::vector<TimeMasterT>{108, 116});
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x7F);
   REQUIRE(f.cpu.GetTime() == 116);
 }
@@ -2314,7 +2287,7 @@ TEST_CASE("LSR A shifts right, bit 0 into C", "[cpu][opcode]") {
   regs.P.C = false;
   f.cpu.SetRegs(regs);
 
-  (void)f.cpu.TickToTarget(f.snes.GetMasterTime() + 100);
+  (void)f.cpu.TickToTarget(f.snes.GetMasterTime() + 22);
 
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x01);
   REQUIRE(f.cpu.GetRegs().P.C == true);
@@ -2329,7 +2302,7 @@ TEST_CASE("ROL A rotates through carry", "[cpu][opcode]") {
   regs.P.C = true;
   f.cpu.SetRegs(regs);
 
-  (void)f.cpu.TickToTarget(f.snes.GetMasterTime() + 100);
+  (void)f.cpu.TickToTarget(f.snes.GetMasterTime() + 22);
 
   // 0x81 << 1 | C=1 -> 0x03, C out = 1
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x03);
@@ -2344,12 +2317,86 @@ TEST_CASE("ROR A rotates right through carry", "[cpu][opcode]") {
   regs.P.C = true;
   f.cpu.SetRegs(regs);
 
-  (void)f.cpu.TickToTarget(f.snes.GetMasterTime() + 100);
+  (void)f.cpu.TickToTarget(f.snes.GetMasterTime() + 22);
 
   // 0x02 >> 1 with C=1 in bit 7 -> 0x81, C out = 0
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x81);
   REQUIRE(f.cpu.GetRegs().P.C == false);
   REQUIRE(f.cpu.GetRegs().P.N == true);
+}
+
+// --- Indexed-read page-cross timing (kIndexedPageCrossed) -----------------
+// TestFixture maps bank 0 pages $80/$81 at 8 master cycles per bus access;
+// internal cycles bill 6 (kInternalCpuCycleMaster). LDA abs,X is 4 bus reads
+// when no page boundary is crossed (8-bit index) = 32 master, and one extra
+// internal penalty cycle (+6 = 38) when a page is crossed or the index is
+// 16-bit. See Bruce Clark §6.1.1.1, formula 6-m-x+x*p.
+
+TEST_CASE("LDA abs,X without page cross skips the index penalty cycle", "[cpu][opcode]") {
+  TestFixture f;
+  f.LoadAt(0, {0xBD, 0x10, 0x80});  // LDA $8010,X
+  f.LoadAt(0x15, {0x42});           // data at $8015 (= $8010 + X)
+  auto regs = f.cpu.GetRegs();
+  regs.X = 0x0005;  // $8010 + 5 = $8015, same page → no penalty
+  f.cpu.SetRegs(regs);
+
+  // Budget == expected cost: the instruction retires exactly on the target.
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 32);
+
+  REQUIRE(r.completed_cycles == 32);  // 4 bus reads, no penalty
+  REQUIRE(r.reason == TickStopReason::kReachedTarget);
+  REQUIRE(f.cpu.GetRegs().PC == 0x8003);
+  REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x42);
+}
+
+TEST_CASE("LDA abs,X with page cross bills the index penalty cycle", "[cpu][opcode]") {
+  TestFixture f;
+  f.LoadAt(0, {0xBD, 0xF0, 0x80});  // LDA $80F0,X
+  f.LoadAt(0x110, {0x99});          // data at $8110 (= $80F0 + X), page crossed
+  auto regs = f.cpu.GetRegs();
+  regs.X = 0x0020;  // $80F0 + $20 = $8110 → crosses page $80→$81
+  f.cpu.SetRegs(regs);
+
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 38);
+
+  REQUIRE(r.completed_cycles == 38);  // 32 + one internal penalty cycle (6)
+  REQUIRE(r.reason == TickStopReason::kReachedTarget);
+  REQUIRE(f.cpu.GetRegs().PC == 0x8003);
+  REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x99);
+}
+
+TEST_CASE("LDA abs,X with a 16-bit index always pays the penalty cycle", "[cpu][opcode]") {
+  TestFixture f;
+  f.LoadAt(0, {0xBD, 0x10, 0x80});  // LDA $8010,X
+  f.LoadAt(0x15, {0x42});
+  auto regs = f.cpu.GetRegs();
+  regs.P.E = false;
+  regs.P.X = false;  // 16-bit index → penalty always, even with no page cross
+  regs.X = 0x0005;
+  f.cpu.SetRegs(regs);
+
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 38);
+
+  REQUIRE(r.completed_cycles == 38);
+  REQUIRE(r.reason == TickStopReason::kReachedTarget);
+  REQUIRE(f.cpu.GetRegs().PC == 0x8003);
+  REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x42);
+}
+
+TEST_CASE("LDA long,X is a flat 6-m cycles regardless of page cross", "[cpu][opcode]") {
+  TestFixture f;
+  f.LoadAt(0, {0xBF, 0xF0, 0x80, 0x00});  // LDA $0080F0,X
+  f.LoadAt(0x110, {0x77});                // data at $008110, page crossed
+  auto regs = f.cpu.GetRegs();
+  regs.X = 0x0020;  // crosses a page, but long,X never pays a penalty
+  f.cpu.SetRegs(regs);
+
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 40);
+
+  REQUIRE(r.completed_cycles == 40);  // 5 bus reads, no penalty cycle
+  REQUIRE(r.reason == TickStopReason::kReachedTarget);
+  REQUIRE(f.cpu.GetRegs().PC == 0x8004);
+  REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x77);
 }
 
 TEST_CASE("BIT immediate only affects Z", "[cpu][opcode]") {

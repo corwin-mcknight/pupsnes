@@ -2,11 +2,11 @@
 
 #include <array>
 
-#include "pupsnes/hw/5a22/cpu.h"
-#include "pupsnes/hw/5a22/cpu_mmio.h"
 #include "pupsnes/core/scheduler.h"
 #include "pupsnes/core/signal_event.h"
 #include "pupsnes/core/snes.h"
+#include "pupsnes/hw/5a22/cpu.h"
+#include "pupsnes/hw/5a22/cpu_mmio.h"
 #include "pupsnes/memory/systembus.h"
 
 namespace pupsnes {
@@ -40,11 +40,14 @@ DmaController::DmaController(SNES* snes) : Device(snes) {}
 
 void DmaController::MapSystemBus(SystemBus& bus) {
   // Page $43 covers $4300-$43FF (8 channels x 16 bytes). Mirrored across the
-  // standard MMIO bank set (banks $00-$3F and $80-$BF).
+  // standard MMIO bank set (banks $00-$3F and $80-$BF). Part of the
+  // $4200-$43FF CPU/DMA register block — the 6-master-cycle fast bus class.
+  constexpr uint8_t kDmaMmioAccessCycles = 6;
   for (uint8_t bank_base : {uint8_t{0x00U}, uint8_t{0x80U}}) {
     for (uint8_t bank_offset = 0; bank_offset < 0x40U; ++bank_offset) {
       const uint8_t bank = static_cast<uint8_t>(bank_base + bank_offset);
-      bus.MapPage({bank, 0x43U, GetDeviceId(), 0x4300U, PageDeviceKind::kSameClockMmio, 8, nullptr, nullptr});
+      bus.MapPage({bank, 0x43U, GetDeviceId(), 0x4300U, PageDeviceKind::kSameClockMmio, kDmaMmioAccessCycles, nullptr,
+                   nullptr});
     }
   }
 }

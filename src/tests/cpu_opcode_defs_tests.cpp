@@ -225,16 +225,3 @@ TEST_CASE("Opcodes absent from the spec oracle are marked unimplemented", "[cpu]
     REQUIRE(entry.disposition == InstructionDisposition::kFaultUnimplemented);
   }
 }
-
-TEST_CASE("Unimplemented opcodes lower to explicit fault entries", "[cpu][opcode-defs]") {
-  const InstructionEntry& entry = kOpcodeArtifacts.execution_table[0x00];
-  const OpcodeMetadata& metadata = kOpcodeArtifacts.metadata_table[0x00];
-
-  REQUIRE(entry.disposition == InstructionDisposition::kFaultUnimplemented);
-  REQUIRE(entry.remaining_op_count == 0);
-  REQUIRE(entry.rule_count == 0);
-
-  REQUIRE_FALSE(metadata.implemented);
-  REQUIRE(metadata.mnemonic == "???");
-  REQUIRE(metadata.cycle_count == 0);
-}

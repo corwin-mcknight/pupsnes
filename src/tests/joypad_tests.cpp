@@ -1,8 +1,8 @@
 #include <catch2/catch_test_macros.hpp>
 #include <cstdint>
 
-#include "pupsnes/hw/input/joypad.h"
 #include "pupsnes/core/snes.h"
+#include "pupsnes/hw/input/joypad.h"
 #include "pupsnes/memory/systembus.h"
 
 using namespace pupsnes;  // NOLINT(google-build-using-namespace)
@@ -176,17 +176,15 @@ TEST_CASE("Unmapped $4000-$41FF addresses still bill 12 master cycles", "[unit][
   }
 }
 
-TEST_CASE("Auto-joypad result regs $4218-$421F use the 8-cycle MMIO timing", "[unit][joypad]") {
-  // $4218-$421F live on page $42, which is part of the standard CPU MMIO
-  // block — 8 master cycles in PupSNES today. (Real hardware bills 6 for
-  // $4200-$43FF; see TODO.md for the wider fix.) This test pins the current
-  // contract so a future bump to 6 trips a deliberate update here.
+TEST_CASE("Auto-joypad result regs $4218-$421F use the 6-cycle MMIO timing", "[unit][joypad]") {
+  // $4218-$421F live on page $42, part of the $4200-$43FF CPU/DMA register
+  // block — the 6-master-cycle "fast" bus class on real hardware.
   SNES snes;
   snes.Reset();
 
   for (uint32_t addr = 0x00'4218U; addr <= 0x00'421FU; ++addr) {
     const BusPlan plan = snes.system_bus->Plan(addr, BusAccessType::kRead);
     REQUIRE(plan.outcome == BusPlanOutcome::kInlineComplete);
-    REQUIRE(plan.access_cycles == 8);
+    REQUIRE(plan.access_cycles == 6);
   }
 }

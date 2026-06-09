@@ -3,10 +3,10 @@
 #include <algorithm>
 #include <memory>
 
-#include "pupsnes/hw/apu/apu_stub.h"
 #include "pupsnes/core/scheduler.h"
 #include "pupsnes/core/signal_event.h"
 #include "pupsnes/core/snes.h"
+#include "pupsnes/hw/apu/apu_stub.h"
 #include "pupsnes/memory/systembus.h"
 
 namespace pupsnes {
@@ -29,8 +29,8 @@ constexpr uint16_t OamByteSlot(uint16_t byte_addr) {
   return static_cast<uint16_t>(0x200U | (addr & 0x1FU));
 }
 
-constexpr std::array<uint8_t, sppu::regs::kBgCount> kTmMaskForBg = {
-    sppu::regs::kTmBg1Mask, sppu::regs::kTmBg2Mask, sppu::regs::kTmBg3Mask, sppu::regs::kTmBg4Mask};
+constexpr std::array<uint8_t, sppu::regs::kBgCount> kTmMaskForBg = {sppu::regs::kTmBg1Mask, sppu::regs::kTmBg2Mask,
+                                                                    sppu::regs::kTmBg3Mask, sppu::regs::kTmBg4Mask};
 
 // 5-bit BGR555 channels.
 struct Bgr5 {
@@ -63,10 +63,15 @@ void Ppu::MapSystemBus(SystemBus& bus) {
   // whole page in v1 — offsets $2100-$213F dispatch to real registers, and
   // $2140-$21FF surfaces as open-bus / dropped writes from ReadRegister /
   // WriteRegister below. The APU and WRAM ports move in here later.
+  //
+  // Real hardware bills 6 master cycles for the $2000-$3FFF B-bus register
+  // block (the "fast" bus class), so each access to this page costs 6.
+  constexpr uint8_t kPpuMmioAccessCycles = 6;
   for (uint8_t bank_base : {uint8_t{0x00U}, uint8_t{0x80U}}) {
     for (uint8_t bank_offset = 0; bank_offset < 0x40U; ++bank_offset) {
       const uint8_t bank = static_cast<uint8_t>(bank_base + bank_offset);
-      bus.MapPage({bank, 0x21U, GetDeviceId(), 0x2100U, PageDeviceKind::kSameClockMmio, 8, nullptr, nullptr});
+      bus.MapPage({bank, 0x21U, GetDeviceId(), 0x2100U, PageDeviceKind::kSameClockMmio, kPpuMmioAccessCycles, nullptr,
+                   nullptr});
     }
   }
 }
@@ -159,8 +164,7 @@ void Ppu::Reset() {
     // gives a sync fence: the CPU cannot run past the assertion cycle in a
     // single tick budget, which is the only way to guarantee it can't
     // "time-travel over" an NMI that real hardware would have delivered.
-    const TimeMasterT nmi_boundary_mcyc =
-        static_cast<TimeMasterT>(VblankStartLine()) * sppu::regs::kNormalLineCycles;
+    const TimeMasterT nmi_boundary_mcyc = static_cast<TimeMasterT>(VblankStartLine()) * sppu::regs::kNormalLineCycles;
     snes_->scheduler->ScheduleSignal(nmi_boundary_mcyc, SignalKind::kVblankNmiBoundary,
                                      [this](TimeMasterT t) { OnVblankNmiBoundarySignal(t); });
   }

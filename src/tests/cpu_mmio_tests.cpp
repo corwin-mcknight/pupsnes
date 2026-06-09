@@ -1,7 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
-#include "pupsnes/hw/5a22/cpu_mmio.h"
 #include "pupsnes/core/snes.h"
+#include "pupsnes/hw/5a22/cpu_mmio.h"
 #include "pupsnes/memory/systembus.h"
 
 using namespace pupsnes;  // NOLINT(google-build-using-namespace)
@@ -54,7 +54,7 @@ TEST_CASE("CpuMmio MEMSEL access is routed as kSameClockMmio via plan", "[unit][
   const BusPlan plan = snes.system_bus->Plan(0x00'420DU, BusAccessType::kRead);
   REQUIRE(plan.outcome == BusPlanOutcome::kInlineComplete);
   REQUIRE(plan.target_device == snes.GetCpuMmio().GetDeviceId());
-  REQUIRE(plan.access_cycles == 8);
+  REQUIRE(plan.access_cycles == 6);  // $4200-$43FF is the 6-cycle fast bus class
 }
 
 TEST_CASE("HVBJOY ($4212) reports PPU VBlank bit through the bus", "[unit][cpu_mmio]") {

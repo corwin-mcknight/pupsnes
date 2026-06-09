@@ -12,11 +12,11 @@
 #include <cstdint>
 #include <vector>
 
+#include "pupsnes/core/device.h"
+#include "pupsnes/core/snes.h"
 #include "pupsnes/hw/5a22/cpu.h"
 #include "pupsnes/hw/5a22/cpu_mmio.h"
 #include "pupsnes/hw/rom/cartridge.h"
-#include "pupsnes/core/device.h"
-#include "pupsnes/core/snes.h"
 #include "pupsnes/memory/systembus.h"
 #include "systembus_test_access.h"
 
@@ -139,16 +139,18 @@ TEST_CASE("FASTROM: WRAM pages stay at 8 mcyc regardless of MEMSEL", "[unit][fas
   REQUIRE(GetAccessSpeed(snes, 0x80U, 0x1FU) == 8);
 }
 
-TEST_CASE("FASTROM: CPU MMIO pages ($42/$43) stay at 8 mcyc", "[unit][fastrom]") {
+TEST_CASE("FASTROM: CPU MMIO pages ($42/$43) stay at 6 mcyc", "[unit][fastrom]") {
   SNES snes;
   auto rom = MakeNopLoRom();
   snes.LoadRom(rom);
   WriteMemSel(snes, 0x01U);
 
-  REQUIRE(GetAccessSpeed(snes, 0x00U, 0x42U) == 8);
-  REQUIRE(GetAccessSpeed(snes, 0x00U, 0x43U) == 8);
-  REQUIRE(GetAccessSpeed(snes, 0x80U, 0x42U) == 8);
-  REQUIRE(GetAccessSpeed(snes, 0x80U, 0x43U) == 8);
+  // The $4200-$43FF register block is the 6-cycle fast bus class; MEMSEL
+  // (FastROM enable) does not retime it.
+  REQUIRE(GetAccessSpeed(snes, 0x00U, 0x42U) == 6);
+  REQUIRE(GetAccessSpeed(snes, 0x00U, 0x43U) == 6);
+  REQUIRE(GetAccessSpeed(snes, 0x80U, 0x42U) == 6);
+  REQUIRE(GetAccessSpeed(snes, 0x80U, 0x43U) == 6);
 }
 
 // ---------------------------------------------------------------------------

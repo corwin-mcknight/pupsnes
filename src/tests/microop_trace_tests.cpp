@@ -129,8 +129,8 @@ TEST_CASE("MicroOpTrace clear resets state", "[microop]") {
 #include <span>
 #include <vector>
 
-#include "pupsnes/hw/rom/cartridge.h"
 #include "pupsnes/core/snes.h"
+#include "pupsnes/hw/rom/cartridge.h"
 
 namespace pupsnes {
 namespace {
@@ -186,10 +186,16 @@ struct MicroOpCpuHarness {
   }
 
   void RunOneInstruction() {
-    const uint64_t start = snes.GetCpu().GetRetiredInstructionCount();
-    for (int i = 0; i < 64 && snes.GetCpu().GetRetiredInstructionCount() == start; ++i) {
-      (void)snes.GetCpu().TickToTarget(snes.GetMasterTime() + 100);
-    }
+    // Step exactly one instruction via the debugger contract so we stop on the
+    // instruction boundary (kRetiredStepTarget) — a plain TickToTarget(+N)
+    // would overshoot and retire several instructions, so the recorder's last
+    // event would belong to a later op rather than the one under test.
+    CPU& cpu = snes.GetCpu();
+    auto& contract = cpu.MutableDebuggerContract();
+    contract.step_target = 1;
+    contract.step_granularity = DebuggerContract::StepGranularity::kInstruction;
+    (void)cpu.TickToTarget(snes.GetMasterTime() + 1000);
+    contract.step_target = 0;
   }
 };
 

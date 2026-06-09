@@ -1186,35 +1186,35 @@ constexpr auto MakeAluSrIndyYSpecs() {
 constexpr auto MakeAluAbsXSpecs() {
   return std::array{
       Opcode(0x7D, "ADC", "absolute indexed X")
-          .Then(FetchAbsoluteIndexed(Reg::kX))
+          .Then(FetchAbsoluteIndexedRead(Reg::kX))
           .Then(AluFromAddr(AluOp::kAdc, TimingCondition::kAccumulator16))
           .Build(),
       Opcode(0xFD, "SBC", "absolute indexed X")
-          .Then(FetchAbsoluteIndexed(Reg::kX))
+          .Then(FetchAbsoluteIndexedRead(Reg::kX))
           .Then(AluFromAddr(AluOp::kSbc, TimingCondition::kAccumulator16))
           .Build(),
       Opcode(0x3D, "AND", "absolute indexed X")
-          .Then(FetchAbsoluteIndexed(Reg::kX))
+          .Then(FetchAbsoluteIndexedRead(Reg::kX))
           .Then(AluFromAddr(AluOp::kAnd, TimingCondition::kAccumulator16))
           .Build(),
       Opcode(0x1D, "ORA", "absolute indexed X")
-          .Then(FetchAbsoluteIndexed(Reg::kX))
+          .Then(FetchAbsoluteIndexedRead(Reg::kX))
           .Then(AluFromAddr(AluOp::kOra, TimingCondition::kAccumulator16))
           .Build(),
       Opcode(0x5D, "EOR", "absolute indexed X")
-          .Then(FetchAbsoluteIndexed(Reg::kX))
+          .Then(FetchAbsoluteIndexedRead(Reg::kX))
           .Then(AluFromAddr(AluOp::kEor, TimingCondition::kAccumulator16))
           .Build(),
       Opcode(0xDD, "CMP", "absolute indexed X")
-          .Then(FetchAbsoluteIndexed(Reg::kX))
+          .Then(FetchAbsoluteIndexedRead(Reg::kX))
           .Then(AluFromAddr(AluOp::kCmp, TimingCondition::kAccumulator16))
           .Build(),
       Opcode(0xBD, "LDA", "absolute indexed X")
-          .Then(FetchAbsoluteIndexed(Reg::kX))
+          .Then(FetchAbsoluteIndexedRead(Reg::kX))
           .Then(LoadRegFromAddr(Reg::kA, TimingCondition::kAccumulator16))
           .Build(),
       Opcode(0xBC, "LDY", "absolute indexed X")
-          .Then(FetchAbsoluteIndexed(Reg::kX))
+          .Then(FetchAbsoluteIndexedRead(Reg::kX))
           .Then(LoadRegFromAddr(Reg::kY, TimingCondition::kIndex16))
           .Build(),
   };
@@ -1375,35 +1375,35 @@ constexpr auto MakeAluIndirectDpYSpecs() {
 constexpr auto MakeAluAbsYSpecs() {
   return std::array{
       Opcode(0x79, "ADC", "absolute indexed Y")
-          .Then(FetchAbsoluteIndexed(Reg::kY))
+          .Then(FetchAbsoluteIndexedRead(Reg::kY))
           .Then(AluFromAddr(AluOp::kAdc, TimingCondition::kAccumulator16))
           .Build(),
       Opcode(0xF9, "SBC", "absolute indexed Y")
-          .Then(FetchAbsoluteIndexed(Reg::kY))
+          .Then(FetchAbsoluteIndexedRead(Reg::kY))
           .Then(AluFromAddr(AluOp::kSbc, TimingCondition::kAccumulator16))
           .Build(),
       Opcode(0x39, "AND", "absolute indexed Y")
-          .Then(FetchAbsoluteIndexed(Reg::kY))
+          .Then(FetchAbsoluteIndexedRead(Reg::kY))
           .Then(AluFromAddr(AluOp::kAnd, TimingCondition::kAccumulator16))
           .Build(),
       Opcode(0x19, "ORA", "absolute indexed Y")
-          .Then(FetchAbsoluteIndexed(Reg::kY))
+          .Then(FetchAbsoluteIndexedRead(Reg::kY))
           .Then(AluFromAddr(AluOp::kOra, TimingCondition::kAccumulator16))
           .Build(),
       Opcode(0x59, "EOR", "absolute indexed Y")
-          .Then(FetchAbsoluteIndexed(Reg::kY))
+          .Then(FetchAbsoluteIndexedRead(Reg::kY))
           .Then(AluFromAddr(AluOp::kEor, TimingCondition::kAccumulator16))
           .Build(),
       Opcode(0xD9, "CMP", "absolute indexed Y")
-          .Then(FetchAbsoluteIndexed(Reg::kY))
+          .Then(FetchAbsoluteIndexedRead(Reg::kY))
           .Then(AluFromAddr(AluOp::kCmp, TimingCondition::kAccumulator16))
           .Build(),
       Opcode(0xB9, "LDA", "absolute indexed Y")
-          .Then(FetchAbsoluteIndexed(Reg::kY))
+          .Then(FetchAbsoluteIndexedRead(Reg::kY))
           .Then(LoadRegFromAddr(Reg::kA, TimingCondition::kAccumulator16))
           .Build(),
       Opcode(0xBE, "LDX", "absolute indexed Y")
-          .Then(FetchAbsoluteIndexed(Reg::kY))
+          .Then(FetchAbsoluteIndexedRead(Reg::kY))
           .Then(LoadRegFromAddr(Reg::kX, TimingCondition::kIndex16))
           .Build(),
   };
@@ -1421,7 +1421,7 @@ constexpr auto MakeBitMiscSpecs() {
           .Then(AluFromAddr(AluOp::kBitMem, TimingCondition::kAccumulator16))
           .Build(),
       Opcode(0x3C, "BIT", "absolute indexed X")
-          .Then(FetchAbsoluteIndexed(Reg::kX))
+          .Then(FetchAbsoluteIndexedRead(Reg::kX))
           .Then(AluFromAddr(AluOp::kBitMem, TimingCondition::kAccumulator16))
           .Build(),
   };

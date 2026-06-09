@@ -80,26 +80,13 @@ constexpr int EvalFormula(std::string_view formula, const FormulaInputs& in) {
     } else {
       char c = *s++;
       switch (c) {
-        case 'm':
-          value = in.m;
-          break;
-        case 'x':
-          value = in.x;
-          break;
-        case 'w':
-          value = in.w;
-          break;
-        case 'p':
-          value = in.p;
-          break;
-        case 't':
-          value = in.t;
-          break;
-        case 'e':
-          value = in.e;
-          break;
-        default:
-          return 0;
+        case 'm': value = in.m; break;
+        case 'x': value = in.x; break;
+        case 'w': value = in.w; break;
+        case 'p': value = in.p; break;
+        case 't': value = in.t; break;
+        case 'e': value = in.e; break;
+        default: return 0;
       }
     }
     skip_ws();
@@ -115,26 +102,13 @@ constexpr int EvalFormula(std::string_view formula, const FormulaInputs& in) {
       } else if (s < end) {
         char c = *s++;
         switch (c) {
-          case 'm':
-            rhs = in.m;
-            break;
-          case 'x':
-            rhs = in.x;
-            break;
-          case 'w':
-            rhs = in.w;
-            break;
-          case 'p':
-            rhs = in.p;
-            break;
-          case 't':
-            rhs = in.t;
-            break;
-          case 'e':
-            rhs = in.e;
-            break;
-          default:
-            return 0;
+          case 'm': rhs = in.m; break;
+          case 'x': rhs = in.x; break;
+          case 'w': rhs = in.w; break;
+          case 'p': rhs = in.p; break;
+          case 't': rhs = in.t; break;
+          case 'e': rhs = in.e; break;
+          default: return 0;
         }
       }
       value *= rhs;
@@ -199,6 +173,7 @@ constexpr std::string_view NormalizeAddressing(std::string_view internal) {
   if (internal == "direct page indexed X") return "dir,X";
   if (internal == "direct page indexed Y") return "dir,Y";
   if (internal == "absolute indexed X") return "abs,X";
+  if (internal == "absolute long indexed X") return "long,X";
   if (internal == "absolute indexed Y") return "abs,Y";
   if (internal == "stack relative") return "stk,S";
   if (internal == "direct indirect") return "(dir)";
@@ -217,7 +192,7 @@ constexpr std::string_view NormalizeAddressing(std::string_view internal) {
 // One row per currently implemented opcode. Add rows as new opcodes land.
 // Columns lifted verbatim from docs/plans/6502opcodes.md. Flag masks built
 // with FlagsFrom() from Clark's nvmxdizc column.
-constexpr std::array<SpecEntry, 224> kSpec = {{
+constexpr std::array<SpecEntry, 256> kSpec = {{
     // Misc
     {0xEA, "NOP", "impl", "1", "2", FlagsFrom("........")},
     {0x42, "WDM", "imm", "2", "2", FlagsFrom("........")},
@@ -290,18 +265,18 @@ constexpr std::array<SpecEntry, 224> kSpec = {{
 
     // ALU / Load abs,Y. Same "always pay index-add" model as abs,X — formula
     // collapses to 5-m for ALU + LDA, 5-x for LDX.
-    {0x79, "ADC", "abs,Y", "3", "5-m", FlagsFrom("nvm...mm")},
-    {0xF9, "SBC", "abs,Y", "3", "5-m", FlagsFrom("nvm...mm")},
-    {0x39, "AND", "abs,Y", "3", "5-m", FlagsFrom("n.m...m.")},
-    {0x19, "ORA", "abs,Y", "3", "5-m", FlagsFrom("n.m...m.")},
-    {0x59, "EOR", "abs,Y", "3", "5-m", FlagsFrom("n.m...m.")},
-    {0xD9, "CMP", "abs,Y", "3", "5-m", FlagsFrom("n.m...mm")},
-    {0xB9, "LDA", "abs,Y", "3", "5-m", FlagsFrom("n.....z.")},
-    {0xBE, "LDX", "abs,Y", "3", "5-x", FlagsFrom("n.....z.")},
+    {0x79, "ADC", "abs,Y", "3", "6-m-x+x*p", FlagsFrom("nvm...mm")},
+    {0xF9, "SBC", "abs,Y", "3", "6-m-x+x*p", FlagsFrom("nvm...mm")},
+    {0x39, "AND", "abs,Y", "3", "6-m-x+x*p", FlagsFrom("n.m...m.")},
+    {0x19, "ORA", "abs,Y", "3", "6-m-x+x*p", FlagsFrom("n.m...m.")},
+    {0x59, "EOR", "abs,Y", "3", "6-m-x+x*p", FlagsFrom("n.m...m.")},
+    {0xD9, "CMP", "abs,Y", "3", "6-m-x+x*p", FlagsFrom("n.m...mm")},
+    {0xB9, "LDA", "abs,Y", "3", "6-m-x+x*p", FlagsFrom("n.....z.")},
+    {0xBE, "LDX", "abs,Y", "3", "6-2*x+x*p", FlagsFrom("n.....z.")},
 
     // BIT misc — BIT dp (4-m+w) and BIT abs,X (5-m, always-pay model).
     {0x24, "BIT", "dir", "2", "4-m+w", FlagsFrom("nvm...m."), 0U, true},
-    {0x3C, "BIT", "abs,X", "3", "5-m", FlagsFrom("nvm...m.")},
+    {0x3C, "BIT", "abs,X", "3", "6-m-x+x*p", FlagsFrom("nvm...m.")},
 
     // ALU / Load / Store (dir),Y — always-pay-index lowering collapses
     // 7-m+w-x+x*p to 7-m+w. STA (dir),Y is already 7-m+w in Clark.
@@ -437,14 +412,14 @@ constexpr std::array<SpecEntry, 224> kSpec = {{
     // ALU / Load abs,X (plan 01-07). Our lowering always pays the index-add
     // penalty, so the effective formula is 5-m (LDY: 5-x). Bruce Clark's
     // formula is "4-m+x+x*p" but with unconditional penalty it collapses.
-    {0x7D, "ADC", "abs,X", "3", "5-m", FlagsFrom("nvm...mm")},
-    {0xFD, "SBC", "abs,X", "3", "5-m", FlagsFrom("nvm...mm")},
-    {0x3D, "AND", "abs,X", "3", "5-m", FlagsFrom("n.m...m.")},
-    {0x1D, "ORA", "abs,X", "3", "5-m", FlagsFrom("n.m...m.")},
-    {0x5D, "EOR", "abs,X", "3", "5-m", FlagsFrom("n.m...m.")},
-    {0xDD, "CMP", "abs,X", "3", "5-m", FlagsFrom("n.m...mm")},
-    {0xBD, "LDA", "abs,X", "3", "5-m", FlagsFrom("n.....z.")},
-    {0xBC, "LDY", "abs,X", "3", "5-x", FlagsFrom("n.....z.")},
+    {0x7D, "ADC", "abs,X", "3", "6-m-x+x*p", FlagsFrom("nvm...mm")},
+    {0xFD, "SBC", "abs,X", "3", "6-m-x+x*p", FlagsFrom("nvm...mm")},
+    {0x3D, "AND", "abs,X", "3", "6-m-x+x*p", FlagsFrom("n.m...m.")},
+    {0x1D, "ORA", "abs,X", "3", "6-m-x+x*p", FlagsFrom("n.m...m.")},
+    {0x5D, "EOR", "abs,X", "3", "6-m-x+x*p", FlagsFrom("n.m...m.")},
+    {0xDD, "CMP", "abs,X", "3", "6-m-x+x*p", FlagsFrom("n.m...mm")},
+    {0xBD, "LDA", "abs,X", "3", "6-m-x+x*p", FlagsFrom("n.....z.")},
+    {0xBC, "LDY", "abs,X", "3", "6-2*x+x*p", FlagsFrom("n.....z.")},
 
     // Jumps
     {0x4C, "JMP", "abs", "3", "3", FlagsFrom("........")},
@@ -510,6 +485,48 @@ constexpr std::array<SpecEntry, 224> kSpec = {{
     {0x0C, "TSB", "abs", "3", "8-2*m", FlagsFrom("......m.")},
     {0x14, "TRB", "dir", "2", "7-2*m+w", FlagsFrom("......m."), 0, true},
     {0x1C, "TRB", "abs", "3", "8-2*m", FlagsFrom("......m.")},
+
+    // ALU / load / compare — absolute (5-m read; 5-x for index-width ops).
+    {0x0D, "ORA", "abs", "3", "5-m", FlagsFrom("n.m...m.")},
+    {0x2D, "AND", "abs", "3", "5-m", FlagsFrom("n.m...m.")},
+    {0x4D, "EOR", "abs", "3", "5-m", FlagsFrom("n.m...m.")},
+    {0x6D, "ADC", "abs", "3", "5-m", FlagsFrom("nvm...mm")},
+    {0xED, "SBC", "abs", "3", "5-m", FlagsFrom("nvm...mm")},
+    {0xCD, "CMP", "abs", "3", "5-m", FlagsFrom("n.m...mm")},
+    {0x2C, "BIT", "abs", "3", "5-m", FlagsFrom("nvm...m.")},
+    {0xAD, "LDA", "abs", "3", "5-m", FlagsFrom("n.....z.")},
+    {0xAC, "LDY", "abs", "3", "5-x", FlagsFrom("n.....z.")},
+    {0xAE, "LDX", "abs", "3", "5-x", FlagsFrom("n.....z.")},
+    {0xCC, "CPY", "abs", "3", "5-x", FlagsFrom("n.x...xx")},
+    {0xEC, "CPX", "abs", "3", "5-x", FlagsFrom("n.x...xx")},
+
+    // ALU / load — absolute long (6-m).
+    {0x0F, "ORA", "long", "4", "6-m", FlagsFrom("n.m...m.")},
+    {0x2F, "AND", "long", "4", "6-m", FlagsFrom("n.m...m.")},
+    {0x4F, "EOR", "long", "4", "6-m", FlagsFrom("n.m...m.")},
+    {0x6F, "ADC", "long", "4", "6-m", FlagsFrom("nvm...mm")},
+    {0xEF, "SBC", "long", "4", "6-m", FlagsFrom("nvm...mm")},
+    {0xCF, "CMP", "long", "4", "6-m", FlagsFrom("n.m...mm")},
+    {0xAF, "LDA", "long", "4", "6-m", FlagsFrom("n.....z.")},
+
+    // ALU / compare — direct page indexed X (5-m+w; DP-low penalty bit).
+    {0x15, "ORA", "dir,X", "2", "5-m+w", FlagsFrom("n.m...m."), 0U, true},
+    {0x35, "AND", "dir,X", "2", "5-m+w", FlagsFrom("n.m...m."), 0U, true},
+    {0x55, "EOR", "dir,X", "2", "5-m+w", FlagsFrom("n.m...m."), 0U, true},
+    {0x75, "ADC", "dir,X", "2", "5-m+w", FlagsFrom("nvm...mm"), 0U, true},
+    {0xF5, "SBC", "dir,X", "2", "5-m+w", FlagsFrom("nvm...mm"), 0U, true},
+    {0xD5, "CMP", "dir,X", "2", "5-m+w", FlagsFrom("n.m...mm"), 0U, true},
+    {0x34, "BIT", "dir,X", "2", "5-m+w", FlagsFrom("nvm...m."), 0U, true},
+
+    // ALU / load / store — absolute long indexed X (6-m).
+    {0x1F, "ORA", "long,X", "4", "6-m", FlagsFrom("n.m...m.")},
+    {0x3F, "AND", "long,X", "4", "6-m", FlagsFrom("n.m...m.")},
+    {0x5F, "EOR", "long,X", "4", "6-m", FlagsFrom("n.m...m.")},
+    {0x7F, "ADC", "long,X", "4", "6-m", FlagsFrom("nvm...mm")},
+    {0xFF, "SBC", "long,X", "4", "6-m", FlagsFrom("nvm...mm")},
+    {0xDF, "CMP", "long,X", "4", "6-m", FlagsFrom("n.m...mm")},
+    {0xBF, "LDA", "long,X", "4", "6-m", FlagsFrom("n.....z.")},
+    {0x9F, "STA", "long,X", "4", "6-m", FlagsFrom("........")},
 }};
 
 // Linear lookup — 256 entries max, table is tiny so we don't bother with a

@@ -1,13 +1,14 @@
 #include "pupsnes/hw/5a22/cpu_mmio.h"
+
 #include <optional>
 
-#include "pupsnes/hw/5a22/cpu.h"
-#include "pupsnes/hw/rom/cartridge.h"
-#include "pupsnes/hw/5a22/dma_controller.h"
-#include "pupsnes/hw/input/joypad.h"
 #include "pupsnes/core/scheduler.h"
 #include "pupsnes/core/signal_event.h"
 #include "pupsnes/core/snes.h"
+#include "pupsnes/hw/5a22/cpu.h"
+#include "pupsnes/hw/5a22/dma_controller.h"
+#include "pupsnes/hw/input/joypad.h"
+#include "pupsnes/hw/rom/cartridge.h"
 #include "pupsnes/hw/sppu/ppu.h"
 #include "pupsnes/hw/sppu/ppu_regs.h"
 #include "pupsnes/memory/systembus.h"
@@ -27,15 +28,14 @@ namespace {
 //     here are $4016/$4017; everything else on these pages is unmapped but
 //     still charged the 12-cycle slot.
 //   * Pages $42-$43 ($4200-$43FF) — CPU/DMA register block. Real hardware
-//     bills 6 master cycles, but PupSNES currently charges 8 across the
-//     board for the wider MMIO span; see the TODO for the follow-up that
-//     drops $20-$21 and $42-$43 to 6.
+//     bills 6 master cycles (the "fast" bus class), matching the PPU/APU
+//     register block at $2100-$21FF.
 constexpr uint8_t kFirstMmioPage = 0x40U;
 constexpr uint8_t kLastMmioPage = 0x43U;
 constexpr uint8_t kFirstJoypadPage = 0x40U;
 constexpr uint8_t kLastJoypadPage = 0x41U;
 constexpr uint8_t kJoypadAccessCycles = 12U;
-constexpr uint8_t kMmioAccessCycles = 8U;
+constexpr uint8_t kMmioAccessCycles = 6U;
 
 void MapMmioBank(SystemBus& bus, DeviceIdT device_id, uint8_t bank) {
   for (uint16_t page = kFirstMmioPage; page <= kLastMmioPage; ++page) {
@@ -79,8 +79,7 @@ MmioReadResult CpuMmio::ReadRegister(uint32_t offset, TimeMasterT current_time) 
   const uint32_t reg = offset & 0xFFFFU;
   const bool k_has_joypad = (snes_ != nullptr && snes_->joypad != nullptr);
   switch (reg) {
-    case kMemSelOffset:
-      return {memsel_, 0xFFU};
+    case kMemSelOffset: return {memsel_, 0xFFU};
 
     case kRdNmiOffset: {
       // RDNMI read both samples and clears the VBlank NMI latch. Polling loops
@@ -253,21 +252,22 @@ void CpuMmio::WriteRegister(uint32_t offset, uint8_t data, TimeMasterT current_t
 
 std::optional<uint8_t> CpuMmio::HandleDebugRead(uint32_t offset) const {
   switch (offset & 0xFFFFU) {
-    case kMemSelOffset:
-      return memsel_;
+    case kMemSelOffset: return memsel_;
     case kNmiTimenOffset:
       // $4200 is write-only on real hardware; expose the shadow for the debugger.
       return nmitimen_;
-    case kHTimeLOffset:
-      return static_cast<uint8_t>(htime_ & 0xFFU);
-    case kHTimeHOffset:
-      return static_cast<uint8_t>((htime_ >> 8U) & 0x01U);
-    case kVTimeLOffset:
-      return static_cast<uint8_t>(vtime_ & 0xFFU);
-    case kVTimeHOffset:
-      return static_cast<uint8_t>((vtime_ >> 8U) & 0x01U);
-    default:
-      return std::nullopt;
+    case kHTimeLOffset: return static_cast<uint8_t>(htime_ & 0xFFU);
+    case kHTimeHOffset: return static_cast<uint8_t>((htime_ >> 8U) & 0x01U);
+    case kVTimeLOffset: return static_cast<uint8_t>(vtime_ & 0xFFU);
+    case kVTimeHOffset: return static_cast<uint8_t>((vtime_ >> 8U) & 0x01U);
+    // Every other offset in CpuMmio's owned pages ($40-$43) is either
+    // write-only, unimplemented, or open-bus at the bus level (e.g. the
+    // $4016/$4017 serial ports and the $4218-$421F auto-joypad block, which the
+    // runtime ReadRegister path serves). A debugger inspecting a *mapped*
+    // address should see open-bus rather than a "refused" failure, so return 0
+    // instead of nullopt. (This is the out-of-band debug path; emulation-time
+    // open-bus accuracy is handled by ReadRegister.)
+    default: return 0;
   }
 }
 

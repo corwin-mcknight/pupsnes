@@ -54,6 +54,19 @@ enum class MicroInternalOp : uint8_t {
                               // is 24-bit and carry can propagate into the bank byte (used by
                               // absolute-indexed, where the effective address is DBR:(abs + idx)).
                               // See micro_op_params::PackAddIndex.
+  kSetAddrHighDbrAddIndex,    // Folded absolute-indexed *read* step: addr_[15:8] = fetch_data_,
+                              // bank = DBR, then addr_ += index (24-bit carry, width follows
+                              // P.X). Detects whether the low-16 add crossed a 256-byte page
+                              // boundary and records it in timing_context_.indexed_page_crossed
+                              // so a following slot gated on kIndexedPageCrossed bills the extra
+                              // cycle only on a cross. Params[3:0] = Reg::kX/kY (PackAddIndex).
+                              // Folding the add into the high-byte fetch is what makes the
+                              // no-cross case 1 cycle cheaper than indexed stores (which always
+                              // pay, via the separate kAddIndexToAddr slot).
+  kSetAddrBankFromFetchAddX,  // Folded absolute-long-indexed-X step: addr_[23:16] = fetch_data_,
+                              // then addr_ += X (24-bit carry, width follows P.X). No page-cross
+                              // penalty exists for long,X (the bank is explicit), so the add is
+                              // always free — folded into the bank-byte fetch. Params unused.
   kStashIndirectLow,          // addr_scratch_[7:0] = fetch_data_; addr_ low 16 bits += 1 with
                               // bank-wrap (bank byte untouched). First step of (dp) / [dp] /
                               // (dp),Y / [dp],Y and the JMP/JSR indirect family: captures the
