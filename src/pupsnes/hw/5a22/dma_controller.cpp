@@ -36,7 +36,7 @@ constexpr std::array<ModePattern, 8> kModePatterns = {{
 
 }  // namespace
 
-DmaController::DmaController(SNES* snes) : Device(snes) {}
+DmaController::DmaController(SNES& snes) : Device(snes) {}
 
 void DmaController::MapSystemBus(SystemBus& bus) {
   // Page $43 covers $4300-$43FF (8 channels x 16 bytes). Mirrored across the
@@ -69,9 +69,6 @@ void DmaController::Reset() {
 }
 
 void DmaController::ScheduleNextHdmaInit(TimeMasterT frame_base) {
-  if (snes_ == nullptr || snes_->scheduler == nullptr) {
-    return;
-  }
   hdma_phase_ = HdmaPhase::kInit;
   hdma_frame_base_time_ = frame_base;
   snes_->scheduler->ScheduleSignal(frame_base + kHdmaInitMasterCycles, SignalKind::kHdmaFire,
@@ -79,15 +76,11 @@ void DmaController::ScheduleNextHdmaInit(TimeMasterT frame_base) {
 }
 
 void DmaController::OnHdmaSignal(TimeMasterT master_time) {
-  if (snes_ == nullptr || snes_->scheduler == nullptr) {
-    return;
-  }
-
   if (hdma_phase_ == HdmaPhase::kInit) {
     // Snapshot HDMAEN; mid-frame writes to $420C don't enable new channels
     // (they can only disable via per-line live read). Latched mask drives the
     // rest of the frame.
-    hdma_active_mask_ = (snes_->cpu_mmio != nullptr) ? snes_->cpu_mmio->GetHdmaEn() : 0U;
+    hdma_active_mask_ = snes_->cpu_mmio->GetHdmaEn();
 
     // Per-channel init: copy A1T into A2A, reset NTRL, clear runtime flags.
     for (uint8_t ch = 0; ch < 8U; ++ch) {
@@ -113,7 +106,7 @@ void DmaController::OnHdmaSignal(TimeMasterT master_time) {
     if (snes_->GetMasterTime() < end_time) {
       snes_->SetMasterTime(end_time);
     }
-    if (snes_->cpu != nullptr && snes_->cpu->GetTime() < end_time) {
+    if (snes_->cpu->GetTime() < end_time) {
       snes_->cpu->SetLocalTime(end_time);
     }
 
@@ -129,7 +122,7 @@ void DmaController::OnHdmaSignal(TimeMasterT master_time) {
   // each channel — mid-frame writes that clear bits stop transfers
   // immediately. Bits set mid-frame are ignored (channel's runtime state
   // wasn't initialized for this frame).
-  const uint8_t live_mask = (snes_->cpu_mmio != nullptr) ? snes_->cpu_mmio->GetHdmaEn() : 0U;
+  const uint8_t live_mask = snes_->cpu_mmio->GetHdmaEn();
   const uint8_t effective_mask = static_cast<uint8_t>(hdma_active_mask_ & live_mask);
 
   TimeMasterT t = master_time;
@@ -147,7 +140,7 @@ void DmaController::OnHdmaSignal(TimeMasterT master_time) {
   if (snes_->GetMasterTime() < t) {
     snes_->SetMasterTime(t);
   }
-  if (snes_->cpu != nullptr && snes_->cpu->GetTime() < t) {
+  if (snes_->cpu->GetTime() < t) {
     snes_->cpu->SetLocalTime(t);
   }
 

@@ -8,7 +8,7 @@
 
 namespace pupsnes {
 
-Scheduler::Scheduler(SNES* snes) : snes_(snes) {}
+Scheduler::Scheduler(SNES& snes) : snes_(&snes) {}
 Scheduler::~Scheduler() = default;
 
 void Scheduler::Reset() {

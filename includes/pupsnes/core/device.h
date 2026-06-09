@@ -32,11 +32,11 @@ struct MmioReadResult {
 class Device {
  protected:
   TimeMasterT local_time_ = 0;
-  SNES* snes_ = nullptr;  // Non-owning. Owned by caller; must outlive this Device.
+  SNES* const snes_;  // Non-owning, never null. Owned by caller; must outlive this Device.
   DeviceIdT device_id_ = 0;
 
  public:
-  explicit Device(SNES* snes);
+  explicit Device(SNES& snes);
   // Calls SNES::DeregisterDevice on the way out so the SNES device list and
   // SystemBus page table forget this Device. SNES checks its `destroying_`
   // flag and skips the call during SNES teardown — see snes.cpp.

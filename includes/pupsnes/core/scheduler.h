@@ -16,7 +16,7 @@ class Scheduler {
  private:
   using SignalHeap = std::priority_queue<SignalEvent, std::vector<SignalEvent>, SignalEventComparator>;
 
-  SNES* snes_;  // Non-owning; SNES owns this Scheduler.
+  SNES* const snes_;  // Non-owning, never null; SNES owns this Scheduler.
   SignalHeap signal_queue_;
   uint64_t next_signal_seq_ = 0;
   TokenTable token_table_;  // Same-clock token primitive; unchanged.
@@ -24,7 +24,7 @@ class Scheduler {
   friend struct SchedulerTestAccess;
 
  public:
-  explicit Scheduler(SNES* snes);
+  explicit Scheduler(SNES& snes);
   ~Scheduler();
 
   void Reset();

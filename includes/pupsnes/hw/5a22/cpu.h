@@ -143,7 +143,7 @@ class CPU : public MasterClockDriver {
     Regs regs{};
   };
 
-  explicit CPU(SNES* snes);
+  explicit CPU(SNES& snes);
   ~CPU() override = default;
 
   [[nodiscard]] const char* DeviceName() const override { return "CPU"; }

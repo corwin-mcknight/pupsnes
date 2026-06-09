@@ -44,7 +44,7 @@ class Joypad : public Device {
     kR = 4,
   };
 
-  explicit Joypad(SNES* snes);
+  explicit Joypad(SNES& snes);
   ~Joypad() override = default;
 
   [[nodiscard]] const char* DeviceName() const override { return "Joypad"; }

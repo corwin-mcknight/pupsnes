@@ -24,7 +24,7 @@ class TestROM : public Device {
   static constexpr std::size_t kSize = 512;
   std::array<uint8_t, kSize> mem{};
 
-  explicit TestROM(SNES* snes) : Device(snes) {}
+  explicit TestROM(SNES& snes) : Device(snes) {}
 
   MmioReadResult ReadRegister(uint32_t offset, TimeMasterT /*current_time*/) override {
     return {mem[offset % kSize], 0xFFU};
@@ -36,8 +36,8 @@ class TestROM : public Device {
 
 struct TestFixture {
   SNES snes;
-  TestROM rom{&snes};
-  CPU cpu{&snes};
+  TestROM rom{snes};
+  CPU cpu{snes};
 
   TestFixture() {
     snes.system_bus->MapPage({0x00, 0x80, rom.GetDeviceId(), 0x000, PageDeviceKind::kMemory, 8});

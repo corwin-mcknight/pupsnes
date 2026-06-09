@@ -4,7 +4,7 @@
 
 namespace pupsnes {
 
-WRAM::WRAM(SNES* snes) : Device(snes) {}
+WRAM::WRAM(SNES& snes) : Device(snes) {}
 
 void WRAM::MapSystemBus(SystemBus& bus) {
   uint8_t* const base = bytes_.data();

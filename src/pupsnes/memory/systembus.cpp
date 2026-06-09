@@ -10,7 +10,7 @@
 
 namespace pupsnes {
 
-SystemBus::SystemBus(SNES* snes) : snes_(snes) {}
+SystemBus::SystemBus(SNES& snes) : snes_(&snes) {}
 
 namespace {
 

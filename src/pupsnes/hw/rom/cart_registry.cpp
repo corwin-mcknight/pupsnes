@@ -50,7 +50,7 @@ namespace {
 // SNES::DeregisterDevice → SystemBus::UnmapByDeviceId. New entries written
 // by this builder use the new cart's DeviceId and survive the cleanup.
 BuildResult BuildLoRom(SNES* snes, std::span<const uint8_t> bytes, const CartProfile& profile) {
-  auto cart = std::make_unique<Cartridge>(snes);
+  auto cart = std::make_unique<Cartridge>(*snes);
   RomLoadResult legacy = cart->LoadLoRom(bytes);
   if (!legacy.ok) {
     return BuildResult{false, nullptr, profile, legacy.message};
@@ -60,7 +60,7 @@ BuildResult BuildLoRom(SNES* snes, std::span<const uint8_t> bytes, const CartPro
 }
 
 BuildResult BuildHiRom(SNES* snes, std::span<const uint8_t> bytes, const CartProfile& profile) {
-  auto cart = std::make_unique<Cartridge>(snes);
+  auto cart = std::make_unique<Cartridge>(*snes);
   RomLoadResult legacy = cart->LoadHiRom(bytes);
   if (!legacy.ok) {
     return BuildResult{false, nullptr, profile, legacy.message};
@@ -70,7 +70,7 @@ BuildResult BuildHiRom(SNES* snes, std::span<const uint8_t> bytes, const CartPro
 }
 
 BuildResult BuildExHiRom(SNES* snes, std::span<const uint8_t> bytes, const CartProfile& profile) {
-  auto cart = std::make_unique<Cartridge>(snes);
+  auto cart = std::make_unique<Cartridge>(*snes);
   RomLoadResult legacy = cart->LoadExHiRom(bytes);
   if (!legacy.ok) {
     return BuildResult{false, nullptr, profile, legacy.message};

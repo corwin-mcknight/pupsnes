@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <optional>
 #include <stdexcept>
+#include <utility>
 
 #include "pupsnes/core/snes.h"
 #include "pupsnes/hw/5a22/cpu_bcd_internal.h"
@@ -109,7 +110,7 @@ namespace {
     case Reg::kDp: return r.DP;
     default: break;
   }
-  __builtin_unreachable();
+  std::unreachable();
 }
 
 }  // namespace
@@ -118,7 +119,7 @@ namespace {
 // CPU
 // ---------------------------------------------------------------------------
 
-CPU::CPU(SNES* snes) : MasterClockDriver(snes) {}
+CPU::CPU(SNES& snes) : MasterClockDriver(snes) {}
 
 void CPU::Reset() {
   regs_ = Regs();
@@ -145,8 +146,8 @@ void CPU::Reset() {
   retired_instruction_count_ = 0;
   current_instr_ = nullptr;
   needs_drain_ = false;
-  system_bus_raw_ = (snes_ != nullptr) ? snes_->system_bus.get() : nullptr;
-  local_time_ = (snes_ != nullptr) ? snes_->GetMasterTime() : 0;
+  system_bus_raw_ = snes_->system_bus.get();
+  local_time_ = snes_->GetMasterTime();
 
   // First DRAM refresh fires kDramRefreshStartCycle master cycles after reset.
   next_refresh_time_ = local_time_ + kDramRefreshStartCycle;
@@ -167,8 +168,8 @@ void CPU::SampleInterrupts(TimeMasterT t) {
   // value is the wire level at master time `t`. Apply the NMITIMEN.7 AND-gate
   // so edge detection operates on the gated output (the signal the CPU's
   // internal NMI flip-flop actually sees).
-  const bool line = (snes_ != nullptr && snes_->ppu != nullptr) ? snes_->ppu->SampleNmiLine(t) : false;
-  const bool gate_open = (snes_ != nullptr && snes_->cpu_mmio != nullptr) ? snes_->cpu_mmio->GetNmiEnable() : false;
+  const bool line = snes_->ppu->SampleNmiLine(t);
+  const bool gate_open = snes_->cpu_mmio->GetNmiEnable();
   const bool gated = line && gate_open;
   nmi_curr_ = gated;
   if (gated && !nmi_gated_prev_) {
@@ -180,7 +181,7 @@ void CPU::SampleInterrupts(TimeMasterT t) {
   // by other peripherals OR'd in). Sample it directly — no edge tracking
   // required, the CPU delivers as long as the level is asserted at an
   // instruction boundary with P.I clear.
-  irq_line_asserted_ = (snes_ != nullptr && snes_->cpu_mmio != nullptr) ? snes_->cpu_mmio->SampleIrqLine() : false;
+  irq_line_asserted_ = snes_->cpu_mmio->SampleIrqLine();
 }
 
 std::optional<InterruptKind> CPU::SelectPendingInterrupt() const {
@@ -197,10 +198,10 @@ bool CPU::WaiShouldWake(TimeMasterT t) {
   // I-flag gating (per WDC §18). Delivery is still gated normally at the
   // post-wake instruction-boundary sample — WAI wakes on masked interrupts
   // and simply resumes the instruction after WAI without entering a handler.
-  const bool nmi_raw = (snes_ != nullptr && snes_->ppu != nullptr) ? snes_->ppu->SampleNmiLine(t) : false;
+  const bool nmi_raw = snes_->ppu->SampleNmiLine(t);
   // /IRQ line driven by CpuMmio's TIMEUP latch (plus any future peripheral
   // IRQ sources OR'd in). WAI wakes on level, even when P.I is set.
-  const bool irq_raw = (snes_ != nullptr && snes_->cpu_mmio != nullptr) ? snes_->cpu_mmio->SampleIrqLine() : false;
+  const bool irq_raw = snes_->cpu_mmio->SampleIrqLine();
   // Also honour the edge-latched flip-flop: an NMI edge caught on a prior
   // sample (before V advanced past the VBlank-entry line) must still wake WAI
   // even once the raw line has de-asserted.
@@ -213,7 +214,7 @@ void CPU::OnNmiTimenChanged(uint8_t prev_byte, uint8_t new_byte, TimeMasterT t) 
   const bool new_enable = (new_byte & kNmiEnableMask) != 0U;
   if (prev_enable == new_enable) return;
 
-  const bool line = (snes_ != nullptr && snes_->ppu != nullptr) ? snes_->ppu->SampleNmiLine(t) : false;
+  const bool line = snes_->ppu->SampleNmiLine(t);
   if (!prev_enable && new_enable) {
     // 0→1 transparency quirk: the AND-gate output transitions 0→1 if the
     // raw line is currently asserted. That falling-edge-into-flip-flop sets
@@ -309,10 +310,6 @@ BusFollowResult CPU::PlanAndFollow(SnesAddrT addr, BusAccessType type, uint8_t d
 }
 
 uint8_t CPU::ReadResetVectorByte(SnesAddrT addr) {
-  if (snes_ == nullptr || snes_->system_bus == nullptr) {
-    return 0xFFU;
-  }
-
   auto result = PlanAndFollow(addr, BusAccessType::kRead, 0, 0);
   if (result.WasScheduled()) {
     throw std::logic_error("CPU reset vector fetch cannot block on asynchronous bus access");
@@ -1219,9 +1216,6 @@ TimeMasterDeltaT CPU::EstimateNextStepCostOrZero() const {
   // Peek-only: planning a bus transaction is pure. Go through `snes_` so we
   // work even before CPU::Reset has cached system_bus_raw_ (some tests
   // construct a CPU without resetting it before calling Tick).
-  if (snes_ == nullptr || snes_->system_bus == nullptr) {
-    return kInternalCpuCycleMaster;
-  }
   const SystemBus& bus = *snes_->system_bus;
 
   if (ShouldFetchInstruction()) {
@@ -1261,9 +1255,6 @@ TimeMasterDeltaT CPU::EstimateNextStepCostOrZero() const {
 TickResult CPU::TickToTarget(TimeMasterT target_master_time) {
   if (fault_.has_value()) {
     return {0, TickStopReason::kFault};
-  }
-  if (snes_ == nullptr) {
-    return {0, TickStopReason::kReachedTarget};
   }
 
   const TimeMasterT start = snes_->GetMasterTime();

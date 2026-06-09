@@ -159,7 +159,7 @@ namespace {
 
 }  // namespace
 
-Cartridge::Cartridge(SNES* snes) : Device(snes) {}
+Cartridge::Cartridge(SNES& snes) : Device(snes) {}
 Cartridge::~Cartridge() = default;
 
 RomLoadResult Cartridge::LoadLoRom(std::span<const uint8_t> rom_data) {

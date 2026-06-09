@@ -55,7 +55,7 @@ struct PpuHvbStatus {
 //     observes decoded state.
 class Ppu : public Device {
  public:
-  explicit Ppu(SNES* snes);
+  explicit Ppu(SNES& snes);
   ~Ppu() override = default;
 
   [[nodiscard]] const char* DeviceName() const override { return "PPU"; }

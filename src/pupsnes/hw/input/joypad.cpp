@@ -2,7 +2,7 @@
 
 namespace pupsnes {
 
-Joypad::Joypad(SNES* snes) : Device(snes) {}
+Joypad::Joypad(SNES& snes) : Device(snes) {}
 
 void Joypad::Reset() {
   shift_register_ = 0;

@@ -18,31 +18,23 @@
 
 // --- Device ---
 
-pupsnes::Device::Device(SNES* snes) : snes_(snes) {
-  if (snes_ != nullptr) {
-    device_id_ = snes_->RegisterDevice(this);
-  }
-}
+pupsnes::Device::Device(SNES& snes) : snes_(&snes) { device_id_ = snes_->RegisterDevice(this); }
 
-pupsnes::Device::~Device() {
-  if (snes_ != nullptr) {
-    snes_->DeregisterDevice(device_id_);
-  }
-}
+pupsnes::Device::~Device() { snes_->DeregisterDevice(device_id_); }
 
 // --- SNES ---
 
 pupsnes::SNES::SNES()
-    : cpu(std::make_unique<CPU>(this)),
-      cartridge(std::make_unique<Cartridge>(this)),
-      scheduler(std::make_unique<Scheduler>(this)),
-      system_bus(std::make_unique<SystemBus>(this)),
-      wram(std::make_unique<WRAM>(this)),
-      cpu_mmio(std::make_unique<CpuMmio>(this)),
-      dma(std::make_unique<DmaController>(this)),
-      apu_stub(std::make_unique<ApuStub>(this)),
-      joypad(std::make_unique<Joypad>(this)),
-      ppu(std::make_unique<Ppu>(this)) {
+    : cpu(std::make_unique<CPU>(*this)),
+      cartridge(std::make_unique<Cartridge>(*this)),
+      scheduler(std::make_unique<Scheduler>(*this)),
+      system_bus(std::make_unique<SystemBus>(*this)),
+      wram(std::make_unique<WRAM>(*this)),
+      cpu_mmio(std::make_unique<CpuMmio>(*this)),
+      dma(std::make_unique<DmaController>(*this)),
+      apu_stub(std::make_unique<ApuStub>(*this)),
+      joypad(std::make_unique<Joypad>(*this)),
+      ppu(std::make_unique<Ppu>(*this)) {
   registry_.RegisterBuiltins();
   wram->MapSystemBus(*system_bus);
   cpu_mmio->MapSystemBus(*system_bus);

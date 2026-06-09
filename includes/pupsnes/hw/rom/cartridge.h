@@ -31,7 +31,7 @@ class Cartridge : public Device {
   // SRAM buffer instead of indexing into rom_.
   static constexpr uint32_t kSramOffsetTag = 0x80000000U;
 
-  explicit Cartridge(SNES* snes);
+  explicit Cartridge(SNES& snes);
   ~Cartridge() override;
 
   [[nodiscard]] const char* DeviceName() const override { return "Cartridge"; }

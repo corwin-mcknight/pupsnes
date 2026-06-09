@@ -48,7 +48,7 @@ constexpr uint16_t PackBgr555(uint8_t r, uint8_t g, uint8_t b) {
 
 }  // namespace
 
-Ppu::Ppu(SNES* snes)
+Ppu::Ppu(SNES& snes)
     : Device(snes),
       vram_(std::make_unique<std::array<uint8_t, sppu::regs::kVramSize>>()),
       oam_(std::make_unique<std::array<uint8_t, sppu::regs::kOamSize>>()),
@@ -154,20 +154,18 @@ void Ppu::Reset() {
   // Schedule the first frame-end signal. CatchUpTo drives all dot emission;
   // the signal fires when the frame boundary arrives so OnFrameEndSignal can
   // chain the next frame's signal.
-  if (snes_ != nullptr && snes_->scheduler != nullptr) {
-    snes_->scheduler->ScheduleSignal(NextFramePeriod(), SignalKind::kFrameEnd,
-                                     [this](TimeMasterT t) { OnFrameEndSignal(t); });
-    // VBlank-NMI boundary: the CPU's NMI flip-flop is edge-triggered on the
-    // /NMI line's falling edge, which lands when V transitions onto the
-    // VBlank entry line (225 normally, 240 with SETINI overscan — SETINI
-    // starts clear at reset so V=225). Scheduling this as a scheduler signal
-    // gives a sync fence: the CPU cannot run past the assertion cycle in a
-    // single tick budget, which is the only way to guarantee it can't
-    // "time-travel over" an NMI that real hardware would have delivered.
-    const TimeMasterT nmi_boundary_mcyc = static_cast<TimeMasterT>(VblankStartLine()) * sppu::regs::kNormalLineCycles;
-    snes_->scheduler->ScheduleSignal(nmi_boundary_mcyc, SignalKind::kVblankNmiBoundary,
-                                     [this](TimeMasterT t) { OnVblankNmiBoundarySignal(t); });
-  }
+  snes_->scheduler->ScheduleSignal(NextFramePeriod(), SignalKind::kFrameEnd,
+                                   [this](TimeMasterT t) { OnFrameEndSignal(t); });
+  // VBlank-NMI boundary: the CPU's NMI flip-flop is edge-triggered on the
+  // /NMI line's falling edge, which lands when V transitions onto the
+  // VBlank entry line (225 normally, 240 with SETINI overscan — SETINI
+  // starts clear at reset so V=225). Scheduling this as a scheduler signal
+  // gives a sync fence: the CPU cannot run past the assertion cycle in a
+  // single tick budget, which is the only way to guarantee it can't
+  // "time-travel over" an NMI that real hardware would have delivered.
+  const TimeMasterT nmi_boundary_mcyc = static_cast<TimeMasterT>(VblankStartLine()) * sppu::regs::kNormalLineCycles;
+  snes_->scheduler->ScheduleSignal(nmi_boundary_mcyc, SignalKind::kVblankNmiBoundary,
+                                   [this](TimeMasterT t) { OnVblankNmiBoundarySignal(t); });
 }
 
 void Ppu::CatchUpTo(TimeMasterT target) {
@@ -252,10 +250,8 @@ void Ppu::OnVblankNmiBoundarySignal(TimeMasterT master_time) {
   // CPU's lazy-pull line check still sees the real assertion whenever the
   // PPU is caught up past the new threshold, so correctness holds — only
   // the sync-granularity is coarser in that edge case.
-  if (snes_ != nullptr && snes_->scheduler != nullptr) {
-    snes_->scheduler->ScheduleSignal(master_time + NextFramePeriod(), SignalKind::kVblankNmiBoundary,
-                                     [this](TimeMasterT t) { OnVblankNmiBoundarySignal(t); });
-  }
+  snes_->scheduler->ScheduleSignal(master_time + NextFramePeriod(), SignalKind::kVblankNmiBoundary,
+                                   [this](TimeMasterT t) { OnVblankNmiBoundarySignal(t); });
 }
 
 PpuHvbStatus Ppu::QueryHvbStatus(TimeMasterT current_time) {
@@ -291,7 +287,7 @@ MmioReadResult Ppu::ReadRegister(uint32_t offset, TimeMasterT current_time) {
 
   const uint16_t reg = static_cast<uint16_t>(offset & 0xFFFFU);
   if (reg < sppu::regs::kBase || reg >= sppu::regs::kEnd) {
-    if (reg >= ApuStub::kPortBase && reg < ApuStub::kPortEnd && snes_ != nullptr && snes_->apu_stub != nullptr) {
+    if (reg >= ApuStub::kPortBase && reg < ApuStub::kPortEnd) {
       return snes_->apu_stub->ReadRegister(reg, current_time);
     }
     // $2180-$21FF WRAM ports still open-bus until that device lands.
@@ -376,7 +372,7 @@ MmioReadResult Ppu::ReadRegister(uint32_t offset, TimeMasterT current_time) {
 void Ppu::WriteRegister(uint32_t offset, uint8_t data, TimeMasterT current_time) {
   const uint16_t reg = static_cast<uint16_t>(offset & 0xFFFFU);
   if (reg < sppu::regs::kBase || reg >= sppu::regs::kEnd) {
-    if (reg >= ApuStub::kPortBase && reg < ApuStub::kPortEnd && snes_ != nullptr && snes_->apu_stub != nullptr) {
+    if (reg >= ApuStub::kPortBase && reg < ApuStub::kPortEnd) {
       snes_->apu_stub->WriteRegister(reg, data, current_time);
     }
     // Writes to $2180-$21FF drop until WRAM-port device lands.
@@ -649,9 +645,7 @@ void Ppu::EmitPixel(uint32_t h, uint32_t v) {
 
 void Ppu::OnEndOfFrame() {
   std::swap(front_buffer_, back_buffer_);
-  if (snes_ != nullptr) {
-    snes_->FireFrameReady(BuildFrontView());
-  }
+  snes_->FireFrameReady(BuildFrontView());
 }
 
 void Ppu::ReplayWrite(uint16_t offset, uint8_t data) {

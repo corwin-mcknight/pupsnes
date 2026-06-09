@@ -53,7 +53,7 @@ class DmaController : public Device {
 
   static constexpr std::size_t kTriggerRingCapacity = 32;
 
-  explicit DmaController(SNES* snes);
+  explicit DmaController(SNES& snes);
   ~DmaController() override = default;
 
   [[nodiscard]] const char* DeviceName() const override { return "DMA"; }

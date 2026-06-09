@@ -16,7 +16,7 @@ class MockMemoryDevice : public Device {
   static constexpr std::size_t kSize = 256;
   std::array<uint8_t, kSize> memory{};
 
-  explicit MockMemoryDevice(SNES* snes) : Device(snes) {}
+  explicit MockMemoryDevice(SNES& snes) : Device(snes) {}
 
   MmioReadResult ReadRegister(uint32_t offset, TimeMasterT /*current_time*/) override {
     return {memory[offset % kSize], 0xFFU};
@@ -34,7 +34,7 @@ class MockMMIODevice : public Device {
   uint8_t read_value = 0x42;
   int catch_up_calls = 0;
 
-  explicit MockMMIODevice(SNES* snes) : Device(snes) {}
+  explicit MockMMIODevice(SNES& snes) : Device(snes) {}
 
   void CatchUpTo(TimeMasterT target) override {
     if (target <= GetTime()) return;  // idempotent: device already at or past target
@@ -54,7 +54,7 @@ class MockMMIODevice : public Device {
 
 TEST_CASE("MapPage and UnmapPage populate and clear entries", "[unit]") {
   SNES snes;
-  MockMemoryDevice dev(&snes);
+  MockMemoryDevice dev(snes);
 
   snes.system_bus->MapPage({0x00, 0x21, dev.GetDeviceId(), 0, PageDeviceKind::kSameClockMmio, 8});
 
@@ -71,7 +71,7 @@ TEST_CASE("MapPage and UnmapPage populate and clear entries", "[unit]") {
 
 TEST_CASE("plan decodes address to correct target and offset", "[unit]") {
   SNES snes;
-  MockMemoryDevice dev(&snes);
+  MockMemoryDevice dev(snes);
 
   snes.system_bus->MapPage({0x7E, 0x00, dev.GetDeviceId(), 0, PageDeviceKind::kMemory, 8});
 
@@ -92,7 +92,7 @@ TEST_CASE("plan for unmapped address returns Rejected", "[unit]") {
 
 TEST_CASE("plan is pure and idempotent", "[unit]") {
   SNES snes;
-  MockMMIODevice dev(&snes);
+  MockMMIODevice dev(snes);
 
   snes.system_bus->MapPage({0x00, 0x21, dev.GetDeviceId(), 0x100, PageDeviceKind::kSameClockMmio, 6});
 
@@ -108,7 +108,7 @@ TEST_CASE("plan is pure and idempotent", "[unit]") {
 
 TEST_CASE("follow InlineComplete read/write for Memory", "[unit]") {
   SNES snes;
-  MockMemoryDevice dev(&snes);
+  MockMemoryDevice dev(snes);
 
   snes.system_bus->MapPage({0x7E, 0x00, dev.GetDeviceId(), 0, PageDeviceKind::kMemory, 8});
 
@@ -127,7 +127,7 @@ TEST_CASE("follow InlineComplete read/write for Memory", "[unit]") {
 
 TEST_CASE("follow InlineComplete for SameClockMMIO triggers catch-up", "[unit]") {
   SNES snes;
-  MockMMIODevice mmio_dev(&snes);
+  MockMMIODevice mmio_dev(snes);
 
   snes.system_bus->MapPage({0x00, 0x21, mmio_dev.GetDeviceId(), 0x100, PageDeviceKind::kSameClockMmio, 6});
 
@@ -148,7 +148,7 @@ TEST_CASE("follow InlineComplete for SameClockMMIO write does not catch up", "[u
   // pending-write log without forcing a catch-up. The device stays behind
   // until a later read (or its own Tick) drains the log.
   SNES snes;
-  MockMMIODevice mmio_dev(&snes);
+  MockMMIODevice mmio_dev(snes);
 
   snes.system_bus->MapPage({0x00, 0x21, mmio_dev.GetDeviceId(), 0, PageDeviceKind::kSameClockMmio, 6});
 
@@ -164,8 +164,8 @@ TEST_CASE("follow InlineComplete for SameClockMMIO write does not catch up", "[u
 
 TEST_CASE("follow ScheduledComplete for CrossClockMMIO creates token", "[unit]") {
   SNES snes;
-  MockMMIODevice source_dev(&snes);
-  MockMMIODevice target_dev(&snes);
+  MockMMIODevice source_dev(snes);
+  MockMMIODevice target_dev(snes);
 
   snes.system_bus->MapPage({0x00, 0x21, target_dev.GetDeviceId(), 0, PageDeviceKind::kCrossClockMmio, 12});
 
@@ -198,7 +198,7 @@ TEST_CASE("follow Rejected plan returns Rejected result", "[unit]") {
 
 TEST_CASE("page table mirrors: two entries point to same device at different offsets", "[unit]") {
   SNES snes;
-  MockMemoryDevice dev(&snes);
+  MockMemoryDevice dev(snes);
 
   snes.system_bus->MapPage({0x00, 0x00, dev.GetDeviceId(), 0, PageDeviceKind::kMemory, 8});
   snes.system_bus->MapPage({0x80, 0x00, dev.GetDeviceId(), 0, PageDeviceKind::kMemory, 8});
@@ -213,7 +213,7 @@ TEST_CASE("page table mirrors: two entries point to same device at different off
 
 TEST_CASE("catch-up does not tick device already at or past target time", "[unit]") {
   SNES snes;
-  MockMMIODevice mmio_dev(&snes);
+  MockMMIODevice mmio_dev(snes);
 
   snes.system_bus->MapPage({0x00, 0x21, mmio_dev.GetDeviceId(), 0, PageDeviceKind::kSameClockMmio, 6});
 
@@ -230,7 +230,7 @@ TEST_CASE("catch-up does not tick device already at or past target time", "[unit
 
 TEST_CASE("multiple sequential plan/follow operations", "[unit]") {
   SNES snes;
-  MockMemoryDevice dev(&snes);
+  MockMemoryDevice dev(snes);
 
   snes.system_bus->MapPage({0x7E, 0x00, dev.GetDeviceId(), 0, PageDeviceKind::kMemory, 8});
 

@@ -15,7 +15,7 @@ class WRAM : public Device {
  public:
   static constexpr std::size_t kSize = 128U * 1024U;
 
-  explicit WRAM(SNES* snes);
+  explicit WRAM(SNES& snes);
   ~WRAM() override = default;
 
   [[nodiscard]] const char* DeviceName() const override { return "WRAM"; }

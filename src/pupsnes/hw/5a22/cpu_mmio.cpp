@@ -49,7 +49,7 @@ void MapMmioBank(SystemBus& bus, DeviceIdT device_id, uint8_t bank) {
 
 }  // namespace
 
-CpuMmio::CpuMmio(SNES* snes) : Device(snes) {}
+CpuMmio::CpuMmio(SNES& snes) : Device(snes) {}
 
 void CpuMmio::Reset() {
   const bool was_fast = (memsel_ & 0x01U) != 0U;
@@ -62,7 +62,7 @@ void CpuMmio::Reset() {
   // Mirror the write path: only rebuild the page table when FASTROM was
   // actually on. No-op remap on a cold machine where both state and bus
   // already agree.
-  if (was_fast && snes_ != nullptr && snes_->cartridge != nullptr && snes_->system_bus != nullptr) {
+  if (was_fast) {
     snes_->cartridge->OnMemSelChanged(*snes_->system_bus, false);
   }
 }
@@ -77,7 +77,6 @@ void CpuMmio::MapSystemBus(SystemBus& bus) {
 
 MmioReadResult CpuMmio::ReadRegister(uint32_t offset, TimeMasterT current_time) {
   const uint32_t reg = offset & 0xFFFFU;
-  const bool k_has_joypad = (snes_ != nullptr && snes_->joypad != nullptr);
   switch (reg) {
     case kMemSelOffset: return {memsel_, 0xFFU};
 
@@ -85,10 +84,7 @@ MmioReadResult CpuMmio::ReadRegister(uint32_t offset, TimeMasterT current_time) 
       // RDNMI read both samples and clears the VBlank NMI latch. Polling loops
       // of the form `BIT $4210 / BPL` see bit 7 high once per frame at VBlank
       // entry and fall back to 0 on the next read until the latch re-arms.
-      bool vblank_nmi = false;
-      if (snes_ != nullptr && snes_->ppu != nullptr) {
-        vblank_nmi = snes_->ppu->QueryAndClearVblankNmiFlag(current_time);
-      }
+      const bool vblank_nmi = snes_->ppu->QueryAndClearVblankNmiFlag(current_time);
       uint8_t value = kRdNmiCpuVersion;
       if (vblank_nmi) value = static_cast<uint8_t>(value | kRdNmiVblankFlagMask);
       return {value, kRdNmiDrivenMask};
@@ -106,10 +102,7 @@ MmioReadResult CpuMmio::ReadRegister(uint32_t offset, TimeMasterT current_time) 
       // Query the PPU directly so the flags reflect the bus cycle's master time.
       // The PPU catches up internally; missing the call would leak stale h/v
       // from whenever the PPU last advanced.
-      PpuHvbStatus status{false, false};
-      if (snes_ != nullptr && snes_->ppu != nullptr) {
-        status = snes_->ppu->QueryHvbStatus(current_time);
-      }
+      const PpuHvbStatus status = snes_->ppu->QueryHvbStatus(current_time);
       uint8_t value = 0;
       if (status.vblank) value = static_cast<uint8_t>(value | kHvbJoyVblankMask);
       if (status.hblank) value = static_cast<uint8_t>(value | kHvbJoyHblankMask);
@@ -121,28 +114,22 @@ MmioReadResult CpuMmio::ReadRegister(uint32_t offset, TimeMasterT current_time) 
       // Manual serial port for P1. Only bit 0 carries pad data; leave bits 7-1
       // as open-bus rather than fabricating zeros — real hardware exposes a few
       // open I/O pins in that window.
-      if (snes_ != nullptr && snes_->joypad != nullptr) {
-        return {snes_->joypad->ReadJoySer0(), 0x01U};
-      }
-      return {0x00U, 0x01U};
+      return {snes_->joypad->ReadJoySer0(), 0x01U};
 
     case kJoySer1Offset:
       // P2 manual serial port. No P2 controller, so the data line reads 0 with
       // bit 0 driven; bits 7-1 stay open-bus.
-      if (snes_ != nullptr && snes_->joypad != nullptr) {
-        return {snes_->joypad->ReadJoySer1(), 0x01U};
-      }
-      return {0x00U, 0x01U};
+      return {snes_->joypad->ReadJoySer1(), 0x01U};
 
     case kAutoJoyResultFirst: {
       // $4218 JOY1L — A, X, L, R in bits 7..4, controller-type ID in bits 3..0.
-      const uint8_t value = k_has_joypad ? snes_->joypad->ReadJoy1L() : 0x00U;
+      const uint8_t value = snes_->joypad->ReadJoy1L();
       return {value, 0xFFU};
     }
 
     case kAutoJoyResultFirst + 1U: {
       // $4219 JOY1H — B, Y, Select, Start, Up, Down, Left, Right.
-      const uint8_t value = k_has_joypad ? snes_->joypad->ReadJoy1H() : 0x00U;
+      const uint8_t value = snes_->joypad->ReadJoy1H();
       return {value, 0xFFU};
     }
 
@@ -168,7 +155,7 @@ void CpuMmio::WriteRegister(uint32_t offset, uint8_t data, TimeMasterT current_t
     // Re-map the LoROM fast-bank pages only when the FASTROM bit actually
     // flipped. ROMs commonly re-poke $420D with the same value; avoid
     // reshuffling 126 banks * 128 pages of page-table entries on no-op writes.
-    if (was_fast != now_fast && snes_ != nullptr && snes_->cartridge != nullptr && snes_->system_bus != nullptr) {
+    if (was_fast != now_fast) {
       snes_->cartridge->OnMemSelChanged(*snes_->system_bus, now_fast);
     }
     return;
@@ -180,7 +167,7 @@ void CpuMmio::WriteRegister(uint32_t offset, uint8_t data, TimeMasterT current_t
     // transparency while /NMI is asserted → immediate NMI; 1→0 cancels any
     // pending NMI). The CPU owns the flip-flop and runs the transition
     // logic, since it's the one with the edge-tracker state.
-    if (((prev ^ data) & kNmiTimenNmiEnableMask) != 0U && snes_ != nullptr && snes_->cpu != nullptr) {
+    if (((prev ^ data) & kNmiTimenNmiEnableMask) != 0U) {
       snes_->cpu->OnNmiTimenChanged(prev, data, current_time);
     }
     // H/V-IRQ mode transitions: 5:4 = 00 clears any pending latch (per
@@ -220,15 +207,13 @@ void CpuMmio::WriteRegister(uint32_t offset, uint8_t data, TimeMasterT current_t
     return;
   }
   if (reg == kMdmaEnOffset) {
-    if (data != 0U && snes_ != nullptr && snes_->dma != nullptr) {
+    if (data != 0U) {
       const TimeMasterT end_time = snes_->dma->Trigger(data, current_time);
       // Stall the CPU: bump master time and the CPU's local-time mirror so the
       // next bus access sees the post-DMA cycle. Real hardware halts the 65816
       // for the DMA duration; this models the same effect inline.
       snes_->SetMasterTime(end_time);
-      if (snes_->cpu != nullptr) {
-        snes_->cpu->SetLocalTime(end_time);
-      }
+      snes_->cpu->SetLocalTime(end_time);
     }
     return;
   }
@@ -241,9 +226,7 @@ void CpuMmio::WriteRegister(uint32_t offset, uint8_t data, TimeMasterT current_t
     // $4016 write — bit 0 is the manual-serial strobe for both controller
     // ports. Bits 7-1 are programmable I/O pins on the controller connector;
     // ignored here because we don't model the I/O port.
-    if (snes_ != nullptr && snes_->joypad != nullptr) {
-      snes_->joypad->WriteJoySer0(data);
-    }
+    snes_->joypad->WriteJoySer0(data);
     return;
   }
   // Stub: writes to other registers are accepted silently so ROMs can poke
@@ -404,9 +387,6 @@ TimeMasterT ComputeNextMatch(uint8_t irq_mode, uint16_t htime, uint16_t vtime, T
 }  // namespace
 
 void CpuMmio::RescheduleIrqMatchFrom(TimeMasterT now) {
-  if (snes_ == nullptr || snes_->scheduler == nullptr || snes_->ppu == nullptr) {
-    return;
-  }
   const uint8_t mode = static_cast<uint8_t>(nmitimen_ & kNmiTimenIrqModeMask);
   if (mode == 0U) {
     scheduled_match_time_ = kNoMatch;

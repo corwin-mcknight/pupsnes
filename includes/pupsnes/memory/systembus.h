@@ -110,7 +110,7 @@ struct PageMapParams {
 
 class SystemBus {
  public:
-  explicit SystemBus(SNES* snes);
+  explicit SystemBus(SNES& snes);
   ~SystemBus() = default;
 
   void MapPage(const PageMapParams& params);
@@ -171,7 +171,7 @@ class SystemBus {
   }
 
  private:
-  SNES* snes_;  // Non-owning. SNES owns this SystemBus; pointer back to parent.
+  SNES* const snes_;  // Non-owning, never null. SNES owns this SystemBus; pointer back to parent.
   uint8_t last_data_bus_value_ = 0xFF;
   BusEventSink* event_sink_ = nullptr;
   using PageRow = std::array<PageTableEntry, 256>;

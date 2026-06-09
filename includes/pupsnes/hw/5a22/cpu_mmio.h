@@ -84,7 +84,7 @@ class CpuMmio : public Device {
   static constexpr uint16_t kMdmaEnOffset = 0x420BU;
   static constexpr uint16_t kHdmaEnOffset = 0x420CU;
 
-  explicit CpuMmio(SNES* snes);
+  explicit CpuMmio(SNES& snes);
   ~CpuMmio() override = default;
 
   [[nodiscard]] const char* DeviceName() const override { return "CPU MMIO"; }

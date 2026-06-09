@@ -4,7 +4,7 @@
 
 namespace pupsnes {
 
-ApuStub::ApuStub(SNES* snes) : Device(snes) {}
+ApuStub::ApuStub(SNES& snes) : Device(snes) {}
 
 void ApuStub::ArmSignature() {
   ports_[0] = kResetPort0;

@@ -18,7 +18,7 @@ class TestROM : public Device {
   static constexpr std::size_t kSize = 512;
   std::array<uint8_t, kSize> mem{};
 
-  explicit TestROM(SNES* snes) : Device(snes) {}
+  explicit TestROM(SNES& snes) : Device(snes) {}
 
   MmioReadResult ReadRegister(uint32_t offset, TimeMasterT /*current_time*/) override {
     return {mem[offset % kSize], 0xFFU};
@@ -34,7 +34,7 @@ class ObservedMMIO : public Device {
   std::array<uint8_t, kSize> mem{};
   std::vector<TimeMasterT> read_times;
 
-  explicit ObservedMMIO(SNES* snes) : Device(snes) {}
+  explicit ObservedMMIO(SNES& snes) : Device(snes) {}
 
   void CatchUpTo(TimeMasterT target) override { local_time_ = target; }
 
@@ -46,8 +46,8 @@ class ObservedMMIO : public Device {
 
 struct TestFixture {
   SNES snes;
-  TestROM rom{&snes};
-  CPU cpu{&snes};
+  TestROM rom{snes};
+  CPU cpu{snes};
 
   TestFixture() {
     snes.system_bus->MapPage({0x00, 0x80, rom.GetDeviceId(), 0x000, PageDeviceKind::kMemory, 8});
@@ -68,8 +68,8 @@ struct TestFixture {
 
 struct MMIOProgramFixture {
   SNES snes;
-  ObservedMMIO program{&snes};
-  CPU cpu{&snes};
+  ObservedMMIO program{snes};
+  CPU cpu{snes};
 
   MMIOProgramFixture() {
     snes.system_bus->MapPage({0x00, 0x80, program.GetDeviceId(), 0x000, PageDeviceKind::kSameClockMmio, 8});
@@ -98,7 +98,7 @@ using pupsnes::test::SetIndex16Y;
 
 TEST_CASE("CPU registers with SNES on construction", "[cpu]") {
   SNES snes;
-  CPU cpu(&snes);
+  CPU cpu(snes);
 
   REQUIRE(cpu.GetDeviceId() != static_cast<DeviceIdT>(-1));
   REQUIRE(snes.GetDevice(cpu.GetDeviceId()) == &cpu);
@@ -114,7 +114,7 @@ TEST_CASE("SNES owns the core machine devices", "[cpu]") {
 
 TEST_CASE("CPU initial register state", "[cpu]") {
   SNES snes;
-  CPU cpu(&snes);
+  CPU cpu(snes);
 
   auto r = cpu.GetRegs();
   REQUIRE(r.PC == 0x0000);
@@ -1188,7 +1188,7 @@ TEST_CASE("Fetch from unmapped address advances PC via open-bus value", "[cpu]")
   // now implemented so the fetch no longer faults — kBudgetExhausted is the
   // natural outcome once the CPU starts consuming operand bytes from open bus.
   SNES snes;
-  CPU cpu(&snes);
+  CPU cpu(snes);
   auto regs = cpu.GetRegs();
   regs.PBR = 0x40;
   cpu.SetRegs(regs);

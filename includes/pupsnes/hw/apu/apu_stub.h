@@ -77,7 +77,7 @@ class ApuStub : public Device {
   // writes so it can't false-flip.
   static constexpr uint8_t kStallReadThreshold = 8;
 
-  explicit ApuStub(SNES* snes);
+  explicit ApuStub(SNES& snes);
   ~ApuStub() override = default;
 
   [[nodiscard]] const char* DeviceName() const override { return "APU (stub)"; }
