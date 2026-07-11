@@ -2,7 +2,9 @@
 
 #include <algorithm>
 #include <memory>
+#include <utility>
 
+#include "pupsnes/core/emu_event.h"
 #include "pupsnes/core/scheduler.h"
 #include "pupsnes/core/signal_event.h"
 #include "pupsnes/core/snes.h"
@@ -196,9 +198,13 @@ void Ppu::CatchUpTo(TimeMasterT target) {
       (*drawn_mask_)[idx >> 3U] |= static_cast<uint8_t>(1U << (idx & 7U));
     }
 
-    AdvanceHv();
+    // Advance local time before stepping H/V so AdvanceHv observes the dot's
+    // end cycle — the architectural time of the V transition (used to stamp
+    // the NMI-assert event). AdvanceHv itself never reads local_time_ for
+    // emulation decisions, so the swap is behavior-neutral otherwise.
     local_time_ += remaining_dot;
     partial_dot_cycles_ = 0;
+    AdvanceHv();
 
     if (h_ == 0 && v_ == 0) {
       // Frame boundary: swap buffers, fire frontend callback, toggle field,
@@ -208,6 +214,48 @@ void Ppu::CatchUpTo(TimeMasterT target) {
       drawn_mask_->fill(0);
     }
   }
+}
+
+EmuEventHv Ppu::ProjectHvAt(TimeMasterT t) const {
+  uint32_t h = h_;
+  uint32_t v = v_;
+  bool field = field_;
+  // Anchor at the in-progress dot's start cycle, mirroring CatchUpTo.
+  TimeMasterT dot_start = local_time_ - static_cast<TimeMasterT>(partial_dot_cycles_);
+  // Finish the current line dot by dot, then skip whole lines, then walk the
+  // final partial line — bounded by ~2 line walks + one line skip per frame.
+  while (true) {
+    if (h == 0) {
+      // At a line boundary: skip whole lines while `t` lies past them.
+      while (true) {
+        const auto line_cycles = static_cast<TimeMasterT>(LineCycles(v, field));
+        if (t < dot_start + line_cycles) {
+          break;
+        }
+        dot_start += line_cycles;
+        ++v;
+        if (v >= sppu::regs::kLinesPerFrameNtsc) {
+          v = 0;
+          field = !field;  // Matches the frame-wrap toggle in CatchUpTo.
+        }
+      }
+    }
+    const auto dot_cycles = static_cast<TimeMasterT>(DotCost(h, v, field));
+    if (t < dot_start + dot_cycles) {
+      break;
+    }
+    dot_start += dot_cycles;
+    ++h;
+    if (h >= sppu::regs::kDotsPerLine) {
+      h = 0;
+      ++v;
+      if (v >= sppu::regs::kLinesPerFrameNtsc) {
+        v = 0;
+        field = !field;
+      }
+    }
+  }
+  return {static_cast<uint16_t>(v), static_cast<uint16_t>(h)};
 }
 
 bool Ppu::QueryAndClearVblankNmiFlag(TimeMasterT current_time) {
@@ -424,7 +472,7 @@ void Ppu::DrainPendingWritesUpTo(TimeMasterT cutoff) {
     if (entry.cycle > cutoff) {
       break;
     }
-    ReplayWrite(entry.offset, entry.data);
+    ReplayWrite(entry.offset, entry.data, entry.cycle);
     ++pending_writes_cursor_;
   }
   if (pending_writes_cursor_ == pending_writes_count_) {
@@ -453,6 +501,7 @@ void Ppu::AdvanceHv() {
     // interrupt delivery lands.
     if (v_ == VblankStartLine()) {
       vblank_nmi_flag_ = true;
+      events::Emit(snes_->GetEmuEventSink(), local_time_, CursorHv(), EmuEventKind::kNmiAsserted, v_);
     } else if (v_ == 0) {
       vblank_nmi_flag_ = false;
     }
@@ -648,12 +697,23 @@ void Ppu::OnEndOfFrame() {
   snes_->FireFrameReady(BuildFrontView());
 }
 
-void Ppu::ReplayWrite(uint16_t offset, uint8_t data) {
+void Ppu::ReplayWrite(uint16_t offset, uint8_t data, TimeMasterT cycle) {
   switch (offset) {
-    case sppu::regs::kInidisp:
+    case sppu::regs::kInidisp: {
+      const bool old_blank = forced_blank_;
+      const uint8_t old_brightness = brightness_;
       forced_blank_ = (data & sppu::regs::kInidispForcedBlankMask) != 0U;
       brightness_ = data & sppu::regs::kInidispBrightnessMask;
+      if (old_blank != forced_blank_) {
+        events::Emit(snes_->GetEmuEventSink(), cycle, CursorHv(), EmuEventKind::kPpuForcedBlankChange, old_blank,
+                     forced_blank_);
+      }
+      if (old_brightness != brightness_) {
+        events::Emit(snes_->GetEmuEventSink(), cycle, CursorHv(), EmuEventKind::kPpuBrightnessChange, old_brightness,
+                     brightness_);
+      }
       break;
+    }
 
     case sppu::regs::kOamAddL: {
       const uint32_t high_bit = static_cast<uint32_t>(oam_byte_addr_reload_ & 0x200U);
@@ -760,9 +820,15 @@ void Ppu::ReplayWrite(uint16_t offset, uint8_t data) {
       break;
     }
 
-    case sppu::regs::kBgmode:
+    case sppu::regs::kBgmode: {
+      const uint8_t old_mode = bg_mode_;
+      const bool old_bg3_priority = bg3_priority_;
       bg_mode_ = data & sppu::regs::kBgmodeModeMask;
       bg3_priority_ = (data & sppu::regs::kBgmodeBg3PriorityMask) != 0U;
+      if (old_mode != bg_mode_ || old_bg3_priority != bg3_priority_) {
+        events::Emit(snes_->GetEmuEventSink(), cycle, CursorHv(), EmuEventKind::kPpuBgModeChange, old_mode, bg_mode_,
+                     bg3_priority_);
+      }
       bg_tile_16x16_[0] = (data & sppu::regs::kBgmodeBg1TileSizeMask) != 0U;
       bg_tile_16x16_[1] = (data & sppu::regs::kBgmodeBg2TileSizeMask) != 0U;
       bg_tile_16x16_[2] = (data & sppu::regs::kBgmodeBg3TileSizeMask) != 0U;
@@ -770,6 +836,7 @@ void Ppu::ReplayWrite(uint16_t offset, uint8_t data) {
       // Tile-size flip changes tile_w and the bytes_per_char ladder; dirty all.
       bg_row_dirty_.fill(true);
       break;
+    }
 
     case sppu::regs::kBg1Sc:
     case sppu::regs::kBg2Sc:
@@ -799,8 +866,24 @@ void Ppu::ReplayWrite(uint16_t offset, uint8_t data) {
       WriteBgScroll(static_cast<uint8_t>((offset - sppu::regs::kBg1Vofs) >> 1U), data, /*is_hofs=*/false);
       break;
 
-    case sppu::regs::kTm: main_screen_layers_ = data; break;
-    case sppu::regs::kTs: sub_screen_layers_ = data; break;
+    case sppu::regs::kTm: {
+      const uint8_t old_layers = main_screen_layers_;
+      main_screen_layers_ = data;
+      if (old_layers != main_screen_layers_) {
+        events::Emit(snes_->GetEmuEventSink(), cycle, CursorHv(), EmuEventKind::kPpuMainScreenChange, old_layers,
+                     main_screen_layers_);
+      }
+      break;
+    }
+    case sppu::regs::kTs: {
+      const uint8_t old_layers = sub_screen_layers_;
+      sub_screen_layers_ = data;
+      if (old_layers != sub_screen_layers_) {
+        events::Emit(snes_->GetEmuEventSink(), cycle, CursorHv(), EmuEventKind::kPpuSubScreenChange, old_layers,
+                     sub_screen_layers_);
+      }
+      break;
+    }
 
     case sppu::regs::kCgwsel: cgwsel_ = data; break;
     case sppu::regs::kCgadsub: cgadsub_ = data; break;

@@ -2,11 +2,13 @@
 
 #include <array>
 
+#include "pupsnes/core/emu_event.h"
 #include "pupsnes/core/scheduler.h"
 #include "pupsnes/core/signal_event.h"
 #include "pupsnes/core/snes.h"
 #include "pupsnes/hw/5a22/cpu.h"
 #include "pupsnes/hw/5a22/cpu_mmio.h"
+#include "pupsnes/hw/sppu/ppu.h"
 #include "pupsnes/memory/systembus.h"
 
 namespace pupsnes {
@@ -110,6 +112,10 @@ void DmaController::OnHdmaSignal(TimeMasterT master_time) {
       snes_->cpu->SetLocalTime(end_time);
     }
 
+    events::EmitWithHv(
+        snes_->GetEmuEventSink(), master_time, [&] { return snes_->ppu->ProjectHvAt(master_time); },
+        EmuEventKind::kHdmaFrameInit, hdma_active_mask_);
+
     // Schedule first per-line at V=0 H=274.
     hdma_phase_ = HdmaPhase::kRunLine;
     hdma_next_v_ = 0;
@@ -135,6 +141,9 @@ void DmaController::OnHdmaSignal(TimeMasterT master_time) {
   }
   if (active_count > 0U) {
     t += 8U;  // per-line overhead
+    events::EmitWithHv(
+        snes_->GetEmuEventSink(), master_time, [&] { return snes_->ppu->ProjectHvAt(master_time); },
+        EmuEventKind::kHdmaLineRun, hdma_next_v_, effective_mask, active_count);
   }
 
   if (snes_->GetMasterTime() < t) {
@@ -326,6 +335,10 @@ TimeMasterT DmaController::Trigger(uint8_t channels_mask, TimeMasterT start_time
     slot.bytes_transferred = (s.das == 0U) ? 0x10000U : static_cast<uint32_t>(s.das);
   }
 
+  events::EmitWithHv(
+      snes_->GetEmuEventSink(), start_time, [&] { return snes_->ppu->ProjectHvAt(start_time); },
+      EmuEventKind::kDmaBurstStart, channels_mask);
+
   TimeMasterT t = start_time + 8U;  // Startup overhead.
 
   for (uint8_t ch = 0; ch < 8U; ++ch) {
@@ -372,6 +385,10 @@ TimeMasterT DmaController::Trigger(uint8_t channels_mask, TimeMasterT start_time
   trigger_ring_[trigger_write_count_ % kTriggerRingCapacity] = record;
   ++trigger_write_count_;
   last_trigger_mask_ = channels_mask;
+
+  events::EmitWithHv(
+      snes_->GetEmuEventSink(), t, [&] { return snes_->ppu->ProjectHvAt(t); }, EmuEventKind::kDmaBurstComplete,
+      channels_mask, t - start_time);
 
   return t;
 }

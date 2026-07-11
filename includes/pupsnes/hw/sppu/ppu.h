@@ -6,6 +6,7 @@
 #include <memory>
 
 #include "pupsnes/core/device.h"
+#include "pupsnes/core/emu_event.h"
 #include "pupsnes/hw/sppu/ppu_regs.h"
 
 namespace pupsnes {
@@ -128,9 +129,7 @@ class Ppu : public Device {
   [[nodiscard]] uint16_t GetBgHofs(uint8_t bg) const {
     return bg < sppu::regs::kBgCount ? static_cast<uint16_t>(bg_hofs_[bg] & sppu::regs::kBgScrollMask) : uint16_t{0};
   }
-  [[nodiscard]] uint16_t GetBgVofs(uint8_t bg) const {
-    return bg < sppu::regs::kBgCount ? bg_vofs_[bg] : uint16_t{0};
-  }
+  [[nodiscard]] uint16_t GetBgVofs(uint8_t bg) const { return bg < sppu::regs::kBgCount ? bg_vofs_[bg] : uint16_t{0}; }
   [[nodiscard]] uint32_t GetPendingWriteCount() const { return pending_writes_count_ - pending_writes_cursor_; }
   void SetForceOverscanDraw(bool v) { force_overscan_draw_ = v; }
   [[nodiscard]] bool GetForceOverscanDraw() const { return force_overscan_draw_; }
@@ -151,9 +150,7 @@ class Ppu : public Device {
   [[nodiscard]] uint8_t GetColdataB() const { return coldata_b_; }
   [[nodiscard]] uint8_t GetBgMode() const { return bg_mode_; }
   [[nodiscard]] bool GetBg3Priority() const { return bg3_priority_; }
-  [[nodiscard]] bool GetBgTile16x16(uint8_t bg) const {
-    return bg < sppu::regs::kBgCount ? bg_tile_16x16_[bg] : false;
-  }
+  [[nodiscard]] bool GetBgTile16x16(uint8_t bg) const { return bg < sppu::regs::kBgCount ? bg_tile_16x16_[bg] : false; }
   [[nodiscard]] uint8_t GetBgTilemapLayout(uint8_t bg) const {
     return bg < sppu::regs::kBgCount ? bg_tilemap_layout_[bg] : uint8_t{0};
   }
@@ -224,6 +221,18 @@ class Ppu : public Device {
   [[nodiscard]] static constexpr TimeMasterDeltaT LineCycles(uint32_t v, bool field) {
     return IsShortLine(v, field) ? sppu::regs::kShortLineCycles : sppu::regs::kNormalLineCycles;
   }
+
+  // Project the H/V counters forward from the live cursor to master cycle
+  // `t` — pure counter arithmetic over DotCost/field state with no machine
+  // mutation. Used to stamp emitted EmuEvents with the counter position for
+  // devices whose current time is ahead of the PPU's lazy catch-up (the PPU
+  // never runs ahead of the machine, so the walk is forward-only; `t` at or
+  // behind the in-progress dot returns that dot). The counters are stateful
+  // on hardware — mode changes alter line/frame lengths — so events record
+  // position at the source via this projection or the live cursor, never by
+  // re-deriving from master_time later. H is the dot counter (0..339,
+  // OPHCT semantics).
+  [[nodiscard]] EmuEventHv ProjectHvAt(TimeMasterT t) const;
   // Apply INIDISP brightness to a BGR555 colour, per fullsnes:
   //   out_channel = (channel * (brightness + 1)) >> 4
   // Brightness 0 collapses to ~1/16th; brightness 15 passes through unchanged.
@@ -243,6 +252,10 @@ class Ppu : public Device {
   [[nodiscard]] uint32_t VblankStartLine() const {
     return overscan_ ? sppu::regs::kVisibleVEnd239 : sppu::regs::kVisibleVEnd224;
   }
+
+  // Live counter position for stamping EmuEvents emitted during catch-up
+  // (replay writes apply at the in-progress dot; the cursor IS the counter).
+  [[nodiscard]] EmuEventHv CursorHv() const { return {static_cast<uint16_t>(v_), static_cast<uint16_t>(h_)}; }
 
   // Frame length in master cycles, accounting for the short-line saving at
   // V=240 on field=1 NTSC frames.
@@ -266,8 +279,9 @@ class Ppu : public Device {
 
   // Replay dispatcher — applies one pending write's semantics. Writes that
   // only touch the shadow (open-bus ports) are no-ops here because the shadow
-  // was updated at enqueue time.
-  void ReplayWrite(uint16_t offset, uint8_t data);
+  // was updated at enqueue time. `cycle` is the write's original bus cycle,
+  // used to timestamp emitted EmuEvents at the architecturally correct time.
+  void ReplayWrite(uint16_t offset, uint8_t data, TimeMasterT cycle);
 
   // Frame-end signal handler — re-schedules itself for the next frame boundary.
   void OnFrameEndSignal(TimeMasterT master_time);

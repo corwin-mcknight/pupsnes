@@ -13,6 +13,17 @@ std::string FormatAddress(SnesAddrT address) {
   return std::format("${:02X}:{:04X}", static_cast<unsigned>(address >> 16), static_cast<unsigned>(address & 0xFFFFU));
 }
 
+constexpr EmuEventKind EventKindForSource(ErrorSource source) {
+  switch (source) {
+    case ErrorSource::kCpu: return EmuEventKind::kErrorCpu;
+    case ErrorSource::kBus: return EmuEventKind::kErrorBus;
+    case ErrorSource::kScheduler: return EmuEventKind::kErrorScheduler;
+    case ErrorSource::kRomLoader: return EmuEventKind::kErrorRomLoader;
+    case ErrorSource::kHost: return EmuEventKind::kErrorHost;
+  }
+  return EmuEventKind::kErrorHost;
+}
+
 }  // namespace
 
 void ErrorLog::TrimToCapacity() {
@@ -22,6 +33,16 @@ void ErrorLog::TrimToCapacity() {
 }
 
 void ErrorLog::Push(ErrorEvent event) {
+  if (event_sink_ != nullptr) {
+    EmuEvent forwarded;
+    forwarded.master_time = event.master_time;
+    forwarded.kind = EventKindForSource(event.source);
+    forwarded.args[0] = static_cast<uint32_t>(event.severity);
+    forwarded.args[1] = event.address.value_or(0);
+    forwarded.args[2] = event.address.has_value() ? 1U : 0U;
+    forwarded.message = event.message;
+    event_sink_->OnEmuEvent(forwarded);
+  }
   entries_.push_back(std::move(event));
   TrimToCapacity();
 }
@@ -79,6 +100,27 @@ void ErrorLog::Clear() { entries_.clear(); }
 std::vector<ErrorEvent> ErrorLog::Snapshot() const { return {entries_.begin(), entries_.end()}; }
 
 const ErrorEvent* ErrorLog::Latest() const { return entries_.empty() ? nullptr : &entries_.back(); }
+
+const char* ErrorSeverityName(ErrorSeverity severity) {
+  switch (severity) {
+    case ErrorSeverity::kInfo: return "Info";
+    case ErrorSeverity::kWarning: return "Warn";
+    case ErrorSeverity::kError: return "Error";
+    case ErrorSeverity::kFatal: return "Fatal";
+  }
+  return "?";
+}
+
+const char* ErrorSourceName(ErrorSource source) {
+  switch (source) {
+    case ErrorSource::kCpu: return "CPU";
+    case ErrorSource::kBus: return "Bus";
+    case ErrorSource::kScheduler: return "Scheduler";
+    case ErrorSource::kRomLoader: return "ROM";
+    case ErrorSource::kHost: return "Host";
+  }
+  return "?";
+}
 
 std::string DescribeDebugAccessFailure(const DebugWriteResult& result) {
   return std::format("Debug write refused at {} (device {}, reason {})", FormatAddress(result.address),

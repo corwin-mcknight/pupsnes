@@ -15,6 +15,10 @@ docs/plans/
 docs/external/
 .planning/
 .worktrees/
+.opencode/
+CLAUDE.md
+CODE_QUALITY.md
+CODE_QUALITY_REPORT.md
 
 # CMake / build artifacts
 CMakeUserPresets.json

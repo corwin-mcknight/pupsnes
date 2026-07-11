@@ -3,12 +3,13 @@
 #include <functional>
 #include <memory>
 #include <span>
+#include <utility>
 #include <vector>
 
+#include "pupsnes/core/types.h"
 #include "pupsnes/hw/apu/sdsp.h"
 #include "pupsnes/hw/rom/cart_registry.h"
 #include "pupsnes/hw/rom/rom_format.h"
-#include "pupsnes/core/types.h"
 
 namespace pupsnes {
 class ApuStub;
@@ -16,6 +17,7 @@ class CPU;
 class Cartridge;
 class CpuMmio;
 class DmaController;
+class EmuEventSink;
 class Joypad;
 class Ppu;
 class Scheduler;
@@ -116,6 +118,12 @@ class SNES {
     }
   }
 
+  // Optional structured-event recorder (see pupsnes/core/emu_event.h).
+  // Devices emit through this pointer via events::Emit, which tolerates
+  // null (no recorder attached). Non-owning; the sink must outlive emission.
+  void SetEmuEventSink(EmuEventSink* sink) { emu_event_sink_ = sink; }
+  [[nodiscard]] EmuEventSink* GetEmuEventSink() const { return emu_event_sink_; }
+
   DeviceIdT RegisterDevice(Device* device);
   // Null the slot at `id` and clear any page-table entries that point at
   // this DeviceId. Monotonic: slots are never reused, so future Devices get
@@ -139,6 +147,7 @@ class SNES {
 
  private:
   CartridgeRegistry registry_;
+  EmuEventSink* emu_event_sink_ = nullptr;
   SdspMode sdsp_mode_pending_ = SdspMode::kSimple;
   SdspMode sdsp_mode_live_ = SdspMode::kSimple;
   bool destroying_ = false;

@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 
+#include "pupsnes/core/emu_event.h"
 #include "pupsnes/hw/5a22/cpu.h"
 #include "pupsnes/memory/systembus.h"
 
@@ -54,12 +55,23 @@ class ErrorLog {
   [[nodiscard]] std::vector<ErrorEvent> Snapshot() const;
   [[nodiscard]] const ErrorEvent* Latest() const;
 
+  // Optional bridge into the structured event stream: every Push also
+  // forwards a kError-category EmuEvent (message text + severity/address
+  // args) to this sink. Unconditional — errors bypass the events::kEnabled
+  // compile-time gate. Non-owning; null disables forwarding.
+  void SetEventSink(EmuEventSink* sink) { event_sink_ = sink; }
+  [[nodiscard]] EmuEventSink* GetEventSink() const { return event_sink_; }
+
  private:
   void TrimToCapacity();
 
   std::size_t capacity_ = 2048;
   std::deque<ErrorEvent> entries_;
+  EmuEventSink* event_sink_ = nullptr;
 };
+
+[[nodiscard]] const char* ErrorSeverityName(ErrorSeverity severity);
+[[nodiscard]] const char* ErrorSourceName(ErrorSource source);
 
 [[nodiscard]] std::string DescribeDebugAccessFailure(const DebugWriteResult& result);
 [[nodiscard]] std::string DescribeDebugAccessFailure(const DebugReadResult& result);

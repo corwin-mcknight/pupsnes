@@ -2,6 +2,7 @@
 
 #include <optional>
 
+#include "pupsnes/core/emu_event.h"
 #include "pupsnes/core/scheduler.h"
 #include "pupsnes/core/signal_event.h"
 #include "pupsnes/core/snes.h"
@@ -94,6 +95,11 @@ MmioReadResult CpuMmio::ReadRegister(uint32_t offset, TimeMasterT current_time) 
       // TIMEUP read: bit 7 reports the latch; reading clears it and de-asserts
       // /IRQ. Bits 6:0 are open-bus on hardware.
       const uint8_t value = timeup_latch_ ? kTimeUpFlagMask : uint8_t{0};
+      if (timeup_latch_) {
+        events::EmitWithHv(
+            snes_->GetEmuEventSink(), current_time, [&] { return snes_->ppu->ProjectHvAt(current_time); },
+            EmuEventKind::kIrqAcknowledged);
+      }
       timeup_latch_ = false;
       return {value, kTimeUpFlagMask};
     }
@@ -276,6 +282,11 @@ void CpuMmio::HandleIrqMatch(TimeMasterT t) {
     return;  // mode was cleared between scheduling and firing.
   }
   timeup_latch_ = true;
+  // Fence-fired post-MachineSync: the PPU is already caught up to t, so the
+  // projection is a zero-length walk reading the live counters.
+  events::EmitWithHv(
+      snes_->GetEmuEventSink(), t, [&] { return snes_->ppu->ProjectHvAt(t); }, EmuEventKind::kIrqAsserted, htime_,
+      vtime_);
   RescheduleIrqMatchFrom(t);
 }
 

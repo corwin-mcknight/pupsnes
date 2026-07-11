@@ -2,19 +2,22 @@
 
 #include <format>
 #include <iostream>
+#include <string>
+#include <utility>
 
+#include "pupsnes/core/device.h"
+#include "pupsnes/core/emu_event.h"
+#include "pupsnes/core/scheduler.h"
 #include "pupsnes/hw/5a22/cpu.h"
 #include "pupsnes/hw/5a22/cpu_mmio.h"
-#include "pupsnes/hw/apu/apu_stub.h"
-#include "pupsnes/hw/rom/cartridge.h"
-#include "pupsnes/core/device.h"
 #include "pupsnes/hw/5a22/dma_controller.h"
+#include "pupsnes/hw/apu/apu_stub.h"
 #include "pupsnes/hw/input/joypad.h"
-#include "pupsnes/core/scheduler.h"
+#include "pupsnes/hw/rom/cartridge.h"
+#include "pupsnes/hw/rom/rom_format.h"
 #include "pupsnes/hw/sppu/ppu.h"
 #include "pupsnes/memory/systembus.h"
 #include "pupsnes/memory/wram.h"
-#include "pupsnes/hw/rom/rom_format.h"
 
 // --- Device ---
 
@@ -66,8 +69,7 @@ void pupsnes::SNES::DeregisterDevice(DeviceIdT id) {
   }
 }
 
-pupsnes::BuildResult pupsnes::SNES::LoadRomWithProfile(const CartProfile& profile,
-                                                       std::span<const uint8_t> rom_data) {
+pupsnes::BuildResult pupsnes::SNES::LoadRomWithProfile(const CartProfile& profile, std::span<const uint8_t> rom_data) {
   // The builder constructs a fresh Cartridge (registered with this SNES,
   // gets a new DeviceId monotonically) and wires its pages into the
   // SystemBus before we touch the old cartridge. On success we install the
@@ -79,6 +81,8 @@ pupsnes::BuildResult pupsnes::SNES::LoadRomWithProfile(const CartProfile& profil
   if (result.ok && result.cart) {
     cartridge = std::move(result.cart);
     cpu_mmio->Reset();  // power-cycle FASTROM (matches legacy LoadLoRom).
+    events::Emit(emu_event_sink_, time_now_, EmuEventKind::kRomLoaded, rom_data.size(),
+                 static_cast<uint32_t>(profile.mapper));
   }
   return result;
 }

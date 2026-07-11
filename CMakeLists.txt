@@ -3,6 +3,7 @@ cmake_minimum_required(VERSION 3.24)
 project(pupsnes LANGUAGES CXX)
 
 set(PUPSNES_LIB_SOURCES
+  src/pupsnes/core/emu_event.cpp
   src/pupsnes/core/scheduler.cpp
   src/pupsnes/core/snes.cpp
   src/pupsnes/core/token.cpp
@@ -26,9 +27,13 @@ set(PUPSNES_LIB_SOURCES
 
 set(PUPSNES_DEBUGGER_CORE_SOURCES
   src/debugger/breakpoints.cpp
+  src/debugger/console_event_sink.cpp
   src/debugger/disasm.cpp
+  src/debugger/emu_event_format.cpp
   src/debugger/error_log.cpp
+  src/debugger/fan_out_emu_event_sink.cpp
   src/debugger/fan_out_trace_sink.cpp
+  src/debugger/file_event_sink.cpp
   src/debugger/file_trace_sink.cpp
   src/debugger/microop_trace.cpp
   src/debugger/run_control.cpp
@@ -50,8 +55,8 @@ set(PUPSNES_DEBUGGER_SOURCES
   src/debugger/panels/controller_panel.cpp
   src/debugger/panels/controls_panel.cpp
   src/debugger/panels/disasm_panel.cpp
-  src/debugger/panels/errors_panel.cpp
   src/debugger/panels/load_rom_panel.cpp
+  src/debugger/panels/log_panel.cpp
   src/debugger/panels/memory_panel.cpp
   src/debugger/panels/microop_trace_panel.cpp
   src/debugger/panels/dma_panel.cpp
@@ -101,6 +106,7 @@ set(PUPSNES_TEST_SOURCES
   src/tests/systembus_tests.cpp
   src/tests/breakpoints_tests.cpp
   src/tests/bus_event_log_tests.cpp
+  src/tests/emu_event_tests.cpp
   src/tests/disasm_tests.cpp
   src/tests/error_log_tests.cpp
   src/tests/run_control_tests.cpp

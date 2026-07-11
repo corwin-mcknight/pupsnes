@@ -13,6 +13,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <memory>
 #include <string>
 #include <system_error>
 #include <utility>
@@ -24,10 +25,10 @@
 #include "panels/panels.h"
 #include "pupsnes/debugger/file_trace_sink.h"
 #include "pupsnes/debugger/sha1.h"
-#include "pupsnes/hw/rom/cartridge.h"
 #include "pupsnes/hw/input/joypad.h"
-#include "pupsnes/hw/sppu/ppu.h"
+#include "pupsnes/hw/rom/cartridge.h"
 #include "pupsnes/hw/rom/rom_format.h"
+#include "pupsnes/hw/sppu/ppu.h"
 
 namespace pupsnes::debugger {
 
@@ -70,6 +71,10 @@ DebuggerApp::DebuggerApp()
       run_control_(snes_, breakpoints_, fan_out_trace_sink_, error_log_) {
   fan_out_trace_sink_.Attach(&trace_log_);
   snes_.GetSystemBus().SetEventSink(&bus_event_log_);
+  snes_.SetEmuEventSink(&emu_event_log_);
+  // Errors land in the ErrorLog (fatal modal, tests) and mirror into the
+  // unified event stream so the Log panel shows one merged timeline.
+  error_log_.SetEventSink(&emu_event_log_);
 }
 
 DebuggerApp::~DebuggerApp() { ShutdownWindow(); }
@@ -516,8 +521,8 @@ void DebuggerApp::RenderMenuBar() {
       ImGui::MenuItem("Trace Record", nullptr, &ui_state_.show_trace_record_panel);
       ImGui::MenuItem("Micro-op Trace", nullptr, &ui_state_.show_microop_trace_panel);
       ImGui::MenuItem("Scheduler", nullptr, &ui_state_.show_scheduler_panel);
-      ImGui::MenuItem("Errors", nullptr, &ui_state_.show_errors_panel);
       ImGui::MenuItem("Bus", nullptr, &ui_state_.show_bus_panel);
+      ImGui::MenuItem("Log", nullptr, &ui_state_.show_log_panel);
       ImGui::MenuItem("P1 Controller", nullptr, &ui_state_.show_controller_panel);
       ImGui::MenuItem("SNES", nullptr, &ui_state_.show_snes_panel);
       ImGui::EndMenu();
@@ -622,8 +627,8 @@ constexpr std::array<BoolField, 16> kBoolFields{{
     {"trace_record_reset_on_start", &UiState::trace_record_reset_on_start},
     {"show_microop_trace_panel", &UiState::show_microop_trace_panel},
     {"show_scheduler_panel", &UiState::show_scheduler_panel},
-    {"show_errors_panel", &UiState::show_errors_panel},
     {"show_bus_panel", &UiState::show_bus_panel},
+    {"show_log_panel", &UiState::show_log_panel},
     {"show_controller_panel", &UiState::show_controller_panel},
     {"show_snes_panel", &UiState::show_snes_panel},
 }};
@@ -682,8 +687,7 @@ void DebuggerApp::LoadAppConfig() {
       }
     } else if (key == "sdsp_mode") {
       const int parsed = std::atoi(value.c_str());
-      if (parsed == static_cast<int>(SdspMode::kSimple) ||
-          parsed == static_cast<int>(SdspMode::kAccurate)) {
+      if (parsed == static_cast<int>(SdspMode::kSimple) || parsed == static_cast<int>(SdspMode::kAccurate)) {
         snes_.SetSdspModePending(static_cast<SdspMode>(parsed));
       }
     }
@@ -771,8 +775,8 @@ void DebuggerApp::Render() {
   RenderTraceRecordPanel(*this);
   RenderMicroOpTracePanel(*this);
   RenderSchedulerPanel(*this);
-  RenderErrorsPanel(*this);
   RenderBusEventPanel(*this);
+  RenderLogPanel(*this);
   RenderControllerPanel(*this);
   RenderSnesPanel(*this);
   RenderLoadRomDialog(*this);

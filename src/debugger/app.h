@@ -12,8 +12,10 @@
 
 struct GLFWwindow;
 
+#include "pupsnes/core/snes.h"
 #include "pupsnes/debugger/breakpoints.h"
 #include "pupsnes/debugger/bus_event_log.h"
+#include "pupsnes/debugger/emu_event_log.h"
 #include "pupsnes/debugger/error_log.h"
 #include "pupsnes/debugger/fan_out_trace_sink.h"
 #include "pupsnes/debugger/file_trace_sink.h"
@@ -21,7 +23,6 @@ struct GLFWwindow;
 #include "pupsnes/debugger/run_control.h"
 #include "pupsnes/debugger/sha1.h"
 #include "pupsnes/debugger/trace.h"
-#include "pupsnes/core/snes.h"
 #include "time_format.h"
 
 namespace pupsnes::debugger {
@@ -64,10 +65,10 @@ struct UiState {
   std::optional<SnesAddrT> selected_memory_address = std::nullopt;
   uint8_t memory_edit_value = 0;
   int memory_region = 0;
-  int error_source_filter = -1;
-  int error_severity_filter = -1;
   size_t trace_last_seen_size = 0;
   size_t bus_last_seen_size = 0;
+  size_t event_last_seen_size = 0;
+  uint32_t event_category_filter = kAllEmuEventCategoriesMask;
   TimeDisplayMode time_display_mode = TimeDisplayMode::kAbsolute;
   bool show_style_editor = false;
   bool show_demo_window = false;
@@ -88,8 +89,8 @@ struct UiState {
   bool trace_record_reset_on_start = true;
   bool show_microop_trace_panel = true;
   bool show_scheduler_panel = true;
-  bool show_errors_panel = true;
   bool show_bus_panel = true;
+  bool show_log_panel = true;
   bool show_controller_panel = true;
   bool show_snes_panel = false;
   // Emulated SNES time per real time. 1.0 = 100% real-hardware speed. Always
@@ -118,6 +119,8 @@ class DebuggerApp {
   [[nodiscard]] const TraceLog& GetTraceLog() const { return trace_log_; }
   [[nodiscard]] BusEventLog& GetBusEventLog() { return bus_event_log_; }
   [[nodiscard]] const BusEventLog& GetBusEventLog() const { return bus_event_log_; }
+  [[nodiscard]] EmuEventLog& GetEmuEventLog() { return emu_event_log_; }
+  [[nodiscard]] const EmuEventLog& GetEmuEventLog() const { return emu_event_log_; }
   [[nodiscard]] MicroOpTrace& GetMicroOpTrace() { return microop_trace_; }
   [[nodiscard]] const MicroOpTrace& GetMicroOpTrace() const { return microop_trace_; }
   [[nodiscard]] ErrorLog& GetErrorLog() { return error_log_; }
@@ -174,6 +177,7 @@ class DebuggerApp {
   TraceLog trace_log_;
   FanOutTraceSink fan_out_trace_sink_;
   BusEventLog bus_event_log_;
+  EmuEventLog emu_event_log_;
   MicroOpTrace microop_trace_;
   ErrorLog error_log_;
   RunControl run_control_;
