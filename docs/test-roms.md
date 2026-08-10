@@ -49,20 +49,20 @@ Each ROM gets a sidecar metadata file. Example:
 ```toml
 rom_name = "reset_smoke"
 title = "Reset Smoke"
-purpose = "Verify reset-vector boot and loop behavior."
-why_expected_to_fail = "BRA is not implemented yet."
-cycle_budget = 10
-expected_current_status = "fail"
+purpose = "Verify reset-vector boot, immediate load, and a self-loop at the loop label."
+why_expected_to_fail = "This ROM previously failed before BRA support existed."
+cycle_budget = 94
+expected_current_status = "pass"
 
 [goal]
 name = "loads-expected-accumulator"
-description = "Accumulator low byte should retain the immediate value."
+description = "Accumulator low byte should retain the immediate value loaded after reset."
 kind = "cpu_a8"
 expected_value = 0x42
 
 [goal]
 name = "holds-at-loop-address"
-description = "Program counter should stay parked at the loop target."
+description = "Program counter should stay parked at the BRA loop target once execution settles."
 kind = "cpu_pc"
 expected_value = 0x8003
 ```
@@ -79,4 +79,6 @@ Optional scenario fields:
 
 - `initial_dbr` — override the reset-value DBR (e.g. `0x7E`) before the scheduler starts; useful for exercising instructions that observe DBR while there are no in-ROM instructions to set it.
 
-Right now the scenarios are intentionally marked as expected failures, so the test suite records bring-up progress without pretending unsupported instructions already work.
+All current scenarios are expected to pass. `why_expected_to_fail` retains the
+historical blocker that the scenario originally covered, so a regression still
+has useful context in its failure report.

@@ -110,8 +110,12 @@ TEST_CASE("MicroOpTrace ring buffer evicts oldest", "[microop]") {
     trace.OnInstructionEnd(i + 1);
   }
   REQUIRE(trace.RetiredSize() == MicroOpTrace::kCapacity);
-  CHECK(trace.RetiredAt(0)->retired_seq == 6U);
-  CHECK(trace.RetiredAt(MicroOpTrace::kCapacity - 1)->retired_seq == MicroOpTrace::kCapacity + 5U);
+  const auto* oldest = trace.RetiredAt(0);
+  const auto* newest = trace.RetiredAt(MicroOpTrace::kCapacity - 1);
+  REQUIRE(oldest != nullptr);
+  REQUIRE(newest != nullptr);
+  CHECK(oldest->retired_seq == 6U);
+  CHECK(newest->retired_seq == MicroOpTrace::kCapacity + 5U);
 }
 
 TEST_CASE("MicroOpTrace clear resets state", "[microop]") {
