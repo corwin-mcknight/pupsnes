@@ -2,6 +2,8 @@
 
 #include "pupsnes/core/snes.h"
 #include "pupsnes/hw/5a22/cpu_mmio.h"
+#include "pupsnes/hw/sppu/ppu.h"
+#include "pupsnes/hw/sppu/ppu_regs.h"
 #include "pupsnes/memory/systembus.h"
 
 using namespace pupsnes;  // NOLINT(google-build-using-namespace)
@@ -55,6 +57,60 @@ TEST_CASE("CpuMmio MEMSEL access is routed as kSameClockMmio via plan", "[unit][
   REQUIRE(plan.outcome == BusPlanOutcome::kInlineComplete);
   REQUIRE(plan.target_device == snes.GetCpuMmio().GetDeviceId());
   REQUIRE(plan.access_cycles == 6);  // $4200-$43FF is the 6-cycle fast bus class
+}
+
+TEST_CASE("WRIO cold-boots high and RDIO reflects its unopposed I/O lines", "[unit][cpu_mmio]") {
+  SNES snes;
+  snes.Reset();
+
+  REQUIRE(snes.GetCpuMmio().GetWrio() == 0xFFU);
+
+  BusPlan read = snes.system_bus->Plan(CpuMmio::kRdioOffset, BusAccessType::kRead);
+  auto result = snes.system_bus->Follow(read, /*current_time=*/0, 0);
+  REQUIRE(result.data == 0xFFU);
+
+  BusPlan write = snes.system_bus->Plan(CpuMmio::kWrioOffset, BusAccessType::kWrite, 0x5AU);
+  result = snes.system_bus->Follow(write, /*current_time=*/1, 0);
+  REQUIRE(result.outcome == BusPlanOutcome::kInlineComplete);
+  REQUIRE(snes.GetCpuMmio().GetWrio() == 0x5AU);
+
+  read = snes.system_bus->Plan(CpuMmio::kRdioOffset, BusAccessType::kRead);
+  result = snes.system_bus->Follow(read, /*current_time=*/2, 0);
+  REQUIRE(result.data == 0x5AU);
+}
+
+TEST_CASE("WRIO bit 7 falling edge latches H/V and gates SLHV", "[unit][cpu_mmio][ppu]") {
+  SNES snes;
+  snes.Reset();
+  Ppu& ppu = snes.GetPpu();
+
+  // WRIO starts at $FF. Its first bit-7 falling edge at H=256 captures H/V.
+  BusPlan write = snes.system_bus->Plan(CpuMmio::kWrioOffset, BusAccessType::kWrite, 0x7FU);
+  (void)snes.system_bus->Follow(write, /*current_time=*/1024, 0);
+  REQUIRE(ppu.GetOphct() == 256U);
+  REQUIRE(ppu.GetOpvct() == 0U);
+  REQUIRE(ppu.GetHvLatchFlag());
+
+  // Holding bit 7 low does not retrigger, even after the beam advances.
+  write = snes.system_bus->Plan(CpuMmio::kWrioOffset, BusAccessType::kWrite, 0x00U);
+  (void)snes.system_bus->Follow(write, /*current_time=*/1028, 0);
+  REQUIRE(ppu.GetOphct() == 256U);
+
+  // Clear the status flag, then prove SLHV is inert while WRIO.7 is low.
+  BusPlan read = snes.system_bus->Plan(sppu::regs::kStat78, BusAccessType::kRead);
+  (void)snes.system_bus->Follow(read, /*current_time=*/1029, 0);
+  read = snes.system_bus->Plan(sppu::regs::kSlhv, BusAccessType::kRead);
+  (void)snes.system_bus->Follow(read, /*current_time=*/1032, 0);
+  REQUIRE(ppu.GetOphct() == 256U);
+  REQUIRE_FALSE(ppu.GetHvLatchFlag());
+
+  // Raising WRIO.7 merely re-enables the gate; the next SLHV read captures.
+  write = snes.system_bus->Plan(CpuMmio::kWrioOffset, BusAccessType::kWrite, 0x80U);
+  (void)snes.system_bus->Follow(write, /*current_time=*/1033, 0);
+  read = snes.system_bus->Plan(sppu::regs::kSlhv, BusAccessType::kRead);
+  (void)snes.system_bus->Follow(read, /*current_time=*/1036, 0);
+  REQUIRE(ppu.GetOphct() == 259U);
+  REQUIRE(ppu.GetHvLatchFlag());
 }
 
 TEST_CASE("HVBJOY ($4212) reports PPU VBlank bit through the bus", "[unit][cpu_mmio]") {

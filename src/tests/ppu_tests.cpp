@@ -43,6 +43,9 @@ TEST_CASE("PPU Reset leaves INIDISP in forced-blank with brightness 0", "[unit][
   REQUIRE(ppu.GetBrightness() == 0);
   REQUIRE(ppu.IsOverscan() == false);
   REQUIRE(ppu.GetPendingWriteCount() == 0);
+  REQUIRE(ppu.GetOphct() == 0x01FFU);
+  REQUIRE(ppu.GetOpvct() == 0x01FFU);
+  REQUIRE(ppu.GetM7Product() == 0x000001U);
 }
 
 TEST_CASE("INIDISP write queues, decoded only after a read catches up", "[unit][ppu]") {
@@ -297,6 +300,75 @@ TEST_CASE("STAT78 surfaces version, PAL=0, field toggle, and open-bus bits", "[u
   (void)ppu;
 }
 
+TEST_CASE("M7 multiplier exposes the signed 24-bit product through MPYL/M/H", "[unit][ppu]") {
+  SNES snes;
+  Ppu& ppu = snes.GetPpu();
+  ppu.Reset();
+
+  // M7A writes use the shared low-byte latch: low $34, then high $12.
+  BusWrite(snes, sppu::regs::kM7A, 0x34, /*now=*/1);
+  BusWrite(snes, sppu::regs::kM7A, 0x12, /*now=*/2);
+  // Every M7B write supplies the signed 8-bit multiplier immediately.
+  // $1234 * -2 = -$2468 = $FFDB98 in signed 24-bit form.
+  BusWrite(snes, sppu::regs::kM7B, 0xFE, /*now=*/3);
+
+  REQUIRE(BusRead(snes, sppu::regs::kMpyL, /*now=*/4).data == 0x98);
+  REQUIRE(BusRead(snes, sppu::regs::kMpyM, /*now=*/5).data == 0xDB);
+  REQUIRE(BusRead(snes, sppu::regs::kMpyH, /*now=*/6).data == 0xFF);
+  REQUIRE(ppu.GetM7Product() == 0xFFDB98U);
+}
+
+TEST_CASE("M7 multiplier handles signed operand limits without host narrowing", "[unit][ppu]") {
+  SNES snes;
+  Ppu& ppu = snes.GetPpu();
+  ppu.Reset();
+
+  // -32768 * -128 = +4194304 = $400000.
+  BusWrite(snes, sppu::regs::kM7A, 0x00, /*now=*/1);
+  BusWrite(snes, sppu::regs::kM7A, 0x80, /*now=*/2);
+  BusWrite(snes, sppu::regs::kM7B, 0x80, /*now=*/3);
+  REQUIRE(BusRead(snes, sppu::regs::kMpyL, /*now=*/4).data == 0x00);
+  REQUIRE(BusRead(snes, sppu::regs::kMpyM, /*now=*/5).data == 0x00);
+  REQUIRE(BusRead(snes, sppu::regs::kMpyH, /*now=*/6).data == 0x40);
+
+  // +32767 * +127 = 4161409 = $3F7F81.
+  BusWrite(snes, sppu::regs::kM7A, 0xFF, /*now=*/7);
+  BusWrite(snes, sppu::regs::kM7A, 0x7F, /*now=*/8);
+  BusWrite(snes, sppu::regs::kM7B, 0x7F, /*now=*/9);
+  REQUIRE(BusRead(snes, sppu::regs::kMpyL, /*now=*/10).data == 0x81);
+  REQUIRE(BusRead(snes, sppu::regs::kMpyM, /*now=*/11).data == 0x7F);
+  REQUIRE(BusRead(snes, sppu::regs::kMpyH, /*now=*/12).data == 0x3F);
+}
+
+TEST_CASE("M7A and M7B share M7_old and every operand write refreshes the product", "[unit][ppu]") {
+  SNES snes;
+  Ppu& ppu = snes.GetPpu();
+  ppu.Reset();
+
+  BusWrite(snes, sppu::regs::kM7A, 0x34, /*now=*/1);
+  BusWrite(snes, sppu::regs::kM7A, 0x12, /*now=*/2);
+  BusWrite(snes, sppu::regs::kM7B, 0x02, /*now=*/3);
+  REQUIRE(BusRead(snes, sppu::regs::kMpyL, /*now=*/4).data == 0x68);  // $1234 * 2
+  REQUIRE(BusRead(snes, sppu::regs::kMpyM, /*now=*/5).data == 0x24);
+
+  // M7B left $02 in M7_old. The first M7A write therefore forms $7802,
+  // and multiplication updates before the second half of the write pair.
+  BusWrite(snes, sppu::regs::kM7A, 0x78, /*now=*/6);
+  REQUIRE(BusRead(snes, sppu::regs::kMpyL, /*now=*/7).data == 0x04);  // $7802 * 2 = $00F004
+  REQUIRE(BusRead(snes, sppu::regs::kMpyM, /*now=*/8).data == 0xF0);
+
+  // The second write consumes the prior $78 and completes M7A=$5678.
+  BusWrite(snes, sppu::regs::kM7A, 0x56, /*now=*/9);
+  REQUIRE(BusRead(snes, sppu::regs::kMpyL, /*now=*/10).data == 0xF0);  // $5678 * 2 = $00ACF0
+  REQUIRE(BusRead(snes, sppu::regs::kMpyM, /*now=*/11).data == 0xAC);
+
+  // A single M7B write changes the signed multiplier to -1 immediately.
+  BusWrite(snes, sppu::regs::kM7B, 0xFF, /*now=*/12);
+  REQUIRE(BusRead(snes, sppu::regs::kMpyL, /*now=*/13).data == 0x88);  // -$5678 = $FFA988
+  REQUIRE(BusRead(snes, sppu::regs::kMpyM, /*now=*/14).data == 0xA9);
+  REQUIRE(BusRead(snes, sppu::regs::kMpyH, /*now=*/15).data == 0xFF);
+}
+
 TEST_CASE("SLHV ($2137) read latches H/V into OPHCT/OPVCT and arms STAT78 flag", "[unit][ppu]") {
   SNES snes;
   Ppu& ppu = snes.GetPpu();
@@ -330,6 +402,39 @@ TEST_CASE("SLHV ($2137) read latches H/V into OPHCT/OPVCT and arms STAT78 flag",
   REQUIRE(opv_hi.data == 0x00);
 }
 
+TEST_CASE("SLHV returns CPU open-bus while still strobing the H/V latch", "[unit][ppu]") {
+  SNES snes;
+  Ppu& ppu = snes.GetPpu();
+  ppu.Reset();
+
+  BusWrite(snes, 0x7E0000U, 0xA5U, /*now=*/0);
+  const BusFollowResult slhv = BusRead(snes, sppu::regs::kSlhv, /*now=*/4);
+
+  REQUIRE(slhv.data == 0xA5U);
+  REQUIRE(ppu.GetOphct() == 1U);
+  REQUIRE(ppu.GetOpvct() == 0U);
+  REQUIRE(ppu.GetHvLatchFlag());
+}
+
+TEST_CASE("Relatching H/V does not reset the OPHCT or OPVCT read flipflops", "[unit][ppu]") {
+  SNES snes;
+  Ppu& ppu = snes.GetPpu();
+  ppu.Reset();
+
+  constexpr TimeMasterT kLine1H1 = sppu::regs::kNormalLineCycles + 4U;
+  (void)BusRead(snes, sppu::regs::kSlhv, kLine1H1);  // latch H=1,V=1
+  REQUIRE(BusRead(snes, sppu::regs::kOphct, kLine1H1 + 1U).data == 0x01U);
+  REQUIRE(BusRead(snes, sppu::regs::kOpvct, kLine1H1 + 2U).data == 0x01U);
+
+  // Both ports now expect their high bit. A fresh latch at H=2 must update
+  // the captured counters without changing either port's read phase. H=2 and
+  // V=1 have nonzero low bytes, so a mistaken phase reset would be observable.
+  (void)BusRead(snes, sppu::regs::kSlhv, kLine1H1 + 4U);
+  BusWrite(snes, 0x7E0000U, 0x00U, kLine1H1 + 5U);
+  REQUIRE(BusRead(snes, sppu::regs::kOphct, kLine1H1 + 6U).data == 0x00U);
+  REQUIRE(BusRead(snes, sppu::regs::kOpvct, kLine1H1 + 7U).data == 0x00U);
+}
+
 TEST_CASE("OPHCT latches H counter values above 0xFF and exposes bit 8 on 2nd read", "[unit][ppu]") {
   SNES snes;
   Ppu& ppu = snes.GetPpu();
@@ -352,6 +457,23 @@ TEST_CASE("OPHCT latches H counter values above 0xFF and exposes bit 8 on 2nd re
   BusFollowResult oph_hi = BusRead(snes, sppu::regs::kOphct, /*now=*/1028);
   // bit 0 driven (=1 since 256 >> 8 == 1); bits 7:1 = 0xFE from latch.
   REQUIRE(oph_hi.data == 0xFF);
+}
+
+TEST_CASE("OPVCT latches V counter values above 0xFF and exposes bit 8 on 2nd read", "[unit][ppu]") {
+  SNES snes;
+  Ppu& ppu = snes.GetPpu();
+  ppu.Reset();
+
+  // The first field has normal 1364-mcyc lines. Latch exactly at V=256,H=0.
+  constexpr TimeMasterT kLine256Start = 256U * sppu::regs::kNormalLineCycles;
+  (void)BusRead(snes, sppu::regs::kSlhv, kLine256Start);
+  REQUIRE(ppu.GetOphct() == 0U);
+  REQUIRE(ppu.GetOpvct() == 256U);
+
+  REQUIRE(BusRead(snes, sppu::regs::kOpvct, kLine256Start + 1U).data == 0x00);
+  BusWrite(snes, 0x7E0000, 0xFE, kLine256Start + 2U);
+  // Only counter bit 8 drives bit 0; the primed PPU2 open-bus bits remain 1.
+  REQUIRE(BusRead(snes, sppu::regs::kOpvct, kLine256Start + 3U).data == 0xFF);
 }
 
 TEST_CASE("STAT78 read resets both OPHCT and OPVCT 1st/2nd flipflops and clears the latch flag", "[unit][ppu]") {

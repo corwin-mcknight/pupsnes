@@ -102,6 +102,11 @@ class Ppu : public Device {
   // after MachineSync has already advanced the PPU.
   [[nodiscard]] bool PeekNmiLine() const;
 
+  // Capture the live 9-bit beam position for OPHCT/OPVCT at `current_time`.
+  // Used by SLHV and by WRIO.bit7's 1->0 edge. Latching deliberately leaves
+  // both read-twice flipflops untouched; only STAT78 resets those.
+  void LatchHvCounters(TimeMasterT current_time);
+
   // Buffer accessors — both buffers are always readable so the debugger can
   // sample the in-progress frame without waiting for a swap. Buffers are sized
   // for the full 341 × 313 H/V grid and store BGR555 uint16_t pixels.
@@ -139,6 +144,7 @@ class Ppu : public Device {
   [[nodiscard]] uint16_t GetOphct() const { return ophct_; }
   [[nodiscard]] uint16_t GetOpvct() const { return opvct_; }
   [[nodiscard]] bool GetHvLatchFlag() const { return hv_latch_flag_; }
+  [[nodiscard]] uint32_t GetM7Product() const { return m7_product_; }
   [[nodiscard]] uint8_t GetMainScreenLayers() const { return main_screen_layers_; }
   [[nodiscard]] uint8_t GetSubScreenLayers() const { return sub_screen_layers_; }
   [[nodiscard]] uint8_t GetCgwsel() const { return cgwsel_; }
@@ -327,6 +333,8 @@ class Ppu : public Device {
   void WriteBgCharBase(uint8_t bg_pair_base, uint8_t data);
   // Read-twice flipflop body shared by OPHCT and OPVCT.
   [[nodiscard]] MmioReadResult ReadOpct(uint16_t counter, bool& read_high);
+  // Refresh the 24-bit signed M7A * signed(M7B high byte) result.
+  void UpdateM7Product();
 
   // OAM helpers. Handles the byte-address wrap for the 32-byte high table
   // mirroring above $220; writes and reads all go through these.
@@ -519,6 +527,14 @@ class Ppu : public Device {
   bool ophct_read_high_ = false;
   bool opvct_read_high_ = false;
   bool hv_latch_flag_ = false;
+
+  // Mode 7 matrix/multiplier state. M7A and M7B share the M7_old byte latch
+  // for their write-twice protocol. The readable product is retained as its
+  // low 24 two's-complement bits and updates immediately after either write.
+  uint16_t m7a_ = 0;
+  uint16_t m7b_ = 0;
+  uint8_t m7_old_ = 0;
+  uint32_t m7_product_ = 0;
   // Cycles already consumed toward the current dot from prior CatchUpTo calls.
   // Range: [0, DotCost(h_, v_, field_)). Lets one dot span multiple calls
   // when target lands mid-dot — no overshoot permitted.

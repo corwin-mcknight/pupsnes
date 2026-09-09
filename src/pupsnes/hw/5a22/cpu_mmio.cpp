@@ -56,6 +56,7 @@ void CpuMmio::Reset() {
   const bool was_fast = (memsel_ & 0x01U) != 0U;
   memsel_ = 0;
   nmitimen_ = 0;
+  wrio_ = 0xFFU;
   htime_ = 0;
   vtime_ = 0;
   timeup_latch_ = false;
@@ -80,6 +81,11 @@ MmioReadResult CpuMmio::ReadRegister(uint32_t offset, TimeMasterT current_time) 
   const uint32_t reg = offset & 0xFFFFU;
   switch (reg) {
     case kMemSelOffset: return {memsel_, 0xFFU};
+
+    case kRdioOffset:
+      // No external programmable-I/O devices are modeled, so High-Z lines
+      // read high through their pull-ups and output-low lines read low.
+      return {wrio_, 0xFFU};
 
     case kRdNmiOffset: {
       // RDNMI read both samples and clears the VBlank NMI latch. Polling loops
@@ -192,6 +198,14 @@ void CpuMmio::WriteRegister(uint32_t offset, uint8_t data, TimeMasterT current_t
     }
     return;
   }
+  if (reg == kWrioOffset) {
+    const uint8_t prev = wrio_;
+    wrio_ = data;
+    if ((prev & kWrioHvLatchMask) != 0U && (data & kWrioHvLatchMask) == 0U) {
+      snes_->ppu->LatchHvCounters(current_time);
+    }
+    return;
+  }
   if (reg == kHTimeLOffset || reg == kHTimeHOffset || reg == kVTimeLOffset || reg == kVTimeHOffset) {
     if (reg == kHTimeLOffset) {
       htime_ = static_cast<uint16_t>((htime_ & 0x0100U) | data);
@@ -245,6 +259,8 @@ std::optional<uint8_t> CpuMmio::HandleDebugRead(uint32_t offset) const {
     case kNmiTimenOffset:
       // $4200 is write-only on real hardware; expose the shadow for the debugger.
       return nmitimen_;
+    case kWrioOffset: return wrio_;
+    case kRdioOffset: return wrio_;
     case kHTimeLOffset: return static_cast<uint8_t>(htime_ & 0xFFU);
     case kHTimeHOffset: return static_cast<uint8_t>((htime_ >> 8U) & 0x01U);
     case kVTimeLOffset: return static_cast<uint8_t>(vtime_ & 0xFFU);
@@ -262,8 +278,8 @@ std::optional<uint8_t> CpuMmio::HandleDebugRead(uint32_t offset) const {
 
 bool CpuMmio::HandleDebugWrite(uint32_t offset, uint8_t data) {
   const uint32_t reg = offset & 0xFFFFU;
-  if (reg == kMemSelOffset || reg == kNmiTimenOffset || reg == kHTimeLOffset || reg == kHTimeHOffset ||
-      reg == kVTimeLOffset || reg == kVTimeHOffset) {
+  if (reg == kMemSelOffset || reg == kNmiTimenOffset || reg == kWrioOffset || reg == kHTimeLOffset ||
+      reg == kHTimeHOffset || reg == kVTimeLOffset || reg == kVTimeHOffset) {
     // Debug writes are out-of-band and don't belong to a bus cycle; pass 0
     // as the current time. CpuMmio commits synchronously, so the timestamp
     // is unused. Devices that use lazy replay (PPU) must not be debug-written

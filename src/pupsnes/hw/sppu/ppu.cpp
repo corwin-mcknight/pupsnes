@@ -8,6 +8,7 @@
 #include "pupsnes/core/scheduler.h"
 #include "pupsnes/core/signal_event.h"
 #include "pupsnes/core/snes.h"
+#include "pupsnes/hw/5a22/cpu_mmio.h"
 #include "pupsnes/hw/apu/apu_stub.h"
 #include "pupsnes/memory/systembus.h"
 
@@ -140,11 +141,18 @@ void Ppu::Reset() {
 
   vblank_nmi_flag_ = false;
 
-  ophct_ = 0;
-  opvct_ = 0;
+  // Documented cold-boot values. Reset() currently represents a power cycle;
+  // split cold/soft/deterministic reset policies before changing that model.
+  ophct_ = 0x01FFU;
+  opvct_ = 0x01FFU;
   ophct_read_high_ = false;
   opvct_read_high_ = false;
   hv_latch_flag_ = false;
+
+  m7a_ = 0xFFFFU;
+  m7b_ = 0xFFFFU;
+  m7_old_ = 0xFFU;
+  m7_product_ = 0x000001U;
 
   vram_->fill(0);
   oam_->fill(0);
@@ -343,15 +351,16 @@ MmioReadResult Ppu::ReadRegister(uint32_t offset, TimeMasterT current_time) {
   }
 
   switch (reg) {
+    case sppu::regs::kMpyL: return {static_cast<uint8_t>(m7_product_ & 0xFFU), 0xFFU};
+    case sppu::regs::kMpyM: return {static_cast<uint8_t>((m7_product_ >> 8U) & 0xFFU), 0xFFU};
+    case sppu::regs::kMpyH: return {static_cast<uint8_t>((m7_product_ >> 16U) & 0xFFU), 0xFFU};
     case sppu::regs::kSlhv: {
       // Dummy-read latches the current H/V counters into OPHCT/OPVCT and
       // sets the latch flag (STAT78.bit6). Per fullsnes the gating condition
-      // is WRIO.bit7 being (or having been) set; WRIO is not modeled today
-      // and its reset value FFh already satisfies the gate, so we always
-      // latch. The read value itself is open-bus.
-      ophct_ = static_cast<uint16_t>(h_ & 0x01FFU);
-      opvct_ = static_cast<uint16_t>(v_ & 0x01FFU);
-      hv_latch_flag_ = true;
+      // is WRIO.bit7 being set. The read value itself is CPU open-bus.
+      if (snes_->cpu_mmio->IsHvLatchEnabled()) {
+        LatchHvCounters(current_time);
+      }
       return {0x00U, 0x00U};
     }
     case sppu::regs::kRdOam: {
@@ -411,10 +420,16 @@ MmioReadResult Ppu::ReadRegister(uint32_t offset, TimeMasterT current_time) {
     default:
       // Every other port in $2100-$213F reads as pure open-bus per
       // "correct from the start": write-only registers (INIDISP, VMAIN, etc.)
-      // and stubs-in-logic ($2134-$2137 multiplier / SLHV, $213C-$213D
-      // H/V latch) all surface bus-driven bits rather than returning zero.
+      // surface bus-driven bits rather than returning zero.
       return {0x00U, 0x00U};
   }
+}
+
+void Ppu::LatchHvCounters(TimeMasterT current_time) {
+  CatchUpTo(current_time);
+  ophct_ = static_cast<uint16_t>(h_ & 0x01FFU);
+  opvct_ = static_cast<uint16_t>(v_ & 0x01FFU);
+  hv_latch_flag_ = true;
 }
 
 void Ppu::WriteRegister(uint32_t offset, uint8_t data, TimeMasterT current_time) {
@@ -781,6 +796,17 @@ void Ppu::ReplayWrite(uint16_t offset, uint8_t data, TimeMasterT cycle) {
       break;
     }
 
+    case sppu::regs::kM7A:
+      m7a_ = static_cast<uint16_t>((static_cast<uint16_t>(data) << 8U) | m7_old_);
+      m7_old_ = data;
+      UpdateM7Product();
+      break;
+    case sppu::regs::kM7B:
+      m7b_ = static_cast<uint16_t>((static_cast<uint16_t>(data) << 8U) | m7_old_);
+      m7_old_ = data;
+      UpdateM7Product();
+      break;
+
     case sppu::regs::kCgAdd:
       cgadd_ = data;
       cgram_write_latch_high_ = false;
@@ -963,6 +989,17 @@ MmioReadResult Ppu::ReadOpct(uint16_t counter, bool& read_high) {
   }
   read_high = false;
   return {static_cast<uint8_t>((counter >> 8) & 0x01U), sppu::regs::kOpctHighDrivenMask};
+}
+
+void Ppu::UpdateM7Product() {
+  // Spell out the two's-complement sign extension instead of relying on
+  // implementation-defined unsigned-to-signed narrowing conversions.
+  const int32_t multiplicand =
+      (m7a_ & 0x8000U) != 0U ? static_cast<int32_t>(m7a_) - 0x10000 : static_cast<int32_t>(m7a_);
+  const uint8_t multiplier_bits = static_cast<uint8_t>(m7b_ >> 8U);
+  const int32_t multiplier = (multiplier_bits & 0x80U) != 0U ? static_cast<int32_t>(multiplier_bits) - 0x100
+                                                             : static_cast<int32_t>(multiplier_bits);
+  m7_product_ = static_cast<uint32_t>(multiplicand * multiplier) & 0x00FFFFFFU;
 }
 
 void Ppu::WriteBgCharBase(uint8_t bg_pair_base, uint8_t data) {

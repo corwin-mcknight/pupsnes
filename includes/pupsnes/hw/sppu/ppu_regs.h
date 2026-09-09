@@ -12,8 +12,8 @@
 //
 // Reference: fullsnes, Bruce Clark 65C816 docs (`docs/external/fullsnes.html`).
 // Scope matches the PPU scaffold plan: v1 implements INIDISP, OAM/VRAM/CGRAM
-// port machinery, SETINI overscan, and the PPU status registers. Everything
-// else in $2100-$213F is shadow + open-bus for now.
+// port machinery, SETINI overscan, Mode 7 multiplication, and the PPU status
+// and H/V latch registers. Remaining ports are shadow + open-bus for now.
 
 namespace pupsnes::sppu::regs {
 
@@ -62,8 +62,8 @@ inline constexpr uint16_t kBg12Nba = 0x210B;
 inline constexpr uint16_t kBg34Nba = 0x210C;
 
 // $210D..$2114 BGxHOFS / BGxVOFS — BG scroll, 10-bit, write-twice via shared
-// "BG_old" latch. $210D / $210E also drive M7HOFS/M7VOFS through a separate
-// M7_old latch (not modeled here; M7 is out of scope for Mode 1).
+// "BG_old" latch. $210D / $210E also drive M7HOFS/M7VOFS through M7_old;
+// those two Mode 7 scroll side effects are not modeled yet.
 inline constexpr uint16_t kBg1Hofs = 0x210D;
 inline constexpr uint16_t kBg1Vofs = 0x210E;
 inline constexpr uint16_t kBg2Hofs = 0x210F;
@@ -188,6 +188,14 @@ inline constexpr uint16_t kVmAddH = 0x2117;
 inline constexpr uint16_t kVmDataL = 0x2118;
 inline constexpr uint16_t kVmDataH = 0x2119;
 
+// $211B/$211C M7A/M7B — Mode 7 matrix parameters and PPU1 multiply
+// operands. Both ports use the shared M7_old byte latch to assemble their
+// 16-bit matrix value: new_value = (data << 8) | M7_old, then M7_old = data.
+// The general-purpose multiplier treats M7A as signed 16-bit and the byte
+// written to M7B (the new M7B high byte) as signed 8-bit.
+inline constexpr uint16_t kM7A = 0x211B;
+inline constexpr uint16_t kM7B = 0x211C;
+
 // CGRAM ports.
 inline constexpr uint16_t kCgAdd = 0x2121;
 inline constexpr uint16_t kCgData = 0x2122;
@@ -195,6 +203,12 @@ inline constexpr uint16_t kCgData = 0x2122;
 // $2133 SETINI — Screen mode select.
 inline constexpr uint16_t kSetini = 0x2133;
 inline constexpr uint8_t kSetiniOverscanMask = 0x04;  // bit 2 (0=224 lines, 1=239)
+
+// $2134-$2136 MPYL/MPYM/MPYH — low-to-high bytes of the signed 24-bit
+// M7A * signed(M7B high byte) result. All eight bits of each port are driven.
+inline constexpr uint16_t kMpyL = 0x2134;
+inline constexpr uint16_t kMpyM = 0x2135;
+inline constexpr uint16_t kMpyH = 0x2136;
 
 // $2137 SLHV — Software latch for H/V counter. Reading this port triggers
 // the same latch the lightgun / WRIO 1→0 transition would, capturing the

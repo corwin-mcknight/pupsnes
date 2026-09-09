@@ -22,6 +22,16 @@ Each CPU bus micro-op retires `BusPlan::access_cycles` master cycles (6/8/12 per
 
 ## Known tech-debt items (unrelated to the refactor)
 
+- **Reset-mode split.** `SNES::Reset()` and each device `Reset()` currently
+  model a cold boot. Introduce explicit cold-power, soft-reset, and deterministic
+  test-reset policies before any caller needs their differing preservation and
+  power-on-state semantics.
+
+- **Separate PPU open-bus domains.** The hardware retains distinct PPU1 and
+  PPU2 read latches, while `SystemBus` currently merges all floating bits from
+  one CPU data-bus latch. Extend the MMIO read contract with a bus/latch domain
+  before relying on exact cross-register PPU open-bus sequences.
+
 - `src/tests/microop_trace_tests.cpp` has pre-existing
   `bugprone-unchecked-optional-access` clang-tidy warnings (non-blocking; see
   ci-verify output). Cleanup candidate.

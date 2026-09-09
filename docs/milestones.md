@@ -129,7 +129,6 @@ Deferred (covered by the Milestone 3 scope but not shipped in the scaffold):
 - BG / OBJ / window / color-math / mode-7 rendering (only backdrop emits today)
 - Interlace / hi-res (mode 5/6) actual output — dot-width table hooks exist, renderer still emits 256 logical columns
 - NMI, H-IRQ, V-IRQ signals (these belong to Milestone 5's signal-region work; PPU frame boundaries don't depend on them)
-- H/V-counter latch (SLHV, OPHCT, OPVCT) and mode-7 multiplier registers stay open-bus
 
 PPU scheduling:
 

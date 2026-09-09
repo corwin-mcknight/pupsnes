@@ -36,6 +36,14 @@ class CpuMmio : public Device {
       static_cast<uint8_t>(kNmiTimenVIrqEnableMask | kNmiTimenHIrqEnableMask);
   static constexpr uint8_t kNmiTimenAutoJoypadMask = 0x01U;
 
+  // WRIO ($4201) / RDIO ($4213) — programmable joypad-port I/O. With no
+  // external device pulling a line low, RDIO reflects the WRIO open-collector
+  // setting (0=driven low, 1=High-Z pulled high). WRIO bit 7 also gates the
+  // PPU H/V latch; its 1->0 edge triggers the same capture as SLHV.
+  static constexpr uint32_t kWrioOffset = 0x4201U;
+  static constexpr uint32_t kRdioOffset = 0x4213U;
+  static constexpr uint8_t kWrioHvLatchMask = 0x80U;
+
   // HTIMEL/H ($4207-$4208), VTIMEL/H ($4209-$420A) — 9-bit H/V-IRQ targets.
   // Write-only on hardware; the shadow is exposed for the debugger and tests.
   static constexpr uint32_t kHTimeLOffset = 0x4207U;
@@ -110,6 +118,8 @@ class CpuMmio : public Device {
   [[nodiscard]] bool GetVIrqEnable() const { return (nmitimen_ & kNmiTimenVIrqEnableMask) != 0U; }
   [[nodiscard]] bool GetHIrqEnable() const { return (nmitimen_ & kNmiTimenHIrqEnableMask) != 0U; }
   [[nodiscard]] bool GetAutoJoypadEnable() const { return (nmitimen_ & kNmiTimenAutoJoypadMask) != 0U; }
+  [[nodiscard]] uint8_t GetWrio() const { return wrio_; }
+  [[nodiscard]] bool IsHvLatchEnabled() const { return (wrio_ & kWrioHvLatchMask) != 0U; }
 
   // 9-bit H/V-IRQ targets (assembled from the two-byte writes to $4207/$4208
   // and $4209/$420A).
@@ -142,6 +152,7 @@ class CpuMmio : public Device {
 
   uint8_t memsel_ = 0;
   uint8_t nmitimen_ = 0;
+  uint8_t wrio_ = 0xFFU;
   uint8_t hdmaen_ = 0;
 
   // H/V-IRQ target registers (9-bit each). Built from two-byte writes — the
