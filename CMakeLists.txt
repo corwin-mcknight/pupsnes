@@ -15,7 +15,8 @@ set(PUPSNES_LIB_SOURCES
   src/pupsnes/hw/5a22/dma_controller.cpp
   src/pupsnes/hw/5a22/micro_op_strings.cpp
   src/pupsnes/hw/apu/accurate_sdsp.cpp
-  src/pupsnes/hw/apu/apu_stub.cpp
+  src/pupsnes/hw/apu/apu.cpp
+  src/pupsnes/hw/apu/spc700.cpp
   src/pupsnes/hw/apu/simple_sdsp.cpp
   src/pupsnes/hw/input/joypad.cpp
   src/pupsnes/hw/rom/cart_profile.cpp
@@ -127,7 +128,16 @@ set(PUPSNES_TEST_SOURCES
   src/tests/ppu_tests.cpp
   src/tests/nmi_tests.cpp
   src/tests/hv_irq_tests.cpp
-  src/tests/apu_stub_tests.cpp
+  src/tests/apu_tests.cpp
+  src/tests/spc700_tests.cpp
+  src/tests/spc700_transfer_tests.cpp
+  src/tests/spc700_arithmetic_tests.cpp
+  src/tests/spc700_logic_tests.cpp
+  src/tests/spc700_control_tests.cpp
+  src/tests/apu_integration_tests.cpp
+  src/tests/apu_transfer_integration_tests.cpp
+  src/tests/apu_arithmetic_integration_tests.cpp
+  src/tests/apu_control_integration_tests.cpp
   src/tests/fan_out_trace_sink_tests.cpp
   src/tests/file_trace_sink_tests.cpp
   src/tests/sha1_tests.cpp
@@ -322,6 +332,10 @@ if(BUILD_TESTING)
     ${CMAKE_CURRENT_SOURCE_DIR}/testroms/all_instr_loop/all_instr_loop.s
     ${CMAKE_CURRENT_SOURCE_DIR}/testroms/fastrom_smoke/fastrom_smoke.s
     ${CMAKE_CURRENT_SOURCE_DIR}/testroms/ppu_blue_cgram/ppu_blue_cgram.s
+    ${CMAKE_CURRENT_SOURCE_DIR}/testroms/apu_upload/apu_upload.s
+    ${CMAKE_CURRENT_SOURCE_DIR}/testroms/apu_transfers/apu_transfers.s
+    ${CMAKE_CURRENT_SOURCE_DIR}/testroms/apu_arithmetic/apu_arithmetic.s
+    ${CMAKE_CURRENT_SOURCE_DIR}/testroms/apu_control/apu_control.s
   )
   set(PUPSNES_TEST_ROM_COMMON_INCLUDES
     ${CMAKE_CURRENT_SOURCE_DIR}/testroms/pupsnes.inc

@@ -1,243 +1,96 @@
 # Milestones
 
-This document defines the major delivery milestones for PupSNES in dependency order. The goal is to keep the project pointed at the next meaningful vertical slice instead of expanding isolated subsystems without a bootable machine.
+Updated September 9, 2026.
 
-The architecture and subsystem design documents describe how the emulator should work. This file answers a different question: what should be built next, and how do we know a milestone is actually done?
+PupSNES has working backgrounds, sprites, controller input, and battery-backed saves. **Sound is the next major milestone**, followed by the missing graphics features, save states, and support for more cartridges.
 
-## Current Position
+This roadmap describes where the project stands and what each milestone will make possible. The milestones overlap: work on accuracy and compatibility continues throughout development.
 
-The project already has strong core infrastructure in place:
+## Where we are
 
-- signal-horizon scheduler: priority queue of `SignalEvent{master_time, SignalKind, handler, seq}`
-- `MasterClockDriver` (CPU) running via `TickToTarget`; passive devices via `CatchUpTo`
-- `MachineSync` + `FireEventsThrough` as the per-iteration sync pattern
-- lazy-replay MMIO: writes queue, reads catch up
-- system bus page table and plan/follow contract
-- PPU scaffold: dot-major catch-up, `kFrameEnd` signal, drawn-mask debugger overlay
-- token-based same-clock bus back-pressure
-- unit/integration coverage for scheduler, tokens, bus, CPU, and PPU scaffold
+The CPU implements all 256 instructions, and the core supports cartridge loading, memory, interrupts, and DMA/HDMA transfers. Mode 0 and Mode 1 graphics work, along with sprites and color blending. LoROM, HiROM, and ExHiROM cartridges are supported, and the debugger provides live inspection, execution traces, and screenshots.
 
-The main gap is that PupSNES still cannot load a cartridge, reset into a real memory map, or boot even a tiny ROM. That makes machine bring-up the next highest-leverage milestone.
+Super Castlevania IV and The Legend of Zelda: A Link to the Past reached playable gameplay with the former APU handshake stub, though neither was tested through to completion. The stub has now been replaced by a real SPC700 core with all instructions implemented; commercial sound programs can still stop on missing APU hardware. Games are still silent, several graphics effects are missing, and controller support is limited to player one.
 
-## Milestone 0: Execution Core
+| Milestone | Status |
+| --- | --- |
+| 0. Execution core | Established |
+| 1. Booting ROMs | Complete |
+| 2. CPU execution | Baseline complete; accuracy work continues |
+| 3. Graphics | Partially complete |
+| 4. Audio | **Next priority** |
+| 5. Controllers and cartridges | Partially complete |
+| 6. Save states and rewind | Planned |
+| 7. Accuracy and compatibility | Ongoing |
 
-Status: complete (2026-04-22) — signal-horizon scheduler redesign done.
+## Milestone 0: Execution core
 
-Objective:
-Establish the timing and bus contracts that all later devices rely on.
+**Established.** The foundation keeps the CPU, graphics hardware, memory, and other devices moving together on the console’s timeline. Events happen in a predictable order, and memory accesses account for the time they take on the hardware.
 
-Exit criteria:
+This makes repeatable emulation possible and provides the foundation for accurate interactions between devices. The initial SPC700 now runs on its own nominal clock with deterministic conversion from master time.
 
-- scheduler orders signal events deterministically by `(master_time, SignalKind, seq)` — **done**
-- CPU runs as sole `MasterClockDriver` via `TickToTarget`; writes master time as micro-ops retire — **done**
-- passive devices (`CatchUpTo`) advance on demand; default no-op for stateless devices — **done**
-- `MachineSync` + `FireEventsThrough` as the per-iteration sync pattern — **done**
-- same-clock catch-up (lazy-replay: writes queue, reads catch up) — **done**
-- system bus supports page mapping and plan/follow behavior — **done**
-- CI coverage exists for these core invariants — **done**
+## Milestone 1: Booting ROMs
 
-Deferred (not part of v1 scheduler):
+**Complete.** PupSNES loads cartridges, starts the CPU from the ROM’s reset vector, and runs programs against the console’s memory map. Small test ROMs exercise this process automatically, and command-line tools can run the emulator without opening a window.
 
-- APU — `SignalKind` placeholders exist; handlers not wired.
-- DMA / HDMA — `SignalKind` placeholders exist; handlers not wired.
-- Coprocessor speculation (GSU, SA-1, DSP-n) — will implement `CatchUpTo` on a worker thread; no scheduler surgery required.
-- Threading / lock-free signal feed — deferred until coprocessor workers land.
-- Rollback / checkpoint — deferred until a concrete need emerges.
+This milestone established a working machine capable of running software. That boot path now supports both game development and emulator testing.
 
-Notes:
-The earlier spec described a `tick(budget)` dispatch loop with CommitComplete / WakeSample / Run phases and a full `ISchedulable` interface. That design was replaced by the signal-horizon model: the scheduler is a pure event queue; device execution is driven by `TickToTarget` (CPU) and `CatchUpTo` (passive devices). The token API is preserved for same-clock bus back-pressure.
+## Milestone 2: CPU execution
 
-## Milestone 1: Headless Bring-Up
+**Baseline complete.** All 256 instructions are implemented, including the CPU’s addressing modes, arithmetic, stack operations, branches, and interrupts. Games can run substantial programs using both native and emulation modes.
 
-Status: next
+The remaining work concerns accuracy in unusual cases and interactions with the rest of the console. Diagnostic ROMs and game failures will continue to reveal timing details that need refinement; complete instruction coverage does not mean CPU accuracy work is finished.
 
-Objective:
-Boot a tiny ROM through the real reset path in a headless environment.
+## Milestone 3: Graphics
 
-Scope:
+**Partially complete.** Mode 0 and Mode 1 backgrounds, sprites, priorities, color blending, brightness, and overscan are implemented. The PPU also handles its video-memory ports, beam-position latches, and Mode 7 multiplication registers.
 
-- add cartridge loading for a minimal supported mapper, starting with LoROM
-- add WRAM as a real device mapped through the system bus
-- implement CPU reset/power-on entry behavior, including reset vector fetch
-- add a small headless run loop in the CLI or a dedicated harness
-- add integration tests that execute a handcrafted ROM instead of seeding CPU state directly
+The biggest missing feature is **Mode 7 rendering**, which provides the rotating and scaling backgrounds used by games such as F-Zero and Super Mario Kart, as well as the world map in A Link to the Past. The multiplication registers are ready, but the graphics themselves are not yet drawn.
 
-Exit criteria:
+Other remaining features include windows and masking, mosaic effects, background Modes 2–6, direct color, offset-per-tile effects, and high-resolution and interlaced output.
 
-- PupSNES loads a tiny test ROM from disk or fixture bytes
-- CPU starts from the reset vector rather than test-only register setup
-- ROM code can read/write mapped memory through the system bus
-- a test ROM can leave a known signature in WRAM and halt/spin predictably
-- tests verify final observable state after a bounded run
+**The goal:** games using these features display their scenes and effects correctly, while existing Mode 0/1 games retain their current behavior. Small graphics test ROMs and comparisons of known scenes will help establish progress.
 
-Why this milestone matters:
-This is the first point where the emulator becomes a machine instead of a collection of subsystems.
+## Milestone 4: Audio
 
-## Milestone 2: CPU Execution Baseline
+**In progress.** The SPC700 now implements all 256 instructions, executes the real IPL boot program, and receives and runs uploaded sound programs. Test programs exercise calculations, branches, subroutines, and communication across different execution slice sizes. Timers and sound synthesis are still missing; accesses to unimplemented hardware stop with a diagnostic. See [APU bring-up](apu.md).
 
-Objective:
-Implement enough of the 5A22 to run non-trivial diagnostic ROMs and small commercial boot sequences.
+Real sound support has three main parts:
 
-Scope:
+1. **Run the sound CPU.** Implement the SPC700, its memory and timers, and communication with the main CPU so games can upload and execute their sound programs.
+2. **Generate sound.** Implement the S-DSP’s voices, sample decoding, envelopes, mixing, and effects such as echo.
+3. **Play it back.** Connect the generated audio to the frontend with stable playback that stays synchronized with the game.
 
-- expand opcode coverage with correct addressing modes and flag behavior
-- model stack operations, branches, jumps, subroutines, and interrupt entry/exit
-- add direct page, data bank, program bank, emulation/native mode behavior
-- improve reset/interrupt/vector handling
-- grow test coverage from instruction micro-tests into ROM-driven execution tests
+**The goal:** games initialize the sound hardware normally and produce music and sound effects, with repeatable output and reliable timing. Boot, upload, and all SPC700 instructions are implemented. The next steps are timers and DSP synthesis.
 
-Exit criteria:
+## Milestone 5: Controllers and cartridges
 
-- CPU can pass a curated baseline of headless instruction/behavior tests
-- basic reset and interrupt flows are modeled correctly enough for system bring-up
-- integration tests no longer depend on ad hoc CPU register seeding for ordinary execution scenarios
+**Partially complete.** DMA/HDMA, interrupts, FastROM, and the main cartridge formats already support running games. Player-one input works through both serial reads and automatic-read registers, although automatic polling still needs the hardware’s capture and busy timing.
 
-Notes:
-Do not chase full CPU completeness before Milestone 1 is done. Bootability comes first.
+The next input improvements are accurate automatic polling and a second standard controller. Multitap, mouse, and Super Scope support remain further possibilities.
 
-## Milestone 3: Video Path Skeleton
+Cartridge support currently covers LoROM, HiROM, and ExHiROM, including battery-backed SRAM saves. Additional layouts and enhancement chips such as SA-1, SuperFX, and DSP-n will open up more of the SNES library. Each chip family is a substantial project with its own compatibility targets.
 
-Status: scaffold landed (2026-04-22); advanced rendering deferred.
+**The goal:** broaden the games and multiplayer experiences PupSNES can support, with dependable input, cartridge behavior, and persistent saves.
 
-Objective:
-Produce a deterministic frame pipeline, even if rendering is initially incomplete.
+## Milestone 6: Save states and rewind
 
-Scope:
+**Planned.** Games can already keep their normal battery-backed saves. Save states will let a player pause at any moment and resume from that exact point; rewind will make it possible to move backward through recent gameplay.
 
-- add PPU device scheduling and timing boundaries
-- model enough PPU state to generate frame boundaries correctly
-- wire the frontend `onFrameReady` callback
-- begin implementing VRAM, OAM, and CGRAM storage with disciplined timing ownership
+Both features depend on capturing the entire running machine, including work in progress inside the CPU, graphics, sound, and transfer hardware. Restoring a state should reproduce the same behavior as uninterrupted play, including the picture and sound.
 
-Exit criteria:
+**The goal:** reliable save and load at arbitrary points during gameplay, followed by smooth rewind built on the same foundation. The proposed state design is described in [architecture](architecture.md).
 
-- emulator produces deterministic frame-ready events — **done**
-- frame timing is scheduler-driven rather than frontend-driven — **done** (dot-major `Tick`; each scanline returns `kReachedLocalBoundary`)
-- PPU register accesses flow through same-clock MMIO and catch-up correctly — **done** (lazy-replay: writes queue, reads catch up; see `docs/systembus.md`)
-- framebuffer output exists, even if only for a limited rendering subset — **done** (backdrop-only: `cgram[0] × INIDISP.brightness`, or black under forced blank)
+## Milestone 7: Accuracy and compatibility
 
-What landed in the scaffold:
+**Ongoing.** Every new feature expands what can run, but correctness also depends on the small details: timing, register behavior, interactions between chips, and unusual software techniques.
 
-- SPPU device with dot-major Tick using fullsnes timing (338 × 4 + 2 × 6 = 1364 mcyc per normal NTSC line, 1360 mcyc on the short V=240 line of the odd field)
-- Per-device pending-write log (16384 entries, soft-limit flush on overflow) replaying writes in cycle order as the PPU advances dot-by-dot
-- Real port protocols: INIDISP, CGRAM (write-twice + read-twice with bit-7 open-bus on the high byte), VRAM (VMAIN step / translate / inc-on-port + RDVRAM trailing-prefetch quirk), OAM (write-twice below $200, byte-wise above), SETINI overscan, STAT77/78 with field toggle
-- Double-buffered 341 × 313 BGR555 framebuffer with `SNES::SetFrameReadyCallback(FrameBufferView)` fired at end of V=261
-- Debugger PPU panel: decoded register table, pending-write log count, force-overscan toggle, GL-texture framebuffer preview
+Progress here means more diagnostic tests passing, fewer visual and audio errors, and more games working reliably beyond their opening scenes. Compatibility reports should make clear whether a game boots, reaches gameplay, or has been played through to completion.
 
-Deferred (covered by the Milestone 3 scope but not shipped in the scaffold):
+**The goal:** an emulator whose behavior is both faithful to the hardware and dependable across a growing part of the SNES library. Reproducible tests and recorded examples of failures help keep fixed problems from returning.
 
-- BG / OBJ / window / color-math / mode-7 rendering (only backdrop emits today)
-- Interlace / hi-res (mode 5/6) actual output — dot-width table hooks exist, renderer still emits 256 logical columns
-- NMI, H-IRQ, V-IRQ signals (these belong to Milestone 5's signal-region work; PPU frame boundaries don't depend on them)
+## What comes next
 
-PPU scheduling:
+The current order is **audio, graphics completeness, save states and rewind, then broader cartridge support**. Controller improvements and fixes for known game problems can progress alongside those larger efforts.
 
-- `Ppu::Reset` auto-schedules the first `ScheduleDeviceRun` at the end of scanline 0 (1364 mcyc). `Tick` runs through as many scanlines as budget allows and yields at VSYNC (end of V=261) with `next_wake = committed_time`, so the scheduler chains subsequent frame dispatches without time-skipping. HBlank sync is internal to the dot loop — HV counters advance dot-by-dot and `DrainPendingWritesUpTo` fires at each dot's nominal start cycle.
-- Strict-no-overshoot on both devices: `CPU::Tick` peeks the next micro-op's cost via `SystemBus::Plan` and refuses to start a step that would exceed budget (returns kNoWork with a `kMaxCyclesStep`-ahead wake on a tight slice, so the PPU's event gets a meaningful budget to run). `Ppu::Tick` uses sub-dot partial-cycle accounting to split atomic dots across multiple Ticks without overshooting.
-
-Why this milestone matters:
-Once frames exist, the project can start validating end-to-end console behavior rather than only CPU-local behavior.
-
-## Milestone 4: Audio and Cross-Clock Integration
-
-Objective:
-Exercise the multi-clock design with real APU-facing behavior.
-
-Scope:
-
-- add APU-side scheduling and memory ownership
-- implement CPU/APU port communication through cross-clock MMIO
-- add audio sample callbacks
-- validate token completion semantics against real cross-domain interactions
-
-Exit criteria:
-
-- CPU/APU ports behave through asynchronous completion rather than shortcuts
-- emulator can emit deterministic audio samples or sample events
-- scheduler behavior across master/APU domains is covered by integration tests
-
-## Milestone 5: System Features Required For Real Software
-
-Objective:
-Add the hardware behavior that real games depend on beyond straight CPU execution.
-
-Scope:
-
-- DMA/HDMA
-- IRQ/NMI/control signal region behavior
-- controller input plumbing
-- cartridge mapper expansion beyond the initial mapper (architectural slot in place via `Mapper` strategy + `CartridgeRegistry`; ExHiROM lands as the second concrete mapper, SA-1/GSU/DSP-n still pending)
-- bus-visible timing corner cases needed for software compatibility
-
-Exit criteria:
-
-- representative software can reach title or gameplay states headlessly or interactively
-- interrupts and DMA participate in the scheduler without violating determinism
-- controller polling works through the frontend contract
-
-Notes:
-This milestone should be split internally into smaller implementation plans once bring-up reveals the actual blockers.
-
-## Milestone 6: State, Rewind, and Determinism Tooling
-
-Objective:
-Deliver the project-level features that depend on stable whole-machine state management.
-
-Scope:
-
-- contiguous state block or equivalent serialized state ownership
-- save/load state support
-- rewind ring buffer
-- determinism verification harnesses
-- trace and framebuffer comparison workflows
-
-Exit criteria:
-
-- emulator can save and restore machine state reliably
-- repeated runs from the same state and input stream are byte-for-byte deterministic
-- rewind works across meaningful gameplay intervals
-
-## Milestone 7: Accuracy and Compatibility
-
-Objective:
-Turn a functioning emulator into a trustworthy one.
-
-Scope:
-
-- targeted timing corrections
-- hardware edge cases
-- compatibility triage against test ROMs and real games
-- regression suites for CPU, bus, PPU, APU, DMA, and save-state behavior
-
-Exit criteria:
-
-- curated compatibility targets boot and behave correctly
-- regression suites protect against timing and determinism regressions
-- project decisions about accuracy vs. optional enhancements are documented explicitly
-
-## Prioritization Rules
-
-When choosing the next task, prefer work that:
-
-1. unlocks a new end-to-end capability
-2. validates an existing architecture claim with a real integration path
-3. removes test-only scaffolding in favor of real machine behavior
-4. exposes the next concrete bottleneck
-
-Avoid spending major time on:
-
-- polishing abstractions that have not yet been exercised by a boot path
-- frontend UX before the core can boot a real ROM
-- advanced features like rewind before machine state is real and stable
-
-## Immediate Recommendation
-
-The next build target should be Milestone 1: Headless Bring-Up.
-
-If that milestone is broken into implementation steps, the recommended order is:
-
-1. cartridge device plus minimal LoROM loader
-2. WRAM device and initial system-bus memory map
-3. CPU reset vector bring-up
-4. tiny ROM-driven integration test
-5. minimal CLI path to load and run a ROM headlessly
+Real sound-program upload and all SPC700 instructions are now implemented. The immediate focus is timers and DSP behavior so commercial sound programs can initialize the hardware, followed by hearing the first synthesized sound.

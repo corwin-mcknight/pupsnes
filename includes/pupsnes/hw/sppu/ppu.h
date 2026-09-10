@@ -62,9 +62,8 @@ class Ppu : public Device {
   [[nodiscard]] const char* DeviceName() const override { return "PPU"; }
 
   // Bus wiring — claim the entire page $21 as kSameClockMmio in banks $00-$3F
-  // and $80-$BF. APU ports at $2140-$21FF are absorbed by the PPU today
-  // (reads return open-bus, writes drop) and migrate to the APU device once
-  // it lands.
+  // and $80-$BF. Ports $2140-$217F forward to the APU with their original
+  // access timestamp; $2180-$21FF remain open-bus / dropped writes.
   void MapSystemBus(SystemBus& bus);
 
   // Drop all PPU state back to power-on defaults. Does not re-map the bus;

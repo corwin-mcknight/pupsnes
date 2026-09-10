@@ -9,7 +9,7 @@
 #include "pupsnes/core/signal_event.h"
 #include "pupsnes/core/snes.h"
 #include "pupsnes/hw/5a22/cpu_mmio.h"
-#include "pupsnes/hw/apu/apu_stub.h"
+#include "pupsnes/hw/apu/apu.h"
 #include "pupsnes/memory/systembus.h"
 
 namespace pupsnes {
@@ -63,9 +63,9 @@ Ppu::Ppu(SNES& snes)
 
 void Ppu::MapSystemBus(SystemBus& bus) {
   // Page $21 covers the B-bus PPU window ($2100-$21FF). The PPU owns the
-  // whole page in v1 — offsets $2100-$213F dispatch to real registers, and
-  // $2140-$21FF surfaces as open-bus / dropped writes from ReadRegister /
-  // WriteRegister below. The APU and WRAM ports move in here later.
+  // whole page — offsets $2100-$213F dispatch to PPU registers, and
+  // $2140-$217F forward to the APU, which catches up its independent clock.
+  // $2180-$21FF remain open-bus / dropped writes.
   //
   // Real hardware bills 6 master cycles for the $2000-$3FFF B-bus register
   // block (the "fast" bus class), so each access to this page costs 6.
@@ -343,8 +343,8 @@ MmioReadResult Ppu::ReadRegister(uint32_t offset, TimeMasterT current_time) {
 
   const uint16_t reg = static_cast<uint16_t>(offset & 0xFFFFU);
   if (reg < sppu::regs::kBase || reg >= sppu::regs::kEnd) {
-    if (reg >= ApuStub::kPortBase && reg < ApuStub::kPortEnd) {
-      return snes_->apu_stub->ReadRegister(reg, current_time);
+    if (reg >= Apu::kPortBase && reg < Apu::kPortEnd) {
+      return snes_->apu->ReadRegister(reg, current_time);
     }
     // $2180-$21FF WRAM ports still open-bus until that device lands.
     return {0x00U, 0x00U};
@@ -435,8 +435,8 @@ void Ppu::LatchHvCounters(TimeMasterT current_time) {
 void Ppu::WriteRegister(uint32_t offset, uint8_t data, TimeMasterT current_time) {
   const uint16_t reg = static_cast<uint16_t>(offset & 0xFFFFU);
   if (reg < sppu::regs::kBase || reg >= sppu::regs::kEnd) {
-    if (reg >= ApuStub::kPortBase && reg < ApuStub::kPortEnd) {
-      snes_->apu_stub->WriteRegister(reg, data, current_time);
+    if (reg >= Apu::kPortBase && reg < Apu::kPortEnd) {
+      snes_->apu->WriteRegister(reg, data, current_time);
     }
     // Writes to $2180-$21FF drop until WRAM-port device lands.
     return;

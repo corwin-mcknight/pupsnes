@@ -11,7 +11,7 @@
 #include "pupsnes/hw/5a22/cpu.h"
 #include "pupsnes/hw/5a22/cpu_mmio.h"
 #include "pupsnes/hw/5a22/dma_controller.h"
-#include "pupsnes/hw/apu/apu_stub.h"
+#include "pupsnes/hw/apu/apu.h"
 #include "pupsnes/hw/input/joypad.h"
 #include "pupsnes/hw/rom/cartridge.h"
 #include "pupsnes/hw/rom/rom_format.h"
@@ -35,7 +35,7 @@ pupsnes::SNES::SNES()
       wram(std::make_unique<WRAM>(*this)),
       cpu_mmio(std::make_unique<CpuMmio>(*this)),
       dma(std::make_unique<DmaController>(*this)),
-      apu_stub(std::make_unique<ApuStub>(*this)),
+      apu(std::make_unique<Apu>(*this)),
       joypad(std::make_unique<Joypad>(*this)),
       ppu(std::make_unique<Ppu>(*this)) {
   registry_.RegisterBuiltins();
@@ -103,9 +103,8 @@ pupsnes::BuildResult pupsnes::SNES::LoadRom(std::span<const uint8_t> rom_data) {
 }
 
 void pupsnes::SNES::Reset() {
-  // Apply any pending S-DSP backend selection. The real APU wrapper will
-  // consume this when it lands; until then we just track the value so the UI
-  // can show a consistent "live" vs "pending" view.
+  // Track the requested S-DSP selection for the UI. DSP execution is still
+  // deferred; the APU currently faults explicitly on DSP data access.
   sdsp_mode_live_ = sdsp_mode_pending_;
   time_now_ = 0;
   scheduler->Reset();
@@ -116,7 +115,7 @@ void pupsnes::SNES::Reset() {
   }
   cpu_mmio->Reset();
   dma->Reset();
-  apu_stub->Reset();
+  apu->Reset();
   joypad->Reset();
   // Reset the PPU before the CPU: the CPU's reset vector fetch may pass
   // through page $21 (cartridge DBs), and the PPU needs its shadow / decoded
@@ -152,8 +151,8 @@ const pupsnes::Joypad& pupsnes::SNES::GetJoypad() const { return *joypad; }
 pupsnes::Ppu& pupsnes::SNES::GetPpu() { return *ppu; }
 const pupsnes::Ppu& pupsnes::SNES::GetPpu() const { return *ppu; }
 
-pupsnes::ApuStub& pupsnes::SNES::GetApuStub() { return *apu_stub; }
-const pupsnes::ApuStub& pupsnes::SNES::GetApuStub() const { return *apu_stub; }
+pupsnes::Apu& pupsnes::SNES::GetApu() { return *apu; }
+const pupsnes::Apu& pupsnes::SNES::GetApu() const { return *apu; }
 
 pupsnes::DeviceIdT pupsnes::SNES::RegisterDevice(Device* device) {
   auto id = static_cast<DeviceIdT>(devices_.size());

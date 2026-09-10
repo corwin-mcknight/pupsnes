@@ -18,7 +18,7 @@ namespace pupsnes::tools {
 // cap), MachineSync, then fire due events). Loops with a stuck-guard that
 // aborts if the CPU stops making forward progress (e.g. STP/halt or a tick
 // budget too small). Returns std::nullopt on reaching the cap; a human-readable
-// error string on a stall or a CPU exception.
+// error string on a stall or an emulation exception.
 //
 // This is the single source of truth for the run-loop timing sequence shared by
 // the trace runner and the screenshot tool — keep cycle-accurate ordering here.
@@ -27,9 +27,9 @@ namespace pupsnes::tools {
 // Stop-condition for a trace run. Exactly one of these must be set in
 // TraceRunOptions; the runner asserts when zero or more than one is supplied.
 struct TraceStopBudget {
-  std::optional<uint64_t> instructions;       // retire N instructions
-  std::optional<TimeMasterT> master_cycles;   // run until master time has advanced by N
-  std::optional<uint32_t> frames;             // run until N frames have completed
+  std::optional<uint64_t> instructions;      // retire N instructions
+  std::optional<TimeMasterT> master_cycles;  // run until master time has advanced by N
+  std::optional<uint32_t> frames;            // run until N frames have completed
 };
 
 struct TraceRunOptions {

@@ -11,7 +11,7 @@ Devices fall into two roles:
 - **`MasterClockDriver`** (CPU; future DMA, HDMA, coprocessors): implements
   `TickToTarget(TimeMasterT target)`, writes global master time as work retires,
   and drives the RunControl loop forward.
-- **Passive `Device`** (PPU, bus responders): implements `CatchUpTo(TimeMasterT target)`
+- **Passive `Device`** (PPU, APU, bus responders): implements `CatchUpTo(TimeMasterT target)`
   to advance internal state on demand. The default is a no-op for stateless devices.
 
 See `docs/scheduler.md` for the full scheduler design.
@@ -20,10 +20,10 @@ See `docs/scheduler.md` for the full scheduler design.
 
 PupSNES has a dynamic topology of interconnected objects that represent the SNES hardware. The main components are:
 
-* **SNES**: The top-level object that contains all other components. Owns global master and APU time, and the Scheduler instance.
+* **SNES**: The top-level object that contains all other components. Owns global master time and the Scheduler instance; the APU owns its local clock and conversion phase.
 * **Scheduler**: Part of the SNES. Maintains a signal-event priority queue ordered by `(master_time, SignalKind, seq)`. Exposes `ScheduleSignal`, `NextEventMasterTime`, `FireEventsThrough`, and `SnapshotSignalQueue`. Does not dispatch device execution — devices run via `TickToTarget` or `CatchUpTo` outside the queue.
 * **Device**: Base class for all hardware units. Holds `local_time_`, a `SNES*` back-pointer, and a `DeviceIdT`. Passive devices override `CatchUpTo(target)`; master-clock drivers subclass `MasterClockDriver` and implement `TickToTarget(target)`. `CpuMmio` subclasses `Device` for bus-page dispatch but keeps the default no-op `CatchUpTo`.
-* **SystemBus**: Authority for CPU-visible bus transactions. Decodes addresses via a flat page table (256×256 bank×page → device+offset), precalculated at ROM load. Same-clock targets are synchronized via catch-up on access; cross-clock targets use async tokens. See `docs/systembus.md`. (planned)
+* **SystemBus**: Authority for CPU-visible bus transactions. Decodes addresses via a flat page table (256×256 bank×page → device+offset), precalculated at ROM load. MMIO targets synchronize through catch-up or queued writes. APU ports complete inline after catching up their independent clock. Scheduled tokens remain available for transactions requiring deferred completion. See `docs/systembus.md`.
 * **State Block**: A single contiguous memory allocation containing all device state — registers, counters, VRAM, WRAM, APU RAM. Save state = `memcpy`. Rewind = ring buffer of snapshots. Determinism verification = `memcmp`. (planned)
 * **Signal Region**: Part of the State Block. Models control signals (NMI, IRQ, HALT) as flat fields rather than wire objects. Edge-triggered signals (NMI) use two fields (current + previous level). Level-triggered signals (IRQ, HALT) use one field. (planned)
 * **Port**: Allows connecting external peripherals to the SNES, such as controllers or cartridges. (planned)
@@ -43,16 +43,16 @@ The `RunControl` loop calls `SNES::MachineSync(now)` — which invokes `CatchUpT
 
 **Bus masters** (CPU, DMA) initiate transactions and drive the clock forward. **Bus targets** (PPU registers, WRAM) respond to transactions and can be caught up. Catch-up applies only to targets — devices whose internal state evolution does not require issuing bus transactions. On the SNES, the PPU qualifies because it uses its own VRAM bus during rendering and never initiates system bus transactions.
 
-Cross-clock-domain transactions (e.g., CPU ↔ APU via ports `$2140`–`$2143`) use asynchronous tokens. The token is queued and resolved when the target is caught up to the equivalent time in its own clock domain.
+The **APU ports** (`$2140`–`$2143`, mirrored through `$217F`) complete inline. Both reads and writes first advance the APU to the access time, then sample the output latch or update the separate input latch. The APU executes against its private RAM and never initiates a main-bus access, so this synchronization needs no asynchronous token. The page-$21 PPU handler forwards the original access timestamp to the APU.
 
-Tokens are the universal abstraction for external I/O. Same-clock tokens resolve synchronously (via lazy-replay catch-up). Cross-clock tokens resolve asynchronously. The token type is the same; the resolution semantics differ by clock domain.
+The bus still exposes scheduled tokens for targets that require deferred completion. A separate clock alone does not require a token. See [APU bring-up](apu.md) for clock conversion, instruction coverage, and accuracy limits.
 
 ## Clock Domains
 
 Two independent timing domains:
 
 * **Master clock** (~21.477 MHz): drives CPU, PPU, DMA. All same-clock synchronization uses catch-up on access.
-* **APU clock** (~1.024 MHz): independent crystal. The APU tracks its own cycle count with a known conversion ratio to master time (~20.97 master cycles per APU cycle). On port access (`$2140`–`$2143`), the APU is caught up by converting the current master time to APU cycles.
+* **APU clock** (~1.024 MHz): independent crystal. The initial NTSC APU uses a nominal 1,024,000 Hz clock with the exact rational conversion `5632/118125` APU cycles per master cycle and preserves the fractional phase between calls. On port access (`$2140`–`$2143`), the APU is caught up by converting the current master time to APU cycles.
 
 Time is measured in integer cycles (no fractional time) within each domain.
 
@@ -97,7 +97,7 @@ The cart lifecycle is **destroy-and-rebuild**: a successful build replaces the e
 The emulation core uses a **callback-based** interface. The core owns the master clock; the frontend is a passive consumer:
 
 * `onFrameReady(buffer)`: PPU signals frame completion at V-blank
-* `onAudioSample(left, right)`: APU emits samples at the exact cycle produced
+* `onAudioSample(left, right)` (planned): APU will emit samples at the exact cycle produced
 * `pollInput() → buttons`: core polls controller state when needed
 
 For headless/CI testing, stub callbacks capture output for assertions without requiring a display or audio device.

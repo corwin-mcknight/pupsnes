@@ -6,12 +6,12 @@
 #include <stdexcept>
 #include <vector>
 
+#include "pupsnes/core/scheduler.h"
+#include "pupsnes/core/snes.h"
 #include "pupsnes/debugger/file_trace_sink.h"
 #include "pupsnes/debugger/sha1.h"
 #include "pupsnes/hw/5a22/cpu.h"
 #include "pupsnes/hw/rom/cartridge.h"
-#include "pupsnes/core/scheduler.h"
-#include "pupsnes/core/snes.h"
 #include "pupsnes/hw/rom/rom_format.h"
 
 namespace pupsnes::tools {
@@ -21,10 +21,8 @@ namespace {
 // Validate the budget: exactly one of {instructions, master_cycles, frames}
 // must be set. Returns a non-empty error string on misconfiguration.
 [[nodiscard]] std::string ValidateBudget(const TraceStopBudget& b) {
-  const int set_count =
-      static_cast<int>(b.instructions.has_value()) +
-      static_cast<int>(b.master_cycles.has_value()) +
-      static_cast<int>(b.frames.has_value());
+  const int set_count = static_cast<int>(b.instructions.has_value()) + static_cast<int>(b.master_cycles.has_value()) +
+                        static_cast<int>(b.frames.has_value());
   if (set_count == 0) return "no stop budget specified";
   if (set_count > 1) return "more than one stop budget specified";
   return {};
@@ -46,9 +44,7 @@ namespace {
 
 // Returns true once the run loop should stop based on the configured budget,
 // the current emitted-line count, and the master-time delta since boot.
-[[nodiscard]] bool BudgetSatisfied(const TraceStopBudget& budget,
-                                   uint64_t emitted_lines,
-                                   TimeMasterT master_elapsed) {
+[[nodiscard]] bool BudgetSatisfied(const TraceStopBudget& budget, uint64_t emitted_lines, TimeMasterT master_elapsed) {
   if (budget.instructions.has_value()) {
     return emitted_lines >= *budget.instructions;
   }
@@ -65,8 +61,8 @@ namespace {
 // min(next_event, cap), MachineSync, then fire due events. Returns the new
 // master time. This is the load-bearing cycle-accurate sequence; both the
 // trace run loop and DriveMachineToMasterTime route through it so the ordering
-// lives in exactly one place. May throw whatever TickToTarget throws — callers
-// decide how to report it.
+// lives in exactly one place. Any emulated device can throw during this
+// advance; callers decide how to report it.
 [[nodiscard]] TimeMasterT AdvanceOneStep(SNES& snes, TimeMasterT cap) {
   TimeMasterT target = snes.GetScheduler().NextEventMasterTime();
   if (cap < target) target = cap;  // clamp so we don't overshoot the budget
@@ -92,7 +88,7 @@ std::optional<std::string> DriveMachineToMasterTime(SNES& snes, TimeMasterT cap)
     try {
       after_tick = AdvanceOneStep(snes, cap);
     } catch (const std::exception& ex) {
-      return std::string{"CPU exception: "} + ex.what();
+      return std::string{"Emulation exception: "} + ex.what();
     }
 
     if (after_tick == last_master) {
@@ -177,7 +173,7 @@ TraceRunResult RunTrace(const TraceRunOptions& opts) {
     try {
       after_tick = AdvanceOneStep(snes, cap);
     } catch (const std::exception& ex) {
-      result.error = std::string{"CPU exception: "} + ex.what();
+      result.error = std::string{"Emulation exception: "} + ex.what();
       sink.Flush();
       return result;
     }

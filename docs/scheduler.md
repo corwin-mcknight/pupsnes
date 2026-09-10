@@ -148,7 +148,8 @@ stateless bus responders.
 Current overrides:
 - **PPU** (`SpPpu`): advances dot emission and the drawn-mask bitmap to `target`.
   Schedules `kFrameEnd` at each frame wrap; the handler reschedules the next.
-- All other devices: default no-op.
+- **APU** (`Apu`): advances its SPC700 one cycle at a time using an integer rational conversion with retained fractional phase. Port accesses also catch it up before accessing their latches. It schedules no sample deadline until DSP synthesis is implemented. See [APU bring-up](apu.md).
+- Stateless devices: default no-op.
 
 `CpuMmio` remains a `Device` subclass for bus-page dispatch; it has no
 time-stateful role and keeps the default no-op `CatchUpTo`.
@@ -169,7 +170,7 @@ time-stateful role and keeps the default no-op `CatchUpTo`.
 
 ## Out of scope (v1)
 
-- **APU, DMA, HDMA**: `SignalKind` placeholders (`kApuSampleDeadline`,
+- **Audio sample deadlines and transfer event kinds**: `SignalKind` placeholders (`kApuSampleDeadline`,
   `kDmaBurstComplete`, `kHdmaFire`) exist; handlers are not wired.
 - **Coprocessor speculation (GSU, SA-1, DSP-n)**: each will implement
   `CatchUpTo` by running its own program on a worker thread and surfacing

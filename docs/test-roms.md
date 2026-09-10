@@ -44,7 +44,9 @@ The harness recursively discovers `*.romspec` files under `testroms/` at runtime
 
 ## `.romspec` Format
 
-Each ROM gets a sidecar metadata file. Example:
+ROMs in the metadata-driven harness get a sidecar metadata file. The APU ROMs use dedicated C++ tests because they inspect private sound RAM and compare execution across scheduler slice sizes. `apu_upload` checks multiple upload blocks, `apu_transfers` exercises data movement, `apu_arithmetic` records calculations and flags, and `apu_control` covers branches, calls, software interrupts, and halted execution. Their tests live in `src/tests/apu_integration_tests.cpp` and the matching `apu_<name>_integration_tests.cpp` files. Each includes a deliberately changed payload that must produce the CPU's failure verdict. Run them with `pupsnes_tests '[apu]'`.
+
+Example metadata:
 
 ```toml
 rom_name = "reset_smoke"

@@ -12,7 +12,7 @@
 #include "pupsnes/hw/rom/rom_format.h"
 
 namespace pupsnes {
-class ApuStub;
+class Apu;
 class CPU;
 class Cartridge;
 class CpuMmio;
@@ -43,9 +43,8 @@ class SNES {
   std::unique_ptr<WRAM> wram;
   std::unique_ptr<CpuMmio> cpu_mmio;
   std::unique_ptr<DmaController> dma;
-  // Throwaway fake-APU — declared before the PPU so PPU can delegate page-$21
-  // APU-port accesses to it. Replace when the real SPC700 core lands.
-  std::unique_ptr<ApuStub> apu_stub;
+  // Declared before the PPU, which forwards page-$21 APU-port accesses.
+  std::unique_ptr<Apu> apu;
   // P1 controller. Owns the live button state edited by the debug UI and the
   // manual-serial shift register CpuMmio dispatches $4016 reads to.
   std::unique_ptr<Joypad> joypad;
@@ -105,8 +104,8 @@ class SNES {
   [[nodiscard]] const Joypad& GetJoypad() const;
   [[nodiscard]] Ppu& GetPpu();
   [[nodiscard]] const Ppu& GetPpu() const;
-  [[nodiscard]] ApuStub& GetApuStub();
-  [[nodiscard]] const ApuStub& GetApuStub() const;
+  [[nodiscard]] Apu& GetApu();
+  [[nodiscard]] const Apu& GetApu() const;
 
   // Register a frontend-side callback invoked by the PPU at end-of-frame.
   // Copying the std::function here is intentional: callers typically set it

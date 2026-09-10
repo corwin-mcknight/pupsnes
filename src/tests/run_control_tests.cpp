@@ -1,15 +1,17 @@
 #include <array>
 #include <catch2/catch_test_macros.hpp>
 #include <chrono>
+#include <string>
 
+#include "pupsnes/core/scheduler.h"
+#include "pupsnes/core/snes.h"
 #include "pupsnes/debugger/breakpoints.h"
 #include "pupsnes/debugger/error_log.h"
 #include "pupsnes/debugger/fan_out_trace_sink.h"
 #include "pupsnes/debugger/run_control.h"
 #include "pupsnes/debugger/trace.h"
+#include "pupsnes/hw/apu/apu.h"
 #include "pupsnes/hw/rom/cartridge.h"
-#include "pupsnes/core/scheduler.h"
-#include "pupsnes/core/snes.h"
 #include "pupsnes/hw/sppu/ppu_regs.h"
 
 using namespace pupsnes;            // NOLINT(google-build-using-namespace)
@@ -180,6 +182,33 @@ TEST_CASE("RunControl RunUntilBreak halts on CPU fault and logs it", "[unit][deb
   REQUIRE(errors.size() == 1);
   REQUIRE(errors.front().source == ErrorSource::kCpu);
   REQUIRE(errors.front().address == 0x008001);
+}
+
+TEST_CASE("RunControl pauses and logs SPC700 faults raised during MachineSync", "[unit][debugger][apu]") {
+  DebuggerFixture fixture;
+  // The main CPU never accesses APU ports, so the SPC700 first advances in
+  // MachineSync after TickToTarget returns.
+  fixture.SetBytes({0x80, 0xFE});
+  RunControl run_control = fixture.BuildRunControl();
+
+  Spc700::State state{};
+  state.pc = 0x0200;
+  fixture.snes.GetApu().GetCpu().Reset(state);
+  fixture.snes.GetApu().Write(0x0200, 0xE4);  // MOV A,$F3: unsupported DSP data access.
+  fixture.snes.GetApu().Write(0x0201, 0xF3);
+
+  run_control.RequestRunUntilBreak();
+  REQUIRE_NOTHROW(run_control.TickFrame(std::chrono::seconds(1), 1000));
+
+  REQUIRE(run_control.GetState() == RunState::kPaused);
+  REQUIRE(run_control.GetPauseReason() == PauseReason::kError);
+  REQUIRE(fixture.snes.GetCpu().GetRetiredInstructionCount() > 0);
+  REQUIRE_FALSE(fixture.snes.GetCpu().GetFault().has_value());
+  const auto errors = fixture.errors.Snapshot();
+  REQUIRE(errors.size() == 1);
+  REQUIRE(errors.front().message.find("SPC700") != std::string::npos);
+  REQUIRE(errors.front().message.find("register $00F3") != std::string::npos);
+  REQUIRE(errors.front().message.find("0202") != std::string::npos);
 }
 
 TEST_CASE("RunControl tight BRA loop advances past kFrameEnd boundary", "[unit][debugger]") {

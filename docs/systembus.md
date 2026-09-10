@@ -43,7 +43,7 @@ Three possible plan outcomes, determined by the target’s clock domain and type
 1. **InlineComplete**: resolves the transaction synchronously. Used for:
    - Memory-backed regions (ROM, WRAM) where no side effects or hazards exist
    - Same-clock MMIO targets (e.g., PPU registers): the target device is **caught up** to the current master cycle via the scheduler before the transaction is applied, ensuring the target’s internal state is consistent at the exact cycle of access
-2. **ScheduledComplete**: produces a token with a completion time, resolved later during the scheduler’s Commit phase. Used for cross-clock targets (e.g., APU ports `$2140`–`$2143`) where the clock domain boundary requires asynchronous resolution.
+2. **ScheduledComplete**: produces a token with a completion time, resolved later during the scheduler’s Commit phase. Available for targets that require deferred completion; the current APU port implementation does not use this path.
 3. **Rejected**: indicates an invariant violation / invalid plan usage and is treated as a crash-level emulator error.
 
 ---
@@ -52,11 +52,11 @@ Three possible plan outcomes, determined by the target’s clock domain and type
 
 - **Memory-like regions** (ROM, WRAM, SRAM): always **InlineComplete**. These are passive memory with no side effects.
 - **Same-clock MMIO** (PPU registers at `$2100`–`$213F`, CPU registers at `$4200`–`$44FF`): **InlineComplete** with lazy-replay. Reads trigger catch-up so the target samples current state; writes queue into the target's pending-write log without catch-up overhead.
-- **Cross-clock MMIO** (APU ports at `$2140`–`$2143`): **ScheduledComplete**. The clock domain boundary requires asynchronous token resolution with time conversion.
+- **APU ports** (`$2140`–`$2143`, mirrored through `$217F`): **InlineComplete**. Page `$21` still routes through the PPU handler, which forwards these accesses immediately. The APU catches up its independent clock before both reads and writes, then accesses separate directional latches. Its private bus cannot block the main CPU bus, so no scheduled token is required. See [APU bring-up](apu.md).
 
 ## Lazy-replay catch-up
 
-The contract is **writes queue, reads catch up**. `SystemBus::FollowInline` gates its catch-up call on access type:
+For PPU registers, the contract is **writes queue, reads catch up**. APU port writes instead catch up synchronously in their own handler before changing the input latch. `SystemBus::FollowInline` gates its catch-up call on access type:
 
 ### Read path
 

@@ -2,8 +2,8 @@
 
 #include <exception>
 
-#include "pupsnes/hw/5a22/cpu.h"
 #include "pupsnes/core/scheduler.h"
+#include "pupsnes/hw/5a22/cpu.h"
 
 namespace pupsnes::debugger {
 
@@ -176,15 +176,17 @@ void RunControl::TickFrame(std::chrono::steady_clock::duration wall_clock_budget
     TickResult result{0, TickStopReason::kReachedTarget};
     try {
       result = snes_.GetCpu().TickToTarget(target);
+      // Passive devices can fault during catch-up (for example, when the
+      // SPC700 encounters an instruction that has not been implemented).
+      // Keep the whole machine advance inside the debugger error boundary.
+      const TimeMasterT now = snes_.GetMasterTime();
+      snes_.MachineSync(now);
+      snes_.GetScheduler().FireEventsThrough(now);
     } catch (const std::exception& ex) {
       error_log_.PushSchedulerError(snes_.GetMasterTime(), ex.what(), snes_.GetCpu().GetRegs());
       PauseForError();
       break;
     }
-
-    const TimeMasterT now = snes_.GetMasterTime();
-    snes_.MachineSync(now);
-    snes_.GetScheduler().FireEventsThrough(now);
 
     if (!HandlePostTickState(result)) {
       break;

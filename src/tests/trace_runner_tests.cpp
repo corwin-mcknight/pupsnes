@@ -1,11 +1,17 @@
+#include <array>
+#include <atomic>
 #include <catch2/catch_test_macros.hpp>
 #include <cstdint>
 #include <filesystem>
-#include <atomic>
 #include <fstream>
 #include <string>
+#include <utility>
 #include <vector>
 
+#include "pupsnes/core/snes.h"
+#include "pupsnes/hw/5a22/cpu.h"
+#include "pupsnes/hw/apu/apu.h"
+#include "pupsnes/hw/rom/cartridge.h"
 #include "pupsnes/tools/trace_runner.h"
 
 namespace {
@@ -35,8 +41,7 @@ std::vector<std::string> ReadAllLines(const std::filesystem::path& p) {
 
 }  // namespace
 
-TEST_CASE("RunTrace emits a versioned header and one line per retired instruction",
-          "[unit][trace_runner]") {
+TEST_CASE("RunTrace emits a versioned header and one line per retired instruction", "[unit][trace_runner]") {
   pupsnes::tools::TraceRunOptions opts;
   opts.rom_path = TestRomPath("instruction_smoke");
   opts.output_path = UniqueTempPath("trace_runner_smoke");
@@ -61,8 +66,7 @@ TEST_CASE("RunTrace emits a versioned header and one line per retired instructio
   REQUIRE(lines[1].find(" A9 ") != std::string::npos);
 }
 
-TEST_CASE("RunTrace returns ok=false when the ROM path does not exist",
-          "[unit][trace_runner]") {
+TEST_CASE("RunTrace returns ok=false when the ROM path does not exist", "[unit][trace_runner]") {
   pupsnes::tools::TraceRunOptions opts;
   opts.rom_path = "/no/such/rom.sfc";
   opts.output_path = UniqueTempPath("trace_runner_missing");
@@ -85,4 +89,30 @@ TEST_CASE("RunTrace stops at the master-cycle budget", "[unit][trace_runner]") {
   REQUIRE(result.ok);
   REQUIRE(result.master_time_elapsed >= 200);
   REQUIRE(result.instructions_emitted >= 1);
+}
+
+TEST_CASE("DriveMachineToMasterTime reports SPC700 faults during catch-up", "[unit][trace_runner][apu]") {
+  pupsnes::SNES snes;
+  std::array<uint8_t, pupsnes::Cartridge::kLoROMWindowSize> rom{};
+  rom[0] = 0x80;  // BRA self: no CPU access to the APU before MachineSync.
+  rom[1] = 0xFE;
+  rom[0x7FFC] = 0x00;
+  rom[0x7FFD] = 0x80;
+  REQUIRE(snes.LoadRom(rom).ok);
+  snes.Reset();
+
+  pupsnes::Spc700::State state;
+  state.pc = 0x0200;
+  snes.GetApu().GetCpu().Reset(state);
+  snes.GetApu().Write(0x0200, 0xE4);  // MOV A,$F3: unsupported DSP data access.
+  snes.GetApu().Write(0x0201, 0xF3);
+
+  const auto error = pupsnes::tools::DriveMachineToMasterTime(snes, 1000);
+  REQUIRE(error.has_value());
+  const auto message = error.value_or("");
+  REQUIRE(message.find("Emulation exception: ") == 0);
+  REQUIRE(message.find("SPC700") != std::string::npos);
+  REQUIRE(message.find("register $00F3") != std::string::npos);
+  REQUIRE(message.find("$0202") != std::string::npos);
+  REQUIRE_FALSE(snes.GetCpu().GetFault().has_value());
 }

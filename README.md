@@ -10,7 +10,7 @@ The ultimate goal is to become the most accurate Super Nintendo emulator.
 
 It's written in modern C++23, with a full debugger for inspecting the live system.
 
-> **Status:** Under active development. The CPU, DMA/HDMA, and PPU Modes 0/1 are mature enough to run commercial games such as *Super Castlevania IV* and *The Legend of Zelda: A Link to the Past*. There is no audio yet, and not all PPU features are emulated. See the feature matrix below.
+> **Status:** Under active development. The CPU, DMA/HDMA, and PPU Modes 0/1 have run commercial games such as *Super Castlevania IV* and *The Legend of Zelda: A Link to the Past*. The real SPC700 now implements all 256 opcodes; commercial sound programs can still stop on unimplemented APU hardware. There is no audio yet, and not all PPU features are emulated. See the feature matrix below.
 
 ## What it is
 
@@ -29,7 +29,7 @@ Legend: ✅ implemented · ⚠️ partial · ❌ not yet
 | **PPU — backgrounds** | ⚠️ | Mode 0 & Mode 1 only |
 | **PPU — sprites (OBJ)** | ✅ | Fully implemented. 32-per-line hardware cap enforced |
 | **PPU — color math & screen** | ⚠️ | No windows, mosaic, hi-res, direct color |
-| **Audio — APU (SPC700 + S-DSP)** | ❌ | **Silent.** Stub implementation allows games to boot. |
+| **Audio — APU (SPC700 + S-DSP)** | ⚠️ | All SPC700 opcodes, real IPL boot and program upload; no timers or DSP sound. |
 | **Input** | ⚠️ | Player 1 standard controller ✅; P2, multitap, mouse, Super Scope ❌ |
 | **Cartridge / mappers** | ⚠️ | No coprocessors (SA-1, SuperFX, DSP-n…) |
 | **Save states / rewind** | ❌ | Designed in [docs/architecture.md](docs/architecture.md), not yet implemented |
@@ -37,7 +37,7 @@ Legend: ✅ implemented · ⚠️ partial · ❌ not yet
 
 ## What runs today
 
-PupSNES boots and runs **Mode 0 / Mode 1** games, rendering backgrounds, sprites, color math, and HDMA raster effects. The following titles boot into gameplay and are playable — they have **not** been tested through to completion:
+PupSNES renders **Mode 0 / Mode 1** backgrounds, sprites, color math, and HDMA raster effects. The following titles previously reached playable gameplay using the APU handshake stub; they were **not** tested through to completion. With real SPC700 execution, unimplemented APU hardware now stops execution with a diagnostic:
 
 - **Super Castlevania IV**
 - **The Legend of Zelda: A Link to the Past**
@@ -78,9 +78,13 @@ A finer-grained checklist for the curious.
 - ✅ HDMA: per-scanline transfers, direct + indirect, line counter & repeat flag, table reload
 - ✅ Cycle-accurate: 8 master cycles/byte with correct CPU stall; `MDMAEN`/`HDMAEN`
 
-**Audio — APU** · not implemented
-- ❌ SPC700 CPU core · ❌ S-DSP (BRR decode, ADSR, echo/FIR, voices) · ❌ audio output
-- ⚠️ IPL handshake stub only: fakes the `$2140`–`$2143` boot signature so games proceed past the APU check — **no sound**, and games that drive timing from the APU may desync
+**Audio — APU** · initial bring-up
+- ✅ Real IPL boot and upload through directional `$2140`–`$2143` ports, 64 KiB ARAM, deterministic nominal NTSC clock conversion
+- ✅ Complete SPC700 data-transfer family: MOV/MOVW/MOV1 and PUSH/POP, including indexed and indirect addressing
+- ✅ SPC700 comparisons and arithmetic: byte/word operations, multiplication, division, and decimal adjustment
+- ✅ Complete SPC700 opcode coverage, including logical/bit operations, shifts, branches, calls/returns, BRK/RETI, and SLEEP/STOP
+- ❌ Timers · ❌ S-DSP (BRR decode, ADSR, echo/FIR, voices) · ❌ audio output
+- See [APU bring-up](docs/apu.md) for tested behavior and timing limitations.
 
 **Input**
 - ✅ Player 1 standard controller — auto-read (`$4218`/`$4219`) and serial (`$4016`)
@@ -125,6 +129,7 @@ PupSNES is built around a signal-horizon scheduler, with each chip an independen
 - [docs/architecture.md](docs/architecture.md) — overall design and device model *(describes the target design; items marked "planned" aren't built yet)*
 - [docs/scheduler.md](docs/scheduler.md) — signal-event scheduling and ordering
 - [docs/systembus.md](docs/systembus.md) — system bus, page tables, same-clock vs. cross-clock MMIO
+- [docs/apu.md](docs/apu.md) — SPC700 bring-up, clock conversion, tests, and remaining limits
 - [docs/cpu-opcodes.md](docs/cpu-opcodes.md) — the 5A22 opcode authoring model
 - [docs/screenshots.md](docs/screenshots.md) — rendering frames from a ROM headlessly
 - [docs/test-roms.md](docs/test-roms.md) — the in-repo test-ROM build pipeline
@@ -133,7 +138,7 @@ PupSNES is built around a signal-horizon scheduler, with each chip an independen
 
 In rough priority order:
 
-1. **Audio** — SPC700 core + S-DSP (BRR, ADSR, echo), cross-clock CPU↔APU integration, sample output.
+1. **Audio** — APU timers and S-DSP (BRR, ADSR, echo), then sample output and further timing accuracy.
 2. **PPU completeness** — Mode 7, remaining background modes, windows, mosaic, hi-res / interlace.
 3. **Save states & rewind** — the contiguous State Block, snapshot/restore, and a rewind ring buffer.
 4. **More cartridges** — additional mappers and enhancement chips (SA-1, SuperFX, DSP-n…).
