@@ -29,11 +29,13 @@ struct FrameBufferView;
 class SNES {
  public:
   using FrameReadyCallback = std::function<void(const FrameBufferView&)>;
+  using AudioSampleCallback = std::function<void(int16_t left, int16_t right)>;
 
  private:
   TimeMasterT time_now_ = 0;
   std::vector<Device*> devices_;  // Non-owning. Devices register themselves; caller owns them.
   FrameReadyCallback frame_ready_callback_;
+  AudioSampleCallback audio_sample_callback_;
 
  public:
   std::unique_ptr<CPU> cpu;
@@ -117,6 +119,14 @@ class SNES {
     }
   }
 
+  // Native 32 kHz signed stereo, delivered synchronously on the emulation
+  // thread. The frontend owns buffering/resampling; it must detach its callback
+  // before destroying the output device. Reset preserves this host connection.
+  void SetAudioSampleCallback(AudioSampleCallback callback) { audio_sample_callback_ = std::move(callback); }
+  void FireAudioSample(int16_t left, int16_t right) const {
+    if (audio_sample_callback_) audio_sample_callback_(left, right);
+  }
+
   // Optional structured-event recorder (see pupsnes/core/emu_event.h).
   // Devices emit through this pointer via events::Emit, which tolerates
   // null (no recorder attached). Non-owning; the sink must outlive emission.
@@ -138,8 +148,8 @@ class SNES {
   // S-DSP backend selection. The "pending" value is what the debugger UI /
   // config has chosen; the "live" value is what the active APU is running.
   // Reset() copies pending into live so a startup-only switch actually takes
-  // effect on the next reset cycle. Both default to kSimple (the cheaper
-  // backend lands first and is the right dev-time default).
+  // effect on the next reset cycle. Gaussian interpolation is the default;
+  // the simple mode uses linear interpolation with the same DSP clock.
   [[nodiscard]] SdspMode GetSdspModePending() const { return sdsp_mode_pending_; }
   [[nodiscard]] SdspMode GetSdspModeLive() const { return sdsp_mode_live_; }
   void SetSdspModePending(SdspMode mode) { sdsp_mode_pending_ = mode; }
@@ -147,8 +157,8 @@ class SNES {
  private:
   CartridgeRegistry registry_;
   EmuEventSink* emu_event_sink_ = nullptr;
-  SdspMode sdsp_mode_pending_ = SdspMode::kSimple;
-  SdspMode sdsp_mode_live_ = SdspMode::kSimple;
+  SdspMode sdsp_mode_pending_ = SdspMode::kAccurate;
+  SdspMode sdsp_mode_live_ = SdspMode::kAccurate;
   bool destroying_ = false;
 };
 }  // namespace pupsnes

@@ -103,8 +103,8 @@ pupsnes::BuildResult pupsnes::SNES::LoadRom(std::span<const uint8_t> rom_data) {
 }
 
 void pupsnes::SNES::Reset() {
-  // Track the requested S-DSP selection for the UI. DSP execution is still
-  // deferred; the APU currently faults explicitly on DSP data access.
+  // Construct the requested DSP backend on reset; pending UI changes do not
+  // replace an active backend or discard its register state mid-run.
   sdsp_mode_live_ = sdsp_mode_pending_;
   time_now_ = 0;
   scheduler->Reset();
@@ -115,7 +115,7 @@ void pupsnes::SNES::Reset() {
   }
   cpu_mmio->Reset();
   dma->Reset();
-  apu->Reset();
+  apu->Reset(sdsp_mode_live_);
   joypad->Reset();
   // Reset the PPU before the CPU: the CPU's reset vector fetch may pass
   // through page $21 (cartridge DBs), and the PPU needs its shadow / decoded

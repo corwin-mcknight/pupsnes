@@ -1,6 +1,6 @@
-# APU bring-up
+# APU and sound synthesis
 
-PupSNES now implements **all 256 SPC700 opcodes**. The processor runs the real 64-byte IPL program, receives bytes into its own 64 KiB RAM, and executes uploaded programs, including arithmetic, logical operations, branches, subroutines, and software interrupts. Timers and DSP synthesis are still missing, so there is no audio output yet. Complete opcode coverage does not mean complete S-SMP hardware or timing accuracy.
+PupSNES implements **all 256 SPC700 opcodes**, the three APU timers, and S-DSP synthesis. The processor runs the real 64-byte IPL program, receives bytes into its own 64 KiB RAM, and executes uploaded sound programs. The DSP produces a native **32 kHz, 16-bit stereo stream**, which can play through either frontend or be captured to WAV without an audio device. See [Audio](audio.md) for controls and commands. Complete instruction and synthesis coverage does not mean complete S-SMP hardware or timing accuracy.
 
 ## Data-transfer coverage
 
@@ -48,13 +48,33 @@ Both CPU reads and writes of `$2140`–`$2143` (mirrored through `$217F` in bank
 
 ## Memory and hardware boundary
 
-The IPL overlays reads at `$FFC0`–`$FFFF`; writes always reach the RAM underneath. CONTROL bit 7 switches the overlay, and bits 4/5 clear the corresponding pairs of CPU-to-SPC input latches on each write. These clears leave the output latches intact. MMIO writes also update underlying RAM. `$F8`/`$F9` provide auxiliary storage, and write-only registers read as zero.
+The IPL overlays reads at `$FFC0`–`$FFFF`; writes always reach the RAM underneath. CONTROL bit 7 switches the overlay, and bits 4/5 clear the corresponding pairs of CPU-to-SPC input latches on each write. These clears leave the output latches intact. MMIO writes also update underlying RAM. `$F8`/`$F9` have separate auxiliary latches: DSP echo can overwrite the RAM beneath them without changing their SPC-visible values. Write-only registers read as zero.
 
 Reset uses a **deterministic cold-start policy**: zeroed ARAM and port latches, enabled IPL, cleared clock phase, and a fresh CPU at `$FFC0`. Physical power-on RAM/register contents are not promised. `Spc700::Reset(State)` initializes an instruction boundary for tests; it is not a save-state API and cannot restore an instruction in progress.
 
-Every opcode has an implementation. Timer enabling, DSP data access, and non-default TEST modes still fault explicitly. The hardware fault persists until APU reset and is reported to the emulator, debugger, or headless caller. Disabled timer outputs read zero; writing a timer target alone does not enable it. Both existing S-DSP backend classes remain unused scaffolding.
+Non-default TEST modes still fault explicitly. The hardware fault persists until APU reset and is reported to the emulator, debugger, or headless caller. The normal `$0A` TEST configuration is supported; TEST speed controls, RAM restrictions, and timer gating remain accuracy work.
 
-The former stub's commercial-game boot behavior is therefore **not a compatibility guarantee for the current APU**. Timers and DSP behavior are the next work before voices, mixing, and host playback.
+## Timers and DSP registers
+
+All three timers run from the SPC clock. Timers 0 and 1 have a 128-cycle prescaler; timer 2 has a 16-cycle prescaler. These prescalers continue while their timer is disabled. CONTROL bits 0–2 enable each timer, and a transition from disabled to enabled clears its 8-bit counter and 4-bit output without restarting the prescaler. Rewriting an already-set enable bit preserves the counter and output.
+
+Targets at `$FA`–`$FC` compare against the counter after it increments. A match clears the counter and increments the output modulo 16; target zero therefore means 256 ticks. Changing a target preserves the running counter, including the long wraparound wait when the new target is below it. Reading `$FD`–`$FF` returns and clears the corresponding output. Writes have no timer-output effect, although an instruction's dummy read can clear the output before its write. Targets remain write-only and read zero.
+
+`$F2` retains the full DSP address byte. `$F3` reads one of 128 DSP registers using the lower seven address bits; addresses `$80`–`$FF` are read-only mirrors, so writes through them leave the DSP unchanged. Ordinary register writes preserve all eight bits for readback, including bits unused by synthesis. Writing any value to ENDX (`$7C`) clears it. Cold reset zeroes the register bank and sets FLG (`$6C`) to `$E0`; this is a deterministic seed, not a claim about every physical power-on register.
+
+The APU owns the selected `SimpleSdsp` or `AccurateSdsp` backend and advances it **one SPC clock at a time**. Register updates and ARAM accesses happen at their DSP pipeline phases. The internal DAC result is produced at phase 27 and delivered through `SNES::SetAudioSampleCallback` at the end of each 32-clock period. This gives a regular native 32 kHz stream without postponing the hardware effects until a sample boundary.
+
+Timers and DSP advance before the SPC bus access at the same whole-cycle edge and continue during SLEEP and STOP. A halted main CPU also leaves sound running while machine time advances. Reset clears the hardware phases and counters but preserves the frontend's sample callback. Pending sound-interpolation selection takes effect at the next SNES reset.
+
+## Synthesis and playback
+
+Both backends use Shay Green's **blargg snes_spc 0.9.0** S-DSP core, pinned to revision `ec8ee2bbe30451614c1d02a83f7af1c97d497d45`. It supplies eight voices, all BRR filters and loop/end handling, ADSR and GAIN envelopes, key-on/key-off sequencing, noise, pitch modulation, signed stereo mixing, and echo with its FIR filter and ARAM writes. ENVX, OUTX, and ENDX now evolve with voice execution rather than remaining a static register bank. See the [vendored source notes](../src/third_party/snes_spc/README.md) for provenance, licensing, and local adaptations.
+
+**Gaussian (SNES)** is the default and maps to `AccurateSdsp`. **Linear** maps to `SimpleSdsp`; it changes sample interpolation inside the same DSP pipeline. Both modes retain the voices, envelopes, effects, and clock sequencing. They need not produce identical PCM, OUTX, pitch-modulated voices, or echo RAM because those values depend on the interpolated samples. The mode name describes this choice, not a guarantee of complete console accuracy.
+
+The emulator and debugger send samples to a bounded queue and a miniaudio playback device. The host callback consumes that queue, applies user volume/mute, and linearly resamples to the device's native rate; it never advances the emulated machine. Queue underflow produces silence, and overflow drops new frames rather than replacing unread samples. Pause, reset, ROM load, debugger stepping, and speed changes discard queued sound as needed. Playback is enabled only during continuous execution at **100% speed**. WAV capture receives the native stream before these host controls and resampling.
+
+Remaining limits include whole-cycle S-SMP port sampling, physical port collision behavior, non-default TEST modes, timer target-write glitches, oscillator variation, and PAL timing. The DSP integration also does not model the console's analog output stage or the upstream mute-toggle transient. Sound-driver compatibility needs continued game and diagnostic testing; the former handshake stub's gameplay results do not establish that every driver now behaves correctly.
 
 ## Verification
 
@@ -66,20 +86,30 @@ The former stub's commercial-game boot behavior is therefore **not a compatibili
 
 `testroms/apu_control/apu_control.s` uploads 1,024 bytes and exercises all sixteen TCALL vectors, nested calls, PCALL, BRK/RETI, conditional and bit branches, loop instructions, logical operations, and shifts. It records sixteen independently checked result bytes and returns `$92`; changing its final XOR operand produces `$93` and the CPU's failure verdict. Both SLEEP and STOP endings run across large, irregular, and single-cycle master slices.
 
+`testroms/apu_hardware/apu_hardware.s` uploads a 512-byte program and records an 18-byte hardware signature. It exercises DSP readback, read-only upper mirrors, ENDX clearing, all three timer targets and outputs, and read-clear/ignored-write behavior. The CPU expects a computed `$38` reply. Disabling timer 0 in the uploaded bytes must take a bounded timeout path and produce an explicit failure verdict. Its tests compare the full DSP register bank, every timer field, CPU/SPC state, ARAM, ports, and clock phases across large, irregular, and single-master-cycle slices, plus both DSP backends.
+
+`testroms/apu_audio/apu_audio.s` uploads a 512-byte program that writes a BRR sample and directory into ARAM, sets voice registers, and keys on a looping **500 Hz tone** with different left/right volumes. Both CPUs then STOP while the DSP continues playing. Tests check nonzero periodic PCM, channel differences, ENVX/ENDX evolution, and sample/state equality across execution slices in each interpolation mode. Removing the uploaded KON value leaves the CPU's normal acknowledgment intact but must produce silence, so a synthetic handshake cannot satisfy the audio check.
+
 The integration tests compare uploaded bytes against the assembled ROM and compare final CPU registers, SPC registers, ARAM, ports, and clocks across large, irregular, and one-master-cycle slices. Focused tests check all newly added opcodes, flags, direct-page and absolute wrapping, individual bus-access cycles, dummy reads, bit preservation, and stack behavior. Existing APU tests cover word transfers, IPL overlay, directional ports, control clears, reset, and unsupported-operation diagnostics.
 
 Arithmetic unit tests check every addressing form, both direct pages, operand latching, and the cycle on which results and flags become visible. Aggregate sweeps compare 524,288 byte addition/subtraction combinations, 131,072 comparisons, and 40,000 two-digit decimal calculations against independent arithmetic expectations. Word, multiplication, division, and invalid-decimal boundary cases have explicit expected results and bus traces.
 
 An independent 256-entry instruction-length/cycle table checks that every opcode reaches its expected first boundary and fetches the next instruction, or enters its appropriate halt state. Focused logic tests cover 393,216 byte-logical combinations, 4,096 shift/rotate combinations, and 512 nibble-exchange cases, alongside explicit bit-operation and flag traces. Control-flow tests cover taken and untaken paths, all bit and TCALL indices, vector and stack ordering, operand latching, and signed address wrapping. All 124 opcodes supported before the final expansion retain their cycle counts.
 
-**Known hardware limitation (September 9, 2026):** Super Mario World now executes the formerly unsupported `CALL` at `$0530`, enters `$0697`, and pushes the correct `$0533` return address. It then stops on the unimplemented DSP data port `$00F3`, during the dummy read of `MOV !$00F3,A` at `$069A`; the diagnostic reports the post-operand PC `$069D`. The optional commercial-ROM test `SMW title-screen color-math fills the sky region` still fails when that ROM is present, and its graphics assertions remain unchanged. DSP register handling and timers are the next hardware work before commercial gameplay can be revalidated.
+Focused hardware tests cover exact timer prescaler edges, enabling/disabling and repeated CONTROL writes, zero targets, 4-bit overflow, target changes below the current count, independent read clearing, and timer-output dummy reads. DSP tests cover all 128 register addresses, reset state, ENDX, upper address mirrors, backend selection, sample cadence during SLEEP/STOP, and slicing determinism.
 
-**Verification snapshot (September 9, 2026):** all 99 APU cases pass (91,628 assertions). The final opcode expansion adds 12 logic cases, 17 control/decode cases, three uploaded-program cases, and a CPU-port halt test. `ci-verify.sh` passes its build and all 602 unit cases (109,850 assertions); repository-wide lint still reports its non-blocking backlog, with no diagnostics in files changed for this expansion. The full suite passes 794 of 795 cases (131,594 of 131,595 assertions), with only the DSP-access failure above.
+Synthesis tests compare Gaussian-mode PCM, ARAM, and DSP-register fingerprints against a separate build of the unmodified pinned blargg core. Fixtures cover BRR filters and ranges, envelopes, noise, pitch modulation, clipping, key events, and echo. These comparisons validate the wrapper against its reference engine; they are not independent measurements of physical hardware. Separate tests check cycle-visible register behavior, wrapping sample-directory addresses, and the linear mode.
+
+Host-output tests exercise stereo resampling, bounded buffering, gain/mute, underflow, overflow, flushes, callback slicing, and producer/consumer concurrency. Config tests reject malformed or nonfinite settings. Those tests run without opening a sound device; native playback is checked separately.
+
+The September 10, 2026 verification passed **853 test cases and 315,490 assertions** across the full suite. `ci-verify.sh` passed its build and 654 unit cases; repository-wide lint still reports the existing backlog, with no diagnostics in changed files. Separate sanitizer runs covered the DSP wrapper and concurrent audio queue. A 24-second Core Audio check at 48 kHz had no dropped frames or underruns after startup/resume priming, and pause/resume discarded queued audio correctly. Super Mario World produced stereo PCM and was confirmed audible by manual listening; the emulator controls and saved audio preferences were also exercised. These are smoke checks, not game-completion or broad compatibility claims.
 
 ```sh
 cmake --preset ci
 cmake --build --preset ci
 ./build/ci/pupsnes_tests '[apu]'
+./build/ci/pupsnes_tests '[audio_output]'
+./build/ci/pupsnes_tests '[audio][config]'
 ./ci-verify.sh
 ./build/ci/pupsnes_tests
 ```
@@ -87,3 +117,7 @@ cmake --build --preset ci
 ## References
 
 The IPL bytes and upload protocol are documented in [Anomie's SPC700 reference](https://github.com/gilligan/snesdev/blob/master/docs/spc700.txt). Instruction cycle ordering was checked against the [ares SPC700 implementation](https://github.com/ares-emulator/ares/blob/master/ares/component/processor/spc700/instructions.cpp), with arithmetic flags compared to its [ALU algorithms](https://github.com/ares-emulator/ares/blob/master/ares/component/processor/spc700/algorithms.cpp). The [ares S-SMP memory implementation](https://github.com/ares-emulator/ares/blob/master/ares/sfc/smp/memory.cpp) and [I/O implementation](https://github.com/ares-emulator/ares/blob/master/ares/sfc/smp/io.cpp) provide comparisons for memory overlays, directional latches, and control behavior.
+
+Timer division and read-clear behavior are described in [Anomie's SPC700 reference](https://github.com/gilligan/snesdev/blob/master/docs/spc700.txt) and the [ares timer implementation](https://github.com/ares-emulator/ares/blob/master/ares/sfc/smp/timing.cpp). DSP register readback and ENDX write behavior were checked against [ares DSP memory handling](https://github.com/ares-emulator/ares/blob/master/ares/sfc/dsp/memory.cpp); the deterministic FLG reset seed follows [blargg's SPC_DSP as shipped by bsnes](https://github.com/bsnes-emu/bsnes/blob/master/bsnes/sfc/dsp/SPC_DSP.cpp).
+
+The synthesis engine and local changes are documented in [snes_spc source notes](../src/third_party/snes_spc/README.md). Host playback uses [miniaudio 0.11.25](../third_party/miniaudio/README.md), with its low-level playback API and no capture device.

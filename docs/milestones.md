@@ -1,8 +1,8 @@
 # Milestones
 
-Updated September 9, 2026.
+Updated September 10, 2026.
 
-PupSNES has working backgrounds, sprites, controller input, and battery-backed saves. **Sound is the next major milestone**, followed by the missing graphics features, save states, and support for more cartridges.
+PupSNES has working backgrounds, sprites, controller input, battery-backed saves, and **stereo sound synthesis and playback**. The next major feature work is graphics completeness, followed by save states and support for more cartridges.
 
 This roadmap describes where the project stands and what each milestone will make possible. The milestones overlap: work on accuracy and compatibility continues throughout development.
 
@@ -10,15 +10,15 @@ This roadmap describes where the project stands and what each milestone will mak
 
 The CPU implements all 256 instructions, and the core supports cartridge loading, memory, interrupts, and DMA/HDMA transfers. Mode 0 and Mode 1 graphics work, along with sprites and color blending. LoROM, HiROM, and ExHiROM cartridges are supported, and the debugger provides live inspection, execution traces, and screenshots.
 
-Super Castlevania IV and The Legend of Zelda: A Link to the Past reached playable gameplay with the former APU handshake stub, though neither was tested through to completion. The stub has now been replaced by a real SPC700 core with all instructions implemented; commercial sound programs can still stop on missing APU hardware. Games are still silent, several graphics effects are missing, and controller support is limited to player one.
+Super Castlevania IV and The Legend of Zelda: A Link to the Past reached playable gameplay with the former APU handshake stub, though neither was tested through to completion. The stub has been replaced by a complete SPC700 instruction set, timers, and the S-DSP voice and effects pipeline. Both frontends can play the resulting audio, and a command-line tool can capture it to WAV. Commercial-game sound still needs broader validation; several graphics effects are missing, and controller support is limited to player one.
 
 | Milestone | Status |
 | --- | --- |
 | 0. Execution core | Established |
 | 1. Booting ROMs | Complete |
 | 2. CPU execution | Baseline complete; accuracy work continues |
-| 3. Graphics | Partially complete |
-| 4. Audio | **Next priority** |
+| 3. Graphics | **Next major feature priority** |
+| 4. Audio | Synthesis and playback implemented; compatibility work continues |
 | 5. Controllers and cartridges | Partially complete |
 | 6. Save states and rewind | Planned |
 | 7. Accuracy and compatibility | Ongoing |
@@ -53,15 +53,11 @@ Other remaining features include windows and masking, mosaic effects, background
 
 ## Milestone 4: Audio
 
-**In progress.** The SPC700 now implements all 256 instructions, executes the real IPL boot program, and receives and runs uploaded sound programs. Test programs exercise calculations, branches, subroutines, and communication across different execution slice sizes. Timers and sound synthesis are still missing; accesses to unimplemented hardware stop with a diagnostic. See [APU bring-up](apu.md).
+**Synthesis and playback implemented.** Games can upload and run sound programs through the real IPL boot path. The sound CPU has all 256 instructions and three working timers. The S-DSP produces eight voices with sample decoding, envelopes, mixing, noise, pitch modulation, and echo.
 
-Real sound support has three main parts:
+The emulator and debugger provide volume, mute, output-device, and latency controls. Gaussian interpolation follows the SNES sound filter; optional linear interpolation uses the same voices and effects. Playback runs at normal speed, and the command-line audio tool records native stereo WAV files without a sound device. An uploaded test ROM produces a repeating 500 Hz tone through this complete path. See [Audio](audio.md) for how to use it.
 
-1. **Run the sound CPU.** Implement the SPC700, its memory and timers, and communication with the main CPU so games can upload and execute their sound programs.
-2. **Generate sound.** Implement the S-DSP’s voices, sample decoding, envelopes, mixing, and effects such as echo.
-3. **Play it back.** Connect the generated audio to the frontend with stable playback that stays synchronized with the game.
-
-**The goal:** games initialize the sound hardware normally and produce music and sound effects, with repeatable output and reliable timing. Boot, upload, and all SPC700 instructions are implemented. The next steps are timers and DSP synthesis.
+**The remaining work:** establish music and sound-effect compatibility across more games, refine sound-hardware timing, and improve playback where real devices reveal problems. Fast-forward and slow-motion playback, PAL timing, and analog output behavior are still outside the current implementation. The technical boundaries are documented in [APU and sound synthesis](apu.md).
 
 ## Milestone 5: Controllers and cartridges
 
@@ -91,6 +87,6 @@ Progress here means more diagnostic tests passing, fewer visual and audio errors
 
 ## What comes next
 
-The current order is **audio, graphics completeness, save states and rewind, then broader cartridge support**. Controller improvements and fixes for known game problems can progress alongside those larger efforts.
+The current order is **graphics completeness, save states and rewind, then broader cartridge support**. Controller improvements, audio compatibility, and fixes for known game problems can progress alongside those larger efforts.
 
-Real sound-program upload and all SPC700 instructions are now implemented. The immediate focus is timers and DSP behavior so commercial sound programs can initialize the hardware, followed by hearing the first synthesized sound.
+**Mode 7 rendering** is the clearest next feature: it would make rotating and scaling backgrounds visible in more games. Audio now has an end-to-end path from uploaded sound programs to speakers and WAV files; further work there should build on concrete music, effect, and timing problems found in games.

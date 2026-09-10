@@ -148,7 +148,7 @@ stateless bus responders.
 Current overrides:
 - **PPU** (`SpPpu`): advances dot emission and the drawn-mask bitmap to `target`.
   Schedules `kFrameEnd` at each frame wrap; the handler reschedules the next.
-- **APU** (`Apu`): advances its SPC700 one cycle at a time using an integer rational conversion with retained fractional phase. Port accesses also catch it up before accessing their latches. It schedules no sample deadline until DSP synthesis is implemented. See [APU bring-up](apu.md).
+- **APU** (`Apu`): advances its SPC700 one cycle at a time using an integer rational conversion with retained fractional phase. Port accesses also catch it up before accessing their latches. Timers and the DSP pipeline advance at each SPC edge before its bus access. The DSP's register and ARAM effects retain their individual phases; one native stereo sample is delivered through the SNES callback after every 32 SPC cycles. This internal cadence needs no scheduler sample event. The host audio callback consumes a queue without advancing emulated time. See [APU and sound synthesis](apu.md).
 - Stateless devices: default no-op.
 
 `CpuMmio` remains a `Device` subclass for bus-page dispatch; it has no
@@ -171,7 +171,8 @@ time-stateful role and keeps the default no-op `CatchUpTo`.
 ## Out of scope (v1)
 
 - **Audio sample deadlines and transfer event kinds**: `SignalKind` placeholders (`kApuSampleDeadline`,
-  `kDmaBurstComplete`, `kHdmaFire`) exist; handlers are not wired.
+  `kDmaBurstComplete`, `kHdmaFire`) exist; handlers are not wired. Current audio synthesis and
+  delivery run inside APU catch-up and do not depend on the unused sample-deadline event.
 - **Coprocessor speculation (GSU, SA-1, DSP-n)**: each will implement
   `CatchUpTo` by running its own program on a worker thread and surfacing
   signals via `ScheduleSignal`. No scheduler surgery required.

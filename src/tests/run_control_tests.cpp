@@ -194,8 +194,9 @@ TEST_CASE("RunControl pauses and logs SPC700 faults raised during MachineSync", 
   Spc700::State state{};
   state.pc = 0x0200;
   fixture.snes.GetApu().GetCpu().Reset(state);
-  fixture.snes.GetApu().Write(0x0200, 0xE4);  // MOV A,$F3: unsupported DSP data access.
-  fixture.snes.GetApu().Write(0x0201, 0xF3);
+  fixture.snes.GetApu().Write(0x0200, 0x8F);  // MOV $F0,#$00: unsupported TEST mode.
+  fixture.snes.GetApu().Write(0x0201, 0x00);
+  fixture.snes.GetApu().Write(0x0202, 0xF0);
 
   run_control.RequestRunUntilBreak();
   REQUIRE_NOTHROW(run_control.TickFrame(std::chrono::seconds(1), 1000));
@@ -207,8 +208,8 @@ TEST_CASE("RunControl pauses and logs SPC700 faults raised during MachineSync", 
   const auto errors = fixture.errors.Snapshot();
   REQUIRE(errors.size() == 1);
   REQUIRE(errors.front().message.find("SPC700") != std::string::npos);
-  REQUIRE(errors.front().message.find("register $00F3") != std::string::npos);
-  REQUIRE(errors.front().message.find("0202") != std::string::npos);
+  REQUIRE(errors.front().message.find("register $00F0") != std::string::npos);
+  REQUIRE(errors.front().message.find("0203") != std::string::npos);
 }
 
 TEST_CASE("RunControl tight BRA loop advances past kFrameEnd boundary", "[unit][debugger]") {

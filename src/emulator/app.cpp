@@ -24,13 +24,13 @@
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
-#include "pupsnes/hw/5a22/cpu.h"
-#include "pupsnes/hw/rom/cartridge.h"
-#include "pupsnes/hw/input/joypad.h"
 #include "pupsnes/core/scheduler.h"
-#include "pupsnes/hw/sppu/ppu.h"
-#include "pupsnes/hw/sppu/pixel_format.h"
+#include "pupsnes/hw/5a22/cpu.h"
+#include "pupsnes/hw/input/joypad.h"
+#include "pupsnes/hw/rom/cartridge.h"
 #include "pupsnes/hw/rom/rom_format.h"
+#include "pupsnes/hw/sppu/pixel_format.h"
+#include "pupsnes/hw/sppu/ppu.h"
 
 namespace pupsnes::emulator {
 
@@ -89,7 +89,11 @@ void ApplyKeyboardToJoypad(GLFWwindow* window, Joypad& joypad) {
 EmulatorApp* EmulatorApp::current_app_ = nullptr;
 
 EmulatorApp::EmulatorApp() = default;
-EmulatorApp::~EmulatorApp() { ShutdownWindow(); }
+EmulatorApp::~EmulatorApp() {
+  snes_.SetAudioSampleCallback({});
+  audio_output_.Shutdown();
+  ShutdownWindow();
+}
 
 int EmulatorApp::Run(const std::optional<std::string>& initial_rom_path) {
   if (!InitWindow()) {
@@ -98,6 +102,7 @@ int EmulatorApp::Run(const std::optional<std::string>& initial_rom_path) {
 
   InitFileShortcuts();
   LoadConfig();
+  snes_.SetAudioSampleCallback([this](int16_t left, int16_t right) { audio_output_.PushSample(left, right); });
 
   if (initial_rom_path.has_value()) {
     (void)LoadRomFromPath(*initial_rom_path);
@@ -111,6 +116,9 @@ int EmulatorApp::Run(const std::optional<std::string>& initial_rom_path) {
     Render();
   }
 
+  StopAudio();
+  snes_.SetAudioSampleCallback({});
+  audio_output_.Shutdown();
   FlushSramToDisk();
   SaveConfig();
   return fatal_error_.has_value() ? 1 : 0;
@@ -118,6 +126,7 @@ int EmulatorApp::Run(const std::optional<std::string>& initial_rom_path) {
 
 bool EmulatorApp::LoadRomFromPath(const std::string& path) {
   namespace fs = std::filesystem;
+  StopAudio();
 
   std::ifstream stream(path, std::ios::binary);
   if (!stream.good()) {
@@ -139,6 +148,7 @@ bool EmulatorApp::LoadRomFromPath(const std::string& path) {
       return false;
     }
     snes_.Reset();
+    fatal_error_.reset();
     loaded_rom_ = true;
     loaded_rom_path_ = path;
     loaded_rom_save_path_ = DeriveSavePath(path);
@@ -198,7 +208,9 @@ void EmulatorApp::ResetMachine() {
   if (!loaded_rom_) {
     return;
   }
+  StopAudio();
   snes_.Reset();
+  fatal_error_.reset();
   last_tick_time_ = std::chrono::steady_clock::now();
 }
 
@@ -216,7 +228,8 @@ void EmulatorApp::PollControllerInput() {
 }
 
 void EmulatorApp::TickEmulation() {
-  if (!loaded_rom_) {
+  UpdateAudioPlayback();
+  if (!loaded_rom_ || fatal_error_.has_value()) {
     last_tick_time_ = std::chrono::steady_clock::now();
     return;
   }
@@ -274,11 +287,24 @@ void EmulatorApp::TickEmulation() {
   } catch (const std::exception& ex) {
     fatal_error_ = ex.what();
   }
+  UpdateAudioPlayback();
 
   if (now - last_sram_flush_time_ >= kSramFlushInterval) {
     FlushSramToDisk();
     last_sram_flush_time_ = now;
   }
+}
+
+void EmulatorApp::UpdateAudioPlayback() {
+  // A halted main CPU can leave the APU and DSP running normally.
+  const bool running =
+      loaded_rom_ && !ui_state_.paused && !fatal_error_.has_value() && !snes_.GetCpu().GetFault().has_value();
+  audio_output_.SetPlaybackActive(frontend::CanPlayAudio(running, ui_state_.speed_multiplier));
+}
+
+void EmulatorApp::StopAudio() {
+  audio_output_.SetPlaybackActive(false);
+  audio_output_.Flush();
 }
 
 void EmulatorApp::UploadFrontBufferToTexture() {
@@ -442,7 +468,7 @@ void EmulatorApp::RenderMenuBar() {
       ImGui::Separator();
       float custom_pct = ui_state_.speed_multiplier * 100.0F;
       ImGui::SetNextItemWidth(120.0F);
-      if (ImGui::InputFloat("Custom %", &custom_pct, 10.0F, 100.0F, "%.1f")) {
+      if (ImGui::InputFloat("Custom %", &custom_pct, 10.0F, 100.0F, "%.1f") && std::isfinite(custom_pct)) {
         ui_state_.speed_multiplier = std::clamp(custom_pct / 100.0F, 0.001F, 10.0F);
         last_tick_time_ = std::chrono::steady_clock::now();
         SaveConfig();
@@ -466,6 +492,8 @@ void EmulatorApp::RenderMenuBar() {
     }
     ImGui::EndMenu();
   }
+
+  if (frontend::RenderAudioMenu(audio_output_, audio_panel_)) SaveConfig();
 
   if (ImGui::BeginMenu("Help")) {
     ImGui::MenuItem("About PupSNES", nullptr, &ui_state_.show_about);
@@ -650,6 +678,11 @@ void EmulatorApp::Render() {
   ImGui::NewFrame();
 
   RenderMenuBar();
+  const bool audio_running =
+      loaded_rom_ && !ui_state_.paused && !fatal_error_.has_value() && !snes_.GetCpu().GetFault().has_value();
+  if (frontend::RenderAudioPanel(audio_output_, snes_, audio_panel_, audio_running, ui_state_.speed_multiplier)) {
+    SaveConfig();
+  }
   RenderBackgroundFrame();
   RenderLoadRomDialog();
 
@@ -679,6 +712,7 @@ void EmulatorApp::Render() {
   }
 
   RenderFatalModal();
+  UpdateAudioPlayback();
 
   ImGui::Render();
   int display_w = 0;
@@ -801,6 +835,10 @@ void EmulatorApp::InitFileShortcuts() {
 
 std::string EmulatorApp::GetConfigPath() {
   namespace fs = std::filesystem;
+  const char* config_dir = std::getenv("PUPSNES_CONFIG_DIR");
+  if (config_dir != nullptr && *config_dir != '\0') {
+    return (fs::path(config_dir) / ".pupsnes_emulator.ini").string();
+  }
   const char* home = std::getenv("HOME");
   if (home != nullptr && *home != '\0') {
     return (fs::path(home) / ".pupsnes_emulator.ini").string();
@@ -809,9 +847,11 @@ std::string EmulatorApp::GetConfigPath() {
 }
 
 void EmulatorApp::LoadConfig() {
+  frontend::AudioSettings audio_settings;
   const std::string path = GetConfigPath();
   std::ifstream stream(path);
   if (!stream.good()) {
+    (void)audio_output_.ApplySettings(audio_settings);
     return;
   }
   std::string line;
@@ -823,21 +863,24 @@ void EmulatorApp::LoadConfig() {
     const std::string key = line.substr(0, eq);
     const std::string value = line.substr(eq + 1);
 
+    if (frontend::ParseAudioSetting(audio_settings, key, value)) {
+      continue;
+    }
     if (key == "last_rom_path") {
       ui_state_.last_rom_path = value;
     } else if (key == "load_rom_dir") {
       ui_state_.load_rom_dir = value;
     } else if (key == "speed_multiplier") {
-      const float parsed = std::strtof(value.c_str(), nullptr);
-      if (parsed > 0.0F) {
-        ui_state_.speed_multiplier = std::clamp(parsed, 0.001F, 10.0F);
-      }
+      if (const auto parsed = frontend::ParseFiniteSetting(value, 0.001F, 10.0F)) ui_state_.speed_multiplier = *parsed;
+    } else if (key == "sdsp_mode") {
+      if (const auto parsed = frontend::ParseSoundQuality(value)) snes_.SetSdspModePending(*parsed);
     } else if (key == "maintain_aspect") {
       ui_state_.maintain_aspect = (value != "0");
     } else if (key == "integer_scale") {
       ui_state_.integer_scale = (value != "0");
     }
   }
+  (void)audio_output_.ApplySettings(audio_settings);
 }
 
 void EmulatorApp::SaveConfig() {
@@ -851,6 +894,8 @@ void EmulatorApp::SaveConfig() {
   stream << "speed_multiplier=" << ui_state_.speed_multiplier << "\n";
   stream << "maintain_aspect=" << (ui_state_.maintain_aspect ? 1 : 0) << "\n";
   stream << "integer_scale=" << (ui_state_.integer_scale ? 1 : 0) << "\n";
+  stream << "sdsp_mode=" << static_cast<int>(snes_.GetSdspModePending()) << "\n";
+  frontend::WriteAudioSettings(stream, audio_output_.GetSettings());
 }
 
 void EmulatorApp::GlfwErrorCallback(int /*code*/, const char* description) {

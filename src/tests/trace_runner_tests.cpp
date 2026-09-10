@@ -104,15 +104,16 @@ TEST_CASE("DriveMachineToMasterTime reports SPC700 faults during catch-up", "[un
   pupsnes::Spc700::State state;
   state.pc = 0x0200;
   snes.GetApu().GetCpu().Reset(state);
-  snes.GetApu().Write(0x0200, 0xE4);  // MOV A,$F3: unsupported DSP data access.
-  snes.GetApu().Write(0x0201, 0xF3);
+  snes.GetApu().Write(0x0200, 0x8F);  // MOV $F0,#$00: unsupported TEST mode.
+  snes.GetApu().Write(0x0201, 0x00);
+  snes.GetApu().Write(0x0202, 0xF0);
 
   const auto error = pupsnes::tools::DriveMachineToMasterTime(snes, 1000);
   REQUIRE(error.has_value());
   const auto message = error.value_or("");
   REQUIRE(message.find("Emulation exception: ") == 0);
   REQUIRE(message.find("SPC700") != std::string::npos);
-  REQUIRE(message.find("register $00F3") != std::string::npos);
-  REQUIRE(message.find("$0202") != std::string::npos);
+  REQUIRE(message.find("register $00F0") != std::string::npos);
+  REQUIRE(message.find("$0203") != std::string::npos);
   REQUIRE_FALSE(snes.GetCpu().GetFault().has_value());
 }

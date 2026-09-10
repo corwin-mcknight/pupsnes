@@ -169,7 +169,7 @@ TEST_CASE("APU reset clears execution, latches, faults and fractional clock stat
   auto& apu = snes.GetApu();
   apu.CatchUpTo(100000);
   apu.Write(0xFFC0, 0x42);
-  REQUIRE_THROWS_AS(apu.Write(0xF1, 1), std::runtime_error);
+  REQUIRE_THROWS_AS(apu.Write(0xF0, 0), std::runtime_error);
   REQUIRE(apu.GetFault().has_value());
   apu.Reset();
   REQUIRE_FALSE(apu.GetFault().has_value());
@@ -187,20 +187,18 @@ TEST_CASE("APU reset clears execution, latches, faults and fractional clock stat
 TEST_CASE("APU unsupported hardware stops with persistent diagnostics", "[unit][apu]") {
   SNES snes;
   auto& apu = snes.GetApu();
-  SECTION("instruction accesses DSP data") {
+  SECTION("instruction changes TEST mode") {
     Spc700::State state;
     state.pc = 0x0200;
-    apu.Write(0x0200, 0xE4);  // MOV A,$F3: the opcode exists; DSP data does not.
-    apu.Write(0x0201, 0xF3);
+    apu.Write(0x0200, 0x8F);  // MOV $F0,#$00: non-default TEST modes remain unsupported.
+    apu.Write(0x0201, 0x00);
+    apu.Write(0x0202, 0xF0);
     apu.GetCpu().Reset(state);
-    REQUIRE_THROWS_AS(apu.CatchUpTo(100), std::runtime_error);
+    REQUIRE_THROWS_AS(apu.CatchUpTo(200), std::runtime_error);
     REQUIRE_FALSE(apu.GetCpu().GetState().faulted);
-    REQUIRE(apu.GetCpu().GetState().pc == 0x0202);
-    REQUIRE(apu.GetTime() == 63);
+    REQUIRE(apu.GetCpu().GetState().pc == 0x0203);
+    REQUIRE(apu.GetTime() == 105);
   }
-  SECTION("DSP data") { REQUIRE_THROWS_AS(apu.Read(0xF3), std::runtime_error); }
-  SECTION("DSP write") { REQUIRE_THROWS_AS(apu.Write(0xF3, 0x7F), std::runtime_error); }
-  SECTION("timer enabling") { REQUIRE_THROWS_AS(apu.Write(0xF1, 0x81), std::runtime_error); }
   SECTION("TEST mode") { REQUIRE_THROWS_AS(apu.Write(0xF0, 0), std::runtime_error); }
   REQUIRE(apu.GetFault().has_value());
   REQUIRE_THROWS_AS(apu.CatchUpTo(1000), std::runtime_error);
@@ -226,5 +224,81 @@ TEST_CASE("CPU port writes do not wake a sleeping or stopped SPC700", "[unit][ap
     apu.Reset();
     REQUIRE_FALSE(apu.GetCpu().GetState().sleeping);
     REQUIRE_FALSE(apu.GetCpu().GetState().stopped);
+  }
+}
+
+TEST_CASE("APU DSP ports select registers and expose read-only upper mirrors", "[unit][apu][sdsp]") {
+  for (const auto mode : {pupsnes::SdspMode::kSimple, pupsnes::SdspMode::kAccurate}) {
+    CAPTURE(static_cast<unsigned>(mode));
+    SNES snes;
+    auto& apu = snes.GetApu();
+    apu.Reset(mode);
+    REQUIRE(apu.GetDsp().Mode() == mode);
+    apu.Write(0xF2, 0x6C);
+    REQUIRE(apu.Read(0xF3) == 0xE0);
+    for (uint16_t index = 0; index < 0x80; ++index) {
+      CAPTURE(index);
+      apu.Write(0xF2, static_cast<uint8_t>(index));
+      apu.Write(0xF3, 0xA5);
+      const uint8_t expected = index == 0x7C ? 0 : 0xA5;
+      REQUIRE(apu.Read(0xF3) == expected);
+      apu.Write(0xF2, static_cast<uint8_t>(index | 0x80));
+      REQUIRE(apu.Read(0xF2) == (index | 0x80));
+      REQUIRE(apu.Read(0xF3) == expected);
+      apu.Write(0xF3, 0x3C);
+      REQUIRE(apu.Read(0xF3) == expected);
+      REQUIRE(apu.GetDsp().ReadRegister(static_cast<uint8_t>(index)) == expected);
+      // MMIO writes reach underlying ARAM even when DSPADDR protects the DSP.
+      REQUIRE(apu.PeekRam(0xF3) == 0x3C);
+      REQUIRE(apu.PeekRam(0xF2) == (index | 0x80));
+    }
+    REQUIRE_FALSE(apu.GetFault().has_value());
+  }
+}
+
+TEST_CASE("SPC700 accesses DSP data on the instruction's actual bus cycle", "[unit][apu][sdsp]") {
+  SNES snes;
+  auto& apu = snes.GetApu();
+  // MOV $F3,#$5A; MOV A,$F3; STOP.
+  constexpr std::array<uint8_t, 6> kProgram = {0x8F, 0x5A, 0xF3, 0xE4, 0xF3, 0xFF};
+  for (std::size_t i = 0; i < kProgram.size(); ++i) apu.Write(static_cast<uint16_t>(0x0200 + i), kProgram[i]);
+  apu.Write(0xF2, 0x2C);
+  apu.GetCpu().Reset(Spc700::State{.pc = 0x0200});
+  apu.CatchUpTo(104);
+  REQUIRE(apu.Read(0xF3) == 0);
+  apu.CatchUpTo(105);  // Cycle 5: the store commits.
+  REQUIRE(apu.Read(0xF3) == 0x5A);
+  apu.Write(0xF2, 0xAC);
+  apu.CatchUpTo(167);
+  REQUIRE(apu.GetCpu().GetState().a == 0);
+  apu.CatchUpTo(168);  // Cycle 8: the load reads the mirrored DSP register.
+  REQUIRE(apu.GetCpu().GetState().a == 0x5A);
+  REQUIRE_FALSE(apu.GetFault().has_value());
+}
+
+TEST_CASE("SNES applies the pending DSP backend on reset", "[unit][apu][sdsp]") {
+  SNES snes;
+  auto& apu = snes.GetApu();
+  REQUIRE(snes.GetSdspModeLive() == pupsnes::SdspMode::kAccurate);
+  REQUIRE(apu.GetDsp().Mode() == pupsnes::SdspMode::kAccurate);
+  for (const auto next : {pupsnes::SdspMode::kSimple, pupsnes::SdspMode::kAccurate}) {
+    const auto previous = apu.GetDsp().Mode();
+    apu.Write(0xF2, 0x0C);
+    apu.Write(0xF3, 0x47);
+    snes.SetSdspModePending(next);
+    REQUIRE(snes.GetSdspModePending() == next);
+    REQUIRE(snes.GetSdspModeLive() == previous);
+    REQUIRE(apu.GetDsp().Mode() == previous);
+    REQUIRE(apu.Read(0xF3) == 0x47);
+    snes.Reset();
+    REQUIRE(snes.GetSdspModeLive() == next);
+    REQUIRE(apu.GetDsp().Mode() == next);
+    REQUIRE(apu.Read(0xF2) == 0);
+    apu.Write(0xF2, 0x0C);
+    REQUIRE(apu.Read(0xF3) == 0);
+    apu.Write(0xF2, 0x6C);
+    REQUIRE(apu.Read(0xF3) == 0xE0);
+    REQUIRE(apu.GetDspSampleCount() == 0);
+    REQUIRE(apu.GetDspClockPhase() == 0);
   }
 }

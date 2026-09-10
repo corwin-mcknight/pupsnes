@@ -44,7 +44,7 @@ The harness recursively discovers `*.romspec` files under `testroms/` at runtime
 
 ## `.romspec` Format
 
-ROMs in the metadata-driven harness get a sidecar metadata file. The APU ROMs use dedicated C++ tests because they inspect private sound RAM and compare execution across scheduler slice sizes. `apu_upload` checks multiple upload blocks, `apu_transfers` exercises data movement, `apu_arithmetic` records calculations and flags, and `apu_control` covers branches, calls, software interrupts, and halted execution. Their tests live in `src/tests/apu_integration_tests.cpp` and the matching `apu_<name>_integration_tests.cpp` files. Each includes a deliberately changed payload that must produce the CPU's failure verdict. Run them with `pupsnes_tests '[apu]'`.
+ROMs in the metadata-driven harness get a sidecar metadata file. The APU ROMs instead use dedicated C++ tests to inspect sound RAM, hardware registers, generated audio, and execution across scheduler slice sizes; see the audio fixtures below.
 
 Example metadata:
 
@@ -84,3 +84,35 @@ Optional scenario fields:
 All current scenarios are expected to pass. `why_expected_to_fail` retains the
 historical blocker that the scenario originally covered, so a regression still
 has useful context in its failure report.
+
+## APU and audio fixtures
+
+These ROMs start the 65C816 from reset and upload real SPC700 programs through the IPL handshake.
+
+| ROM | What it exercises |
+| --- | --- |
+| `apu_upload` | Multi-page upload, continuation to a second block, and a computed port reply |
+| `apu_transfers` | Data movement, both direct pages, address wrapping, and stack transfers |
+| `apu_arithmetic` | Arithmetic chains, comparisons, decimal adjustment, and recorded flags |
+| `apu_control` | Branches, calls, software interrupts, logical operations, and halted execution |
+| `apu_hardware` | DSP register access, upper read-only mirrors, and all three timers |
+| `apu_audio` | A looping BRR sample, stereo volume, key-on, live voice status, and native PCM |
+
+The first five fixtures have deliberately changed payloads that must produce the CPU's failure verdict. The **`apu_audio`** negative case removes key-on while retaining the normal CPU acknowledgment: it must become silent. That distinction checks actual generated sound in addition to the upload protocol.
+
+`apu_audio` writes its sample directory at `$0800` and a looping 16-sample BRR block at `$0900`. Pitch `$0400` advances one quarter of a source sample per output frame, giving a **500 Hz tone** at the native 32 kHz output rate. Different left/right voice volumes exercise stereo. The CPUs finish with STOP, while the DSP continues playing as machine time advances.
+
+The earlier fixtures live in `src/tests/apu_integration_tests.cpp` and `apu_<name>_integration_tests.cpp`; native sample capture is covered by `src/tests/apu_audio_tests.cpp`. Run the APU tests or hear the tone in the emulator:
+
+```sh
+./build/ci/pupsnes_tests '[apu]'
+./build/dev/pupsnes build/dev/test-roms/apu_audio.sfc
+```
+
+To inspect or share the generated signal without an audio device:
+
+```sh
+./build/dev/pupsnes-audio --rom build/dev/test-roms/apu_audio.sfc --seconds 2 --output tone.wav
+```
+
+Choose an unused output filename. See [Audio](audio.md) for playback settings and the WAV capture options.

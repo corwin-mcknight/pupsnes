@@ -12,6 +12,7 @@
 
 struct GLFWwindow;
 
+#include "frontend/audio_panel.h"
 #include "pupsnes/core/snes.h"
 #include "pupsnes/debugger/breakpoints.h"
 #include "pupsnes/debugger/bus_event_log.h"
@@ -132,6 +133,7 @@ class DebuggerApp {
 
   bool LoadRomFromPath(const std::string& path);
   void ResetMachine();
+  void OpenAudioSettings() { audio_panel_.show = true; }
   bool WriteMemory(SnesAddrT address, uint8_t value);
   void JumpToAddress(SnesAddrT address);
   void PushHostError(std::string message, ErrorSeverity severity = ErrorSeverity::kError);
@@ -148,6 +150,8 @@ class DebuggerApp {
   bool InitWindow();
   void ShutdownWindow();
   void TickEmulation();
+  void UpdateAudioPlayback();
+  void StopAudio();
   void Render();
   void RenderMenuBar();
   void RenderFatalModal();
@@ -173,6 +177,8 @@ class DebuggerApp {
   std::string loaded_rom_path_;
   std::optional<std::string> fatal_error_;
   SNES snes_;
+  frontend::AudioOutput audio_output_;
+  frontend::AudioPanelState audio_panel_;
   BreakpointSet breakpoints_;
   TraceLog trace_log_;
   FanOutTraceSink fan_out_trace_sink_;

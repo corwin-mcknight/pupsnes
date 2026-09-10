@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <charconv>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -77,7 +78,11 @@ DebuggerApp::DebuggerApp()
   error_log_.SetEventSink(&emu_event_log_);
 }
 
-DebuggerApp::~DebuggerApp() { ShutdownWindow(); }
+DebuggerApp::~DebuggerApp() {
+  snes_.SetAudioSampleCallback({});
+  audio_output_.Shutdown();
+  ShutdownWindow();
+}
 
 int DebuggerApp::Run(const std::optional<std::string>& initial_rom_path) {
   if (!InitWindow()) {
@@ -86,6 +91,7 @@ int DebuggerApp::Run(const std::optional<std::string>& initial_rom_path) {
 
   InitFileShortcuts(*this);
   LoadAppConfig();
+  snes_.SetAudioSampleCallback([this](int16_t left, int16_t right) { audio_output_.PushSample(left, right); });
 
   if (initial_rom_path.has_value()) {
     ui_state_.rom_path_input = *initial_rom_path;
@@ -99,6 +105,9 @@ int DebuggerApp::Run(const std::optional<std::string>& initial_rom_path) {
     Render();
   }
 
+  StopAudio();
+  snes_.SetAudioSampleCallback({});
+  audio_output_.Shutdown();
   SaveAppConfig();
   return fatal_error_.has_value() ? 1 : 0;
 }
@@ -110,6 +119,7 @@ SnesAddrT DebuggerApp::GetCurrentPc() const {
 
 bool DebuggerApp::LoadRomFromPath(const std::string& path) {
   namespace fs = std::filesystem;
+  StopAudio();
   StopTraceRecording();
 
   std::ifstream stream(path, std::ios::binary);
@@ -146,6 +156,7 @@ bool DebuggerApp::LoadRomFromPath(const std::string& path) {
       return false;
     }
     snes_.Reset();
+    fatal_error_.reset();
     trace_log_.Clear();
     bus_event_log_.Clear();
     microop_trace_.Clear();
@@ -164,6 +175,7 @@ bool DebuggerApp::LoadRomFromPath(const std::string& path) {
     }
     SaveAppConfig();
     JumpToAddress(GetCurrentPc());
+    last_tick_time_ = std::chrono::steady_clock::now();
     return true;
   } catch (const std::exception& ex) {
     error_log_.Push({
@@ -181,12 +193,15 @@ void DebuggerApp::ResetMachine() {
     return;
   }
   StopTraceRecording();
+  StopAudio();
   snes_.Reset();
+  fatal_error_.reset();
   trace_log_.Clear();
   bus_event_log_.Clear();
   microop_trace_.Clear();
   run_control_.ResetMachineState();
   JumpToAddress(GetCurrentPc());
+  last_tick_time_ = std::chrono::steady_clock::now();
 }
 
 bool DebuggerApp::WriteMemory(SnesAddrT address, uint8_t value) {
@@ -395,7 +410,9 @@ void DebuggerApp::ShutdownWindow() {
 }
 
 void DebuggerApp::TickEmulation() {
-  if (!loaded_rom_) {
+  UpdateAudioPlayback();
+  if (!loaded_rom_ || fatal_error_.has_value()) {
+    last_tick_time_ = std::chrono::steady_clock::now();
     return;
   }
 
@@ -425,6 +442,7 @@ void DebuggerApp::TickEmulation() {
   } catch (const std::exception& ex) {
     fatal_error_ = ex.what();
   }
+  UpdateAudioPlayback();
 
   if (file_trace_sink_ != nullptr && file_trace_sink_->HasError()) {
     const std::string err = file_trace_sink_->Error();
@@ -432,6 +450,17 @@ void DebuggerApp::TickEmulation() {
     PushHostError("trace record: " + err, ErrorSeverity::kError);
     StopTraceRecording();
   }
+}
+
+void DebuggerApp::UpdateAudioPlayback() {
+  const bool running = loaded_rom_ && run_control_.GetState() == RunState::kRunUntilBreak &&
+                       !fatal_error_.has_value() && !snes_.GetCpu().GetFault().has_value();
+  audio_output_.SetPlaybackActive(frontend::CanPlayAudio(running, ui_state_.speed_multiplier));
+}
+
+void DebuggerApp::StopAudio() {
+  audio_output_.SetPlaybackActive(false);
+  audio_output_.Flush();
 }
 
 void DebuggerApp::RenderMenuBar() {
@@ -500,7 +529,7 @@ void DebuggerApp::RenderMenuBar() {
         ImGui::Separator();
         float custom_pct = ui_state_.speed_multiplier * 100.0F;
         ImGui::SetNextItemWidth(120.0F);
-        if (ImGui::InputFloat("Custom %", &custom_pct, 10.0F, 100.0F, "%.1f")) {
+        if (ImGui::InputFloat("Custom %", &custom_pct, 10.0F, 100.0F, "%.1f") && std::isfinite(custom_pct)) {
           ui_state_.speed_multiplier = std::clamp(custom_pct / 100.0F, 0.001F, 10.0F);
           last_tick_time_ = std::chrono::steady_clock::now();
           SaveAppConfig();
@@ -509,6 +538,7 @@ void DebuggerApp::RenderMenuBar() {
       }
       ImGui::EndMenu();
     }
+    if (frontend::RenderAudioMenu(audio_output_, audio_panel_)) SaveAppConfig();
     if (ImGui::BeginMenu("Windows")) {
       ImGui::MenuItem("Registers", nullptr, &ui_state_.show_registers_panel);
       ImGui::MenuItem("Disassembly", nullptr, &ui_state_.show_disasm_panel);
@@ -596,6 +626,10 @@ void DebuggerApp::RenderMenuBar() {
 
 std::string DebuggerApp::GetConfigPath() {
   namespace fs = std::filesystem;
+  const char* config_dir = std::getenv("PUPSNES_CONFIG_DIR");
+  if (config_dir != nullptr && *config_dir != '\0') {
+    return (fs::path(config_dir) / ".pupsnes_config.ini").string();
+  }
   const char* home = std::getenv("HOME");
   if (home != nullptr && *home != '\0') {
     return (fs::path(home) / ".pupsnes_config.ini").string();
@@ -642,9 +676,11 @@ constexpr std::array<StringField, 3> kStringFields{{
 }  // namespace
 
 void DebuggerApp::LoadAppConfig() {
+  frontend::AudioSettings audio_settings;
   const std::string path = GetConfigPath();
   std::ifstream stream(path);
   if (!stream.good()) {
+    (void)audio_output_.ApplySettings(audio_settings);
     return;
   }
   std::string line;
@@ -655,6 +691,8 @@ void DebuggerApp::LoadAppConfig() {
     }
     const std::string key = line.substr(0, eq);
     const std::string value = line.substr(eq + 1);
+
+    if (frontend::ParseAudioSetting(audio_settings, key, value)) continue;
 
     bool handled = false;
     for (const auto& f : kBoolFields) {
@@ -676,22 +714,19 @@ void DebuggerApp::LoadAppConfig() {
     if (handled) continue;
 
     if (key == "time_display_mode") {
-      const int parsed = std::atoi(value.c_str());
-      if (parsed >= 0 && parsed <= static_cast<int>(TimeDisplayMode::kPpu)) {
+      int parsed = 0;
+      const auto result = std::from_chars(value.data(), value.data() + value.size(), parsed);
+      if (result.ec == std::errc{} && result.ptr == value.data() + value.size() && parsed >= 0 &&
+          parsed <= static_cast<int>(TimeDisplayMode::kPpu)) {
         ui_state_.time_display_mode = static_cast<TimeDisplayMode>(parsed);
       }
     } else if (key == "speed_multiplier") {
-      const float parsed = std::strtof(value.c_str(), nullptr);
-      if (parsed > 0.0F) {
-        ui_state_.speed_multiplier = std::clamp(parsed, 0.001F, 10.0F);
-      }
+      if (const auto parsed = frontend::ParseFiniteSetting(value, 0.001F, 10.0F)) ui_state_.speed_multiplier = *parsed;
     } else if (key == "sdsp_mode") {
-      const int parsed = std::atoi(value.c_str());
-      if (parsed == static_cast<int>(SdspMode::kSimple) || parsed == static_cast<int>(SdspMode::kAccurate)) {
-        snes_.SetSdspModePending(static_cast<SdspMode>(parsed));
-      }
+      if (const auto parsed = frontend::ParseSoundQuality(value)) snes_.SetSdspModePending(*parsed);
     }
   }
+  (void)audio_output_.ApplySettings(audio_settings);
 }
 
 void DebuggerApp::SaveAppConfig() {
@@ -709,6 +744,7 @@ void DebuggerApp::SaveAppConfig() {
   }
   stream << "speed_multiplier=" << ui_state_.speed_multiplier << "\n";
   stream << "sdsp_mode=" << static_cast<int>(snes_.GetSdspModePending()) << "\n";
+  frontend::WriteAudioSettings(stream, audio_output_.GetSettings());
 }
 
 void DebuggerApp::PollGameInput() {
@@ -764,6 +800,11 @@ void DebuggerApp::Render() {
   ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport());
 
   RenderControlsPanel(*this);
+  const bool audio_running = loaded_rom_ && run_control_.GetState() == RunState::kRunUntilBreak &&
+                             !fatal_error_.has_value() && !snes_.GetCpu().GetFault().has_value();
+  if (frontend::RenderAudioPanel(audio_output_, snes_, audio_panel_, audio_running, ui_state_.speed_multiplier)) {
+    SaveAppConfig();
+  }
   RenderRegistersPanel(*this);
   RenderDisasmPanel(*this);
   RenderMemoryPanel(*this);
@@ -781,6 +822,7 @@ void DebuggerApp::Render() {
   RenderSnesPanel(*this);
   RenderLoadRomDialog(*this);
   RenderFatalModal();
+  UpdateAudioPlayback();
 
   ImGui::Render();
   int display_w = 0;

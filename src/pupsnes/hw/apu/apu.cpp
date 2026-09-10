@@ -3,6 +3,10 @@
 #include <format>
 #include <stdexcept>
 
+#include "pupsnes/core/snes.h"
+#include "pupsnes/hw/apu/accurate_sdsp.h"
+#include "pupsnes/hw/apu/simple_sdsp.h"
+
 namespace pupsnes {
 namespace {
 
@@ -19,17 +23,56 @@ constexpr std::array<uint8_t, 64> kIplRom = {
 
 Apu::Apu(SNES& snes) : Device(snes), cpu_(*this) { Reset(); }
 
-void Apu::Reset() {
+void Apu::Reset(SdspMode mode) {
+  if (!dsp_ || dsp_->Mode() != mode) {
+    switch (mode) {
+      case SdspMode::kSimple: dsp_ = std::make_unique<SimpleSdsp>(ram_.data(), ram_.size()); break;
+      case SdspMode::kAccurate: dsp_ = std::make_unique<AccurateSdsp>(ram_.data(), ram_.size()); break;
+      default: throw std::invalid_argument("Invalid S-DSP mode");
+    }
+  }
   // Deterministic cold-start policy; physical ARAM power-on contents vary.
   local_time_ = 0;
   clock_phase_ = 0;
   ram_.fill(0);
   input_ports_.fill(0);
   output_ports_.fill(0);
+  auxiliary_ports_.fill(0);
+  timers_.fill({});
+  dsp_clock_phase_ = 0;
+  dsp_sample_count_ = 0;
+  dsp_->Reset();
   ipl_enabled_ = true;
   dsp_address_ = 0;
   fault_.reset();
   cpu_.Reset();
+}
+
+void Apu::StepHardware() {
+  // Complete peripheral edges before this cycle's SPC bus access. This matches
+  // the S-SMP wait/read/write ordering in ares/sfc/smp/{timing,memory}.cpp.
+  dsp_clock_phase_ = static_cast<uint8_t>((dsp_clock_phase_ + 1U) & 31U);
+  int16_t left = 0;
+  int16_t right = 0;
+  if (dsp_->TickCycle(left, right)) {
+    ++dsp_sample_count_;
+    snes_->FireAudioSample(left, right);
+  }
+
+  // The first divider is free-running even when its timer is disabled. The
+  // programmable counter compares after incrementing, so target zero is 256.
+  // Reference: https://github.com/gilligan/snesdev/blob/master/docs/spc700.txt
+  constexpr std::array<uint8_t, 3> kPeriods = {128, 128, 16};
+  for (std::size_t index = 0; index < timers_.size(); ++index) {
+    auto& timer = timers_[index];
+    if (++timer.divider != kPeriods[index]) continue;
+    timer.divider = 0;
+    if (!timer.enabled) continue;
+    timer.counter = static_cast<uint8_t>(timer.counter + 1U);
+    if (timer.counter != timer.target) continue;
+    timer.counter = 0;
+    timer.output = static_cast<uint8_t>((timer.output + 1U) & 0x0FU);
+  }
 }
 
 void Apu::CheckFault() {
@@ -55,6 +98,7 @@ void Apu::CatchUpTo(TimeMasterT target) {
     local_time_ += until_edge;
     clock_phase_ += until_edge * kClockNumerator;
     clock_phase_ -= kClockDenominator;
+    StepHardware();
     cpu_.TickCycle();
     CheckFault();
   }
@@ -79,17 +123,23 @@ bool Apu::HandleDebugWrite(uint32_t /*offset*/, uint8_t /*data*/) { return false
 uint8_t Apu::Read(uint16_t address) {
   if (address >= 0xFFC0U && ipl_enabled_) return kIplRom[address - 0xFFC0U];
   if (address >= 0xF4U && address <= 0xF7U) return input_ports_[address & 3U];
+  if (address == 0xF8U || address == 0xF9U) return auxiliary_ports_[address - 0xF8U];
   switch (address) {
     case 0xF0:
     case 0xF1:
     case 0xFA:
     case 0xFB:
-    case 0xFC:
+    case 0xFC: return 0;  // Write-only registers.
     case 0xFD:
     case 0xFE:
-    case 0xFF: return 0;  // Write-only registers; disabled timer outputs.
+    case 0xFF: {
+      auto& timer = timers_[address - 0xFDU];
+      const uint8_t result = timer.output;
+      timer.output = 0;
+      return result;
+    }
     case 0xF2: return dsp_address_;
-    case 0xF3: UnsupportedRegister(address, dsp_address_);
+    case 0xF3: return dsp_->ReadRegister(dsp_address_ & 0x7FU);
     default: return ram_[address];
   }
 }
@@ -102,12 +152,25 @@ void Apu::Write(uint16_t address, uint8_t data) {
     output_ports_[address & 3U] = data;
     return;
   }
+  if (address == 0xF8U || address == 0xF9U) {
+    // DSP echo writes reach ARAM directly and must not replace these latches.
+    auxiliary_ports_[address - 0xF8U] = data;
+    return;
+  }
   switch (address) {
     case 0xF0:
       if ((cpu_.GetState().psw & 0x20U) == 0 && data != 0x0AU) UnsupportedRegister(address, data);
       break;
     case 0xF1:
-      if ((data & 7U) != 0) UnsupportedRegister(address, data);
+      for (std::size_t index = 0; index < timers_.size(); ++index) {
+        auto& timer = timers_[index];
+        const bool enabled = (data & (1U << index)) != 0;
+        if (enabled && !timer.enabled) {
+          timer.counter = 0;
+          timer.output = 0;
+        }
+        timer.enabled = enabled;
+      }
       if ((data & 0x10U) != 0) {
         input_ports_[0] = 0;
         input_ports_[1] = 0;
@@ -119,7 +182,13 @@ void Apu::Write(uint16_t address, uint8_t data) {
       ipl_enabled_ = (data & 0x80U) != 0;
       break;
     case 0xF2: dsp_address_ = data; break;
-    case 0xF3: UnsupportedRegister(address, data);
+    case 0xF3:
+      if ((dsp_address_ & 0x80U) == 0) dsp_->WriteRegister(dsp_address_, data);
+      break;
+    case 0xFA:
+    case 0xFB:
+    case 0xFC: timers_[address - 0xFAU].target = data; break;
+    // This includes $FD-$FF: writing an output counter affects only ARAM.
     default: break;
   }
 }
@@ -128,7 +197,7 @@ void Apu::UnsupportedRegister(uint16_t address, uint8_t data) {
   if (!fault_) {
     fault_ = std::format(
         "SPC700: unsupported APU register ${:04X} (value ${:02X}, PC ${:04X}); "
-        "timers, DSP, and TEST modes are not implemented",
+        "non-default TEST modes are not implemented",
         address, data, cpu_.GetState().pc);
   }
   throw std::runtime_error(*fault_);

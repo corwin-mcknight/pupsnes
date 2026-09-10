@@ -34,7 +34,7 @@ struct ControlSnapshot {
   std::array<uint8_t, 4> input_ports{};
   std::array<uint8_t, 4> output_ports{};
   std::array<uint8_t, 5> cpu_signature{};
-  std::array<TimeMasterT, 4> clocks{};
+  std::array<TimeMasterT, 6> clocks{};
 };
 
 std::vector<uint8_t> ReadControlRom() {
@@ -115,7 +115,8 @@ ControlSnapshot RunControlProgram(std::span<const uint8_t> rom, std::span<const 
   for (std::size_t address = 0; address < snapshot.cpu_signature.size(); ++address) {
     snapshot.cpu_signature[address] = snes.GetWram().Peek(static_cast<uint32_t>(address));
   }
-  snapshot.clocks = {snes.GetMasterTime(), cpu.GetTime(), apu.GetTime(), apu.GetClockPhase()};
+  snapshot.clocks = {snes.GetMasterTime(), cpu.GetTime(),           apu.GetTime(),
+                     apu.GetClockPhase(),  apu.GetDspSampleCount(), apu.GetDspClockPhase()};
   return snapshot;
 }
 
@@ -145,6 +146,9 @@ void RequireControlResults(const ControlSnapshot& snapshot, std::span<const uint
   REQUIRE(snapshot.clocks[1] == kRunBudget);
   REQUIRE(snapshot.clocks[2] == kRunBudget);
   REQUIRE(snapshot.clocks[3] == (kRunBudget * pupsnes::Apu::kClockNumerator) % pupsnes::Apu::kClockDenominator);
+  const auto spc_cycles = (kRunBudget * pupsnes::Apu::kClockNumerator) / pupsnes::Apu::kClockDenominator;
+  REQUIRE(snapshot.clocks[4] == spc_cycles / 32);
+  REQUIRE(snapshot.clocks[5] == spc_cycles % 32);
   const std::array<uint8_t, 4> expected_input = {0x01, 0x00, 0x00, 0x02};
   REQUIRE(snapshot.input_ports == expected_input);
 }

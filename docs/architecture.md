@@ -45,20 +45,20 @@ The `RunControl` loop calls `SNES::MachineSync(now)` — which invokes `CatchUpT
 
 The **APU ports** (`$2140`–`$2143`, mirrored through `$217F`) complete inline. Both reads and writes first advance the APU to the access time, then sample the output latch or update the separate input latch. The APU executes against its private RAM and never initiates a main-bus access, so this synchronization needs no asynchronous token. The page-$21 PPU handler forwards the original access timestamp to the APU.
 
-The bus still exposes scheduled tokens for targets that require deferred completion. A separate clock alone does not require a token. See [APU bring-up](apu.md) for clock conversion, instruction coverage, and accuracy limits.
+The bus still exposes scheduled tokens for targets that require deferred completion. A separate clock alone does not require a token. See [APU and sound synthesis](apu.md) for clock conversion, instruction coverage, and accuracy limits.
 
 ## Clock Domains
 
 Two independent timing domains:
 
 * **Master clock** (~21.477 MHz): drives CPU, PPU, DMA. All same-clock synchronization uses catch-up on access.
-* **APU clock** (~1.024 MHz): independent crystal. The initial NTSC APU uses a nominal 1,024,000 Hz clock with the exact rational conversion `5632/118125` APU cycles per master cycle and preserves the fractional phase between calls. On port access (`$2140`–`$2143`), the APU is caught up by converting the current master time to APU cycles.
+* **APU clock** (~1.024 MHz): independent crystal. The NTSC APU uses a nominal 1,024,000 Hz clock with the exact rational conversion `5632/118125` APU cycles per master cycle and preserves the fractional phase between calls. On port access (`$2140`–`$2143`), the APU is caught up by converting the current master time to APU cycles. Its timers and DSP pipeline advance at every SPC edge, before the SPC bus access. A stereo sample is delivered after each 32 DSP clocks, giving a native 32 kHz stream.
 
 Time is measured in integer cycles (no fractional time) within each domain.
 
 ## State Management
 
-All device state resides in a single contiguous **State Block** allocation. This includes:
+The planned **State Block** will place all device state in one contiguous allocation. This includes:
 
 * Device registers and internal counters
 * Large memory arrays (128KB WRAM, 64KB VRAM, 64KB APU RAM, OAM, CGRAM)
@@ -66,9 +66,9 @@ All device state resides in a single contiguous **State Block** allocation. This
 * Signal region (NMI, IRQ, HALT fields)
 * Token table (fixed-size, bounded by max outstanding tokens)
 
-Save state is `memcpy` of the block. Rewind is a ring buffer of block snapshots. Determinism verification is `memcmp` of two blocks.
+The intended save-state operation is `memcpy` of the block, with rewind using a ring of snapshots. This layout is not implemented yet. Current devices own their state separately, and the DSP wrapper does not expose a save-state API. A working snapshot must also preserve partially executed instructions and the DSP pipeline, not just visible registers and RAM.
 
-Device code accesses state through typed overlays (POD structs placed at known offsets in the block), providing natural field access with zero overhead.
+The proposed layout uses typed overlays (POD structs at known offsets) for device access. Host playback queues belong to the frontend and should be discarded when restoring an emulated snapshot.
 
 ## Memory Map
 
@@ -94,20 +94,21 @@ The cart lifecycle is **destroy-and-rebuild**: a successful build replaces the e
 
 ## Frontend
 
-The emulation core uses a **callback-based** interface. The core owns the master clock; the frontend is a passive consumer:
+The core owns emulated time. Frontends choose a wall-clock budget, run the machine to that budget, display completed PPU frames, and forward controller input. Audio leaves the core through **`SNES::SetAudioSampleCallback`**, receiving signed 16-bit left/right samples at 32 kHz. The callback survives reset and can be detached by assigning an empty callback.
 
-* `onFrameReady(buffer)`: PPU signals frame completion at V-blank
-* `onAudioSample(left, right)` (planned): APU will emit samples at the exact cycle produced
-* `pollInput() → buttons`: core polls controller state when needed
+`Apu` owns the selected DSP backend, which wraps the pinned blargg S-DSP core and shares the APU's 64 KiB ARAM. Gaussian and linear interpolation use the same clocked voice/envelope/echo pipeline. Its register and memory effects occur at individual DSP phases; the DAC result is held until the regular 32-clock callback boundary. Sound hardware continues while either CPU is halted, provided emulated time advances.
 
-For headless/CI testing, stub callbacks capture output for assertions without requiring a display or audio device.
+Each GUI app owns an `AudioOutput` instance implemented in the shared frontend code. The emulation thread pushes samples into a bounded single-producer/single-consumer queue. A miniaudio callback reads only the queue, applies gain/mute, and resamples to the output device's native rate. It never calls `SNES` or advances the scheduler. Underflow supplies silence; overflow discards new frames. Pauses, steps, reset, ROM changes, and non-100% speeds clear or bypass playback. Device errors stay nonfatal and can be retried from the audio panel.
+
+On shutdown, the frontend detaches the SNES callback and closes the output device before destroying its storage. Device teardown joins callbacks. Headless tests and `pupsnes-audio` consume the native callback directly, requiring neither a window nor an audio device. See [Audio](audio.md) for playback controls, preference files, and WAV capture.
 
 ## Verification
 
 Accuracy verification is layered:
 
-* **Determinism**: run the same ROM twice from the same state, `memcmp` state blocks at every frame boundary
+* **Determinism**: run the same ROM with different execution slices and compare captured state and output; whole-State-Block comparisons remain planned
 * **Framebuffer comparison**: run test ROMs headless, hash the framebuffer, compare against known-good values
+* **Audio comparison**: capture native PCM, ARAM, and DSP registers from small uploaded programs; compare Gaussian synthesis against independently generated reference-engine fixtures
 * **Execution trace diffing**: log CPU bus cycles with timestamps, diff against reference traces from hardware or other emulators
 
 Instrumentation hooks are built into the core from day one (conditional trace logging in the CPU micro-op stepper, compiled out in release builds). The full test suite is built incrementally as hardware knowledge grows.

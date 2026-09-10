@@ -18,6 +18,7 @@ set(PUPSNES_LIB_SOURCES
   src/pupsnes/hw/apu/apu.cpp
   src/pupsnes/hw/apu/spc700.cpp
   src/pupsnes/hw/apu/simple_sdsp.cpp
+  src/pupsnes/hw/apu/sdsp.cpp
   src/pupsnes/hw/input/joypad.cpp
   src/pupsnes/hw/rom/cart_profile.cpp
   src/pupsnes/hw/rom/cart_registry.cpp
@@ -51,6 +52,7 @@ set(PUPSNES_TRACE_DIFF_SOURCES
 
 set(PUPSNES_DEBUGGER_SOURCES
   src/debugger/app.cpp
+  src/frontend/audio_panel.cpp
   src/debugger/main.cpp
   src/debugger/panels/bus_event_panel.cpp
   src/debugger/panels/controller_panel.cpp
@@ -76,10 +78,16 @@ set(PUPSNES_DEBUGGER_SOURCES
 
 set(PUPSNES_EMULATOR_SOURCES
   src/emulator/app.cpp
+  src/frontend/audio_panel.cpp
   src/emulator/main.cpp
   src/debugger/third_party/imgui_glfw_backend.cpp
   src/debugger/third_party/imgui_opengl3_backend.cpp
   src/debugger/third_party/imgui_stdlib_binding.cpp
+)
+
+set(PUPSNES_HOST_AUDIO_SOURCES
+  src/frontend/audio_buffer.cpp
+  src/frontend/audio_output.cpp
 )
 
 set(PUPSNES_TEST_SOURCES
@@ -129,6 +137,12 @@ set(PUPSNES_TEST_SOURCES
   src/tests/nmi_tests.cpp
   src/tests/hv_irq_tests.cpp
   src/tests/apu_tests.cpp
+  src/tests/apu_timer_tests.cpp
+  src/tests/sdsp_tests.cpp
+  src/tests/sdsp_synthesis_tests.cpp
+  src/tests/apu_audio_tests.cpp
+  src/tests/audio_output_tests.cpp
+  src/tests/audio_settings_tests.cpp
   src/tests/spc700_tests.cpp
   src/tests/spc700_transfer_tests.cpp
   src/tests/spc700_arithmetic_tests.cpp
@@ -138,6 +152,7 @@ set(PUPSNES_TEST_SOURCES
   src/tests/apu_transfer_integration_tests.cpp
   src/tests/apu_arithmetic_integration_tests.cpp
   src/tests/apu_control_integration_tests.cpp
+  src/tests/apu_hardware_integration_tests.cpp
   src/tests/fan_out_trace_sink_tests.cpp
   src/tests/file_trace_sink_tests.cpp
   src/tests/sha1_tests.cpp
@@ -164,6 +179,22 @@ function(pupsnes_add_static_lib name)
 endfunction()
 
 pupsnes_add_static_lib(pupsnes SOURCES ${PUPSNES_LIB_SOURCES})
+# Keep pinned third-party code and its warning policy separate from our core.
+pupsnes_add_static_lib(pupsnes_spc_dsp SOURCES src/third_party/snes_spc/SPC_DSP.cpp)
+target_include_directories(pupsnes_spc_dsp SYSTEM PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/third_party/snes_spc)
+pupsnes_add_static_lib(pupsnes_miniaudio SOURCES third_party/miniaudio/miniaudio_impl.cpp)
+target_include_directories(pupsnes_miniaudio SYSTEM PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/third_party/miniaudio)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+  target_compile_options(pupsnes_spc_dsp PRIVATE -w)
+  target_compile_options(pupsnes_miniaudio PRIVATE -w)
+endif()
+find_package(Threads REQUIRED)
+target_link_libraries(pupsnes_miniaudio PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
+if(UNIX)
+  target_link_libraries(pupsnes_miniaudio PRIVATE m)
+endif()
+target_link_libraries(pupsnes PRIVATE pupsnes_spc_dsp)
+pupsnes_add_static_lib(pupsnes_host_audio SOURCES ${PUPSNES_HOST_AUDIO_SOURCES} LINK_PUBLIC pupsnes_miniaudio)
 target_compile_definitions(pupsnes PUBLIC "PUPSNES_PROFILE_${PUPSNES_PROFILE}")
 # kOpcodeArtifacts (cpu_opcodes.cpp) is built at compile time over the full
 # spec table. Each new opcode increases the constexpr-evaluator step count.
@@ -191,6 +222,11 @@ add_executable(pupsnes_screenshot_cli src/tools/screenshot_main.cpp)
 target_compile_features(pupsnes_screenshot_cli PRIVATE cxx_std_23)
 target_link_libraries(pupsnes_screenshot_cli PRIVATE pupsnes_trace_runner)
 set_target_properties(pupsnes_screenshot_cli PROPERTIES OUTPUT_NAME pupsnes-screenshot)
+
+add_executable(pupsnes_audio_cli src/tools/audio_main.cpp)
+target_compile_features(pupsnes_audio_cli PRIVATE cxx_std_23)
+target_link_libraries(pupsnes_audio_cli PRIVATE pupsnes_trace_runner)
+set_target_properties(pupsnes_audio_cli PROPERTIES OUTPUT_NAME pupsnes-audio)
 
 # Treat third-party (Conan) include dirs as SYSTEM so clang-tidy / warnings
 # don't report issues inside vendor headers or macro expansions from them.
@@ -222,7 +258,7 @@ target_include_directories(pupsnes_debugger PRIVATE
   ${PUPSNES_IMGUI_ROOT}/res/bindings
   ${PUPSNES_IMGUI_ROOT}/res/misc/cpp
 )
-target_link_libraries(pupsnes_debugger PRIVATE pupsnes_debugger_core imgui::imgui glfw OpenGL::GL)
+target_link_libraries(pupsnes_debugger PRIVATE pupsnes_debugger_core pupsnes_host_audio imgui::imgui glfw OpenGL::GL)
 set_source_files_properties(
   src/debugger/third_party/imgui_glfw_backend.cpp
   src/debugger/third_party/imgui_opengl3_backend.cpp
@@ -239,7 +275,7 @@ target_include_directories(pupsnes_emulator PRIVATE
   ${PUPSNES_IMGUI_ROOT}/res/bindings
   ${PUPSNES_IMGUI_ROOT}/res/misc/cpp
 )
-target_link_libraries(pupsnes_emulator PRIVATE pupsnes imgui::imgui glfw OpenGL::GL)
+target_link_libraries(pupsnes_emulator PRIVATE pupsnes pupsnes_host_audio imgui::imgui glfw OpenGL::GL)
 set_source_files_properties(
   src/debugger/third_party/imgui_glfw_backend.cpp
   src/debugger/third_party/imgui_opengl3_backend.cpp
@@ -308,6 +344,8 @@ pupsnes_apply_warnings(pupsnes_trace_cli)
 pupsnes_apply_warnings(pupsnes_trace_diff)
 pupsnes_apply_warnings(pupsnes_trace_diff_cli)
 pupsnes_apply_warnings(pupsnes_screenshot_cli)
+pupsnes_apply_warnings(pupsnes_audio_cli)
+pupsnes_apply_warnings(pupsnes_host_audio)
 
 include(CTest)
 if(BUILD_TESTING)
@@ -336,6 +374,8 @@ if(BUILD_TESTING)
     ${CMAKE_CURRENT_SOURCE_DIR}/testroms/apu_transfers/apu_transfers.s
     ${CMAKE_CURRENT_SOURCE_DIR}/testroms/apu_arithmetic/apu_arithmetic.s
     ${CMAKE_CURRENT_SOURCE_DIR}/testroms/apu_control/apu_control.s
+    ${CMAKE_CURRENT_SOURCE_DIR}/testroms/apu_hardware/apu_hardware.s
+    ${CMAKE_CURRENT_SOURCE_DIR}/testroms/apu_audio/apu_audio.s
   )
   set(PUPSNES_TEST_ROM_COMMON_INCLUDES
     ${CMAKE_CURRENT_SOURCE_DIR}/testroms/pupsnes.inc
@@ -372,7 +412,7 @@ if(BUILD_TESTING)
   target_compile_features(pupsnes_tests PRIVATE cxx_std_23)
   target_include_directories(pupsnes_tests PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/includes)
   target_include_directories(pupsnes_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-  target_link_libraries(pupsnes_tests PRIVATE pupsnes pupsnes_debugger_core pupsnes_trace_runner pupsnes_trace_diff Catch2::Catch2WithMain)
+  target_link_libraries(pupsnes_tests PRIVATE pupsnes pupsnes_debugger_core pupsnes_trace_runner pupsnes_trace_diff pupsnes_host_audio Catch2::Catch2WithMain)
   target_compile_definitions(pupsnes_tests PRIVATE
     "PUPSNES_TEST_ROM_DIR=\"${PUPSNES_TEST_ROM_DIR}\""
     "PUPSNES_TEST_ROM_METADATA_DIR=\"${PUPSNES_TEST_ROM_METADATA_DIR}\""
@@ -407,6 +447,8 @@ set(PUPSNES_ALL_SOURCES
   ${PUPSNES_DEBUGGER_CORE_SOURCES}
   ${PUPSNES_DEBUGGER_SOURCES}
   ${PUPSNES_EMULATOR_SOURCES}
+  ${PUPSNES_HOST_AUDIO_SOURCES}
+  src/tools/audio_main.cpp
   ${PUPSNES_TEST_SOURCES}
 )
 

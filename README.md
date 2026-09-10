@@ -10,7 +10,7 @@ The ultimate goal is to become the most accurate Super Nintendo emulator.
 
 It's written in modern C++23, with a full debugger for inspecting the live system.
 
-> **Status:** Under active development. The CPU, DMA/HDMA, and PPU Modes 0/1 have run commercial games such as *Super Castlevania IV* and *The Legend of Zelda: A Link to the Past*. The real SPC700 now implements all 256 opcodes; commercial sound programs can still stop on unimplemented APU hardware. There is no audio yet, and not all PPU features are emulated. See the feature matrix below.
+> **Status:** Under active development. The CPU, DMA/HDMA, and PPU Modes 0/1 have run commercial games such as *Super Castlevania IV* and *The Legend of Zelda: A Link to the Past*. Audio now includes the complete SPC700 instruction set, timers, S-DSP synthesis, stereo playback, and WAV capture. Graphics features and hardware timing details remain unfinished; broad game compatibility is still being established.
 
 ## What it is
 
@@ -29,7 +29,7 @@ Legend: ✅ implemented · ⚠️ partial · ❌ not yet
 | **PPU — backgrounds** | ⚠️ | Mode 0 & Mode 1 only |
 | **PPU — sprites (OBJ)** | ✅ | Fully implemented. 32-per-line hardware cap enforced |
 | **PPU — color math & screen** | ⚠️ | No windows, mosaic, hi-res, direct color |
-| **Audio — APU (SPC700 + S-DSP)** | ⚠️ | All SPC700 opcodes, real IPL boot and program upload; no timers or DSP sound. |
+| **Audio — APU (SPC700 + S-DSP)** | ⚠️ | All SPC700 opcodes, real IPL upload, timers, eight-voice synthesis, stereo playback and WAV capture; timing and compatibility work continues. |
 | **Input** | ⚠️ | Player 1 standard controller ✅; P2, multitap, mouse, Super Scope ❌ |
 | **Cartridge / mappers** | ⚠️ | No coprocessors (SA-1, SuperFX, DSP-n…) |
 | **Save states / rewind** | ❌ | Designed in [docs/architecture.md](docs/architecture.md), not yet implemented |
@@ -37,16 +37,18 @@ Legend: ✅ implemented · ⚠️ partial · ❌ not yet
 
 ## What runs today
 
-PupSNES renders **Mode 0 / Mode 1** backgrounds, sprites, color math, and HDMA raster effects. The following titles previously reached playable gameplay using the APU handshake stub; they were **not** tested through to completion. With real SPC700 execution, unimplemented APU hardware now stops execution with a diagnostic:
+PupSNES renders **Mode 0 / Mode 1** backgrounds, sprites, color math, and HDMA raster effects. The following titles previously reached playable gameplay using the APU handshake stub; they were **not** tested through to completion:
 
 - **Super Castlevania IV**
 - **The Legend of Zelda: A Link to the Past**
+
+Those historical gameplay checks do not establish current compatibility for every sound driver. The real audio path now plays an uploaded BRR tone through the same sound hardware and output callback used by games; commercial-game sound still needs broader validation.
 
 <!-- DEBUGGER SCREENSHOT (pending re-drop): docs/images/debugger.png -->
 
 What to expect right now:
 
-- 🔇 **No audio** — everything is silent.
+- 🔊 **Stereo audio at 100% speed** — volume, mute, device, latency, and interpolation controls are available in both frontends. Pausing, debugger stepping, and other speeds are silent.
 - 🌀 **No Mode 7** — affine/rotation effects don't render (e.g. *F-Zero*, *Super Mario Kart*, the LTTP world-map screen).
 - 🎮 **Player 1 only** — no second controller or peripherals.
 - 💾 **No save states or rewind** yet (battery SRAM *does* persist to `.srm`).
@@ -78,13 +80,16 @@ A finer-grained checklist for the curious.
 - ✅ HDMA: per-scanline transfers, direct + indirect, line counter & repeat flag, table reload
 - ✅ Cycle-accurate: 8 master cycles/byte with correct CPU stall; `MDMAEN`/`HDMAEN`
 
-**Audio — APU** · initial bring-up
+**Audio — APU** · synthesis and playback implemented; accuracy work continues
 - ✅ Real IPL boot and upload through directional `$2140`–`$2143` ports, 64 KiB ARAM, deterministic nominal NTSC clock conversion
 - ✅ Complete SPC700 data-transfer family: MOV/MOVW/MOV1 and PUSH/POP, including indexed and indirect addressing
 - ✅ SPC700 comparisons and arithmetic: byte/word operations, multiplication, division, and decimal adjustment
 - ✅ Complete SPC700 opcode coverage, including logical/bit operations, shifts, branches, calls/returns, BRK/RETI, and SLEEP/STOP
-- ❌ Timers · ❌ S-DSP (BRR decode, ADSR, echo/FIR, voices) · ❌ audio output
-- See [APU bring-up](docs/apu.md) for tested behavior and timing limitations.
+- ✅ All three APU timers, DSP register access, and a native 32 kHz stereo stream
+- ✅ Eight S-DSP voices, BRR decoding, ADSR/GAIN envelopes, noise, pitch modulation, mixing, and echo/FIR through the pinned blargg DSP core
+- ✅ Gaussian (SNES) interpolation by default; optional linear interpolation applies on reset
+- ✅ Playback in the emulator and debugger, with 50% default volume and device/latency controls; native 16-bit stereo WAV capture without an audio device
+- See [Audio](docs/audio.md) for controls and capture commands, and [APU](docs/apu.md) for behavior and timing limitations.
 
 **Input**
 - ✅ Player 1 standard controller — auto-read (`$4218`/`$4219`) and serial (`$4016`)
@@ -120,6 +125,16 @@ Or launch the debugger UI with live CPU / PPU / DMA / memory panels:
 ./build/dev/pupsnes-debugger path/to/game.sfc
 ```
 
+Use **Audio → Audio settings...** in either app to choose an output device, change volume, or adjust buffering. In the debugger, press **Run** to hear sound. Audio plays at 100% emulation speed.
+
+Capture audio without opening a window or sound device:
+
+```sh
+./build/dev/pupsnes-audio --rom path/to/game.sfc --seconds 10 --output game.wav
+```
+
+The WAV contains native **32,000 Hz, 16-bit stereo PCM**. See [Audio](docs/audio.md) for boot-time skipping, interpolation choices, and portable preferences.
+
 Tests live in [TESTING.md](TESTING.md) — e.g. `./build/ci/pupsnes_tests "[cpu]"`.
 
 ## Architecture & docs
@@ -129,7 +144,8 @@ PupSNES is built around a signal-horizon scheduler, with each chip an independen
 - [docs/architecture.md](docs/architecture.md) — overall design and device model *(describes the target design; items marked "planned" aren't built yet)*
 - [docs/scheduler.md](docs/scheduler.md) — signal-event scheduling and ordering
 - [docs/systembus.md](docs/systembus.md) — system bus, page tables, same-clock vs. cross-clock MMIO
-- [docs/apu.md](docs/apu.md) — SPC700 bring-up, clock conversion, tests, and remaining limits
+- [docs/audio.md](docs/audio.md) — playback controls, troubleshooting, preferences, and WAV capture
+- [docs/apu.md](docs/apu.md) — SPC700, timers, synthesis, clock conversion, tests, and remaining limits
 - [docs/cpu-opcodes.md](docs/cpu-opcodes.md) — the 5A22 opcode authoring model
 - [docs/screenshots.md](docs/screenshots.md) — rendering frames from a ROM headlessly
 - [docs/test-roms.md](docs/test-roms.md) — the in-repo test-ROM build pipeline
@@ -138,11 +154,12 @@ PupSNES is built around a signal-horizon scheduler, with each chip an independen
 
 In rough priority order:
 
-1. **Audio** — APU timers and S-DSP (BRR, ADSR, echo), then sample output and further timing accuracy.
-2. **PPU completeness** — Mode 7, remaining background modes, windows, mosaic, hi-res / interlace.
-3. **Save states & rewind** — the contiguous State Block, snapshot/restore, and a rewind ring buffer.
-4. **More cartridges** — additional mappers and enhancement chips (SA-1, SuperFX, DSP-n…).
-5. **Enhancements beyond accuracy** — opt-in extras (e.g. a widescreen PPU), gated so they never compromise the accurate core.
+1. **PPU completeness** — Mode 7, remaining background modes, windows, mosaic, hi-res / interlace.
+2. **Save states & rewind** — capture and restore the whole machine, including sound and instructions in progress.
+3. **More cartridges** — additional mappers and enhancement chips (SA-1, SuperFX, DSP-n…).
+4. **Enhancements beyond accuracy** — opt-in extras (e.g. a widescreen PPU), gated so they never compromise the accurate core.
+
+Audio compatibility and timing work continue alongside these milestones now that synthesis and playback are available.
 
 ## Contributing
 
@@ -151,6 +168,8 @@ Contributions are welcome. Start with [BUILDING.md](BUILDING.md) and [TESTING.md
 ## License
 
 PupSNES is licensed under the **GNU General Public License v3.0** — see [LICENSE](LICENSE). You're free to use, study, modify, and share it; derivative works must stay open under the same license.
+
+The bundled [blargg DSP core](src/third_party/snes_spc/README.md) retains its LGPL-2.1-or-later license; [miniaudio](third_party/miniaudio/README.md) retains its upstream public-domain/MIT-0 terms.
 
 ```
 PupSNES — a cycle-accurate Super Nintendo emulator

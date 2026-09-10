@@ -8,20 +8,16 @@
 #include "imgui.h"
 #include "panel_utils.h"
 #include "panels.h"
-#include "pupsnes/hw/rom/cartridge.h"
 #include "pupsnes/core/device.h"
-#include "pupsnes/hw/apu/sdsp.h"
 #include "pupsnes/core/snes.h"
+#include "pupsnes/hw/apu/sdsp.h"
+#include "pupsnes/hw/rom/cartridge.h"
 
 namespace pupsnes::debugger {
 
 namespace {
 
 constexpr float kMasterClockMHz = 21.477272F;
-
-// SDSP mode combo entries. Order matches the SdspMode enum so the index can be
-// reinterpreted directly. Update both together if a third backend lands.
-constexpr const char* kSdspModeLabels[] = {"Simple", "Accurate"};
 
 [[nodiscard]] const char* MapperLabel(MapperKind kind) {
   switch (kind) {
@@ -144,26 +140,16 @@ void RenderPeripheralsSection() {
   }
 }
 
-void RenderApuSection(SNES& snes) {
-  const SdspMode live = snes.GetSdspModeLive();
-  int pending_index = static_cast<int>(snes.GetSdspModePending());
-  ImGui::TextDisabled("S-DSP mode");
-  ImGui::SameLine();
-  ImGui::SetNextItemWidth(140.0F);
-  if (ImGui::Combo("##sdsp_mode", &pending_index, kSdspModeLabels,
-                   IM_ARRAYSIZE(kSdspModeLabels))) {
-    snes.SetSdspModePending(static_cast<SdspMode>(pending_index));
-  }
-  if (snes.GetSdspModePending() != live) {
-    ImGui::SameLine();
-    ImGui::TextDisabled("(reset to apply)");
-  }
-  ImGui::TextDisabled("Live: %s", kSdspModeLabels[static_cast<int>(live)]);
+void RenderApuSection(DebuggerApp& app) {
+  const auto& snes = app.GetSnes();
+  ImGui::TextDisabled("Sound interpolation: %s",
+                      snes.GetSdspModeLive() == SdspMode::kAccurate ? "Gaussian (SNES)" : "Linear");
+  if (snes.GetSdspModePending() != snes.GetSdspModeLive()) ImGui::TextDisabled("Sound change pending reset.");
+  if (ImGui::Button("Audio settings...")) app.OpenAudioSettings();
 }
 
 void RenderInternalDevicesSection(const SNES& snes) {
-  if (ImGui::BeginTable("##devices", 2,
-                        ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg)) {
+  if (ImGui::BeginTable("##devices", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg)) {
     ImGui::TableSetupColumn("Name");
     ImGui::TableSetupColumn("ID");
     ImGui::TableHeadersRow();
@@ -198,7 +184,7 @@ void RenderSnesPanel(DebuggerApp& app) {
     RenderPeripheralsSection();
   }
   if (ImGui::CollapsingHeader("APU", ImGuiTreeNodeFlags_DefaultOpen)) {
-    RenderApuSection(snes);
+    RenderApuSection(app);
   }
   if (ImGui::CollapsingHeader("Internal devices")) {
     RenderInternalDevicesSection(snes);
