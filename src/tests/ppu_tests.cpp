@@ -550,6 +550,10 @@ TEST_CASE("DotCost: most dots are 4 mcyc; H=323 and H=327 cost 6 on normal lines
 }
 
 TEST_CASE("BrightnessScale: fullsnes formula (channel * (b+1)) >> 4", "[unit][ppu]") {
+  // Exhaust the fast path's full uint16_t input domain, including bit 15.
+  for (uint32_t color = 0; color <= 0xFFFFU; ++color) {
+    REQUIRE(Ppu::BrightnessScale(static_cast<uint16_t>(color), 15U) == (color & 0x7FFFU));
+  }
   // Brightness 15 passes through unchanged (factor = 16, shift 4 = identity).
   REQUIRE(Ppu::BrightnessScale(0x7FFF, 15) == 0x7FFF);
   REQUIRE(Ppu::BrightnessScale(0x001F, 15) == 0x001F);  // pure red full
@@ -2227,6 +2231,178 @@ TEST_CASE("Sub-screen BG2 pixel is the math source when CGWSEL.1 is set", "[unit
   REQUIRE(view.pixels[0U * view.stride + 4U] == 0U);
 }
 
+TEST_CASE("Main and sub screens independently resolve shared BG pixels across priorities and masks", "[unit][ppu]") {
+  for (const uint8_t mode : {uint8_t{0}, uint8_t{1}, uint8_t{9}}) {
+    CAPTURE(mode);
+    SNES snes;
+    Ppu& ppu = snes.GetPpu();
+    ppu.Reset();
+    TimeMasterT now = 1;
+    BusWrite(snes, sppu::regs::kInidisp, 0x0FU, now++);
+    BusWrite(snes, sppu::regs::kVmain, 0x80U, now++);
+    WriteCgramWord(snes, 0U, 1U, now);  // Main backdrop: red 1.
+
+    // BG1 low priority, BG2/BG3 high priority. Mode 1's BG3-high bit
+    // moves BG3 from below BG1 to above BG2. Alternating transparent
+    // pixels force both failed high-priority tests and backdrop fallbacks.
+    constexpr uint16_t kColors[] = {4U, 4U << 5U, 4U << 10U};
+    for (uint8_t bg = 0; bg < 3; ++bg) {
+      const uint8_t index = static_cast<uint8_t>(bg + 1U);
+      const uint8_t palette_index = mode == 0U ? static_cast<uint8_t>(bg * 32U + index) : index;
+      WriteCgramWord(snes, palette_index, kColors[bg], now);
+      uint8_t tile[64] = {};
+      for (uint16_t p = 0; p < 64; ++p) {
+        tile[p] = (p & (1U << bg)) == 0U ? index : 0U;
+      }
+      const uint16_t base = static_cast<uint16_t>((bg + 1U) * 0x1000U);
+      if (mode == 0U || bg == 2U) {
+        WriteTile2bpp(snes, base, 0U, tile, now);
+      } else {
+        WriteTile4bpp(snes, base, 0U, tile, now);
+      }
+      const uint16_t map = static_cast<uint16_t>(bg * 0x400U);
+      for (uint16_t entry = 0; entry < 8; ++entry) {
+        WriteVramWord(snes, static_cast<uint16_t>(map + entry), bg == 0U ? 0U : 0x2000U, now);
+      }
+      BusWrite(snes, static_cast<uint16_t>(sppu::regs::kBg1Sc + bg), static_cast<uint8_t>(bg * 4U), now++);
+    }
+    BusWrite(snes, sppu::regs::kBg12Nba, 0x21U, now++);
+    BusWrite(snes, sppu::regs::kBg34Nba, 0x03U, now++);
+    BusWrite(snes, sppu::regs::kBgmode, mode, now++);
+    BusWrite(snes, sppu::regs::kCgwsel, sppu::regs::kCgwselSubScreenEnableMask, now++);
+    BusWrite(snes, sppu::regs::kCgadsub, 0x3FU, now++);
+    BusWrite(snes, sppu::regs::kColdata, 0x81U, now++);  // Sub fallback: blue 1.
+    REQUIRE(now < 1452U);
+
+    for (uint32_t x = 0; x < 64; ++x) {
+      const TimeMasterT dot_start = 1452U + 4U * x;
+      BusWrite(snes, sppu::regs::kTm, static_cast<uint8_t>(x / 8U), dot_start);
+      BusWrite(snes, sppu::regs::kTs, static_cast<uint8_t>(x % 8U), dot_start);
+      ppu.CatchUpTo(dot_start + 4U);
+    }
+    ppu.CatchUpTo(kFrameEndNtsc);
+    const FrameBufferView view = ppu.BuildFrontView();
+    for (uint32_t x = 0; x < 64; ++x) {
+      CAPTURE(x);
+      const auto expected_screen = [&](uint8_t mask, uint16_t fallback) {
+        const bool bg1 = (mask & 1U) != 0U && (x & 1U) == 0U;
+        const bool bg2 = (mask & 2U) != 0U && (x & 2U) == 0U;
+        const bool bg3 = (mask & 4U) != 0U && (x & 4U) == 0U;
+        if (mode == 9U && bg3) return kColors[2];
+        if (bg2) return kColors[1];
+        if (bg1) return kColors[0];
+        if (bg3) return kColors[2];
+        return fallback;
+      };
+      // Channels never exceed 8 here, so integer addition equals channel
+      // addition without saturation or a carry into the next channel.
+      const uint16_t expected = static_cast<uint16_t>(expected_screen(static_cast<uint8_t>(x / 8U), 1U) +
+                                                      expected_screen(static_cast<uint8_t>(x % 8U), 0x400U));
+      REQUIRE(view.pixels[x] == expected);
+    }
+  }
+}
+
+TEST_CASE("Decoded BG rows preserve every color lane and horizontal flip", "[unit][ppu]") {
+  for (const uint8_t bpp : {uint8_t{2}, uint8_t{4}}) {
+    const uint8_t color_count = static_cast<uint8_t>(1U << bpp);
+    for (uint8_t offset = 0; offset < color_count; ++offset) {
+      CAPTURE(bpp, offset);
+      SNES snes;
+      Ppu& ppu = snes.GetPpu();
+      ppu.Reset();
+      TimeMasterT now = 1;
+      BusWrite(snes, sppu::regs::kVmain, 0x80U, now++);
+      BusWrite(snes, sppu::regs::kInidisp, 0x0FU, now++);
+      for (uint8_t color = 0; color < color_count; ++color) WriteCgramWord(snes, color, color, now);
+      uint8_t tile[64];
+      for (uint32_t pixel = 0; pixel < 64; ++pixel) {
+        tile[pixel] = static_cast<uint8_t>((pixel + offset) % color_count);
+      }
+      if (bpp == 2U) {
+        WriteTile2bpp(snes, 0x1000U, 0U, tile, now);
+      } else {
+        WriteTile4bpp(snes, 0x1000U, 0U, tile, now);
+      }
+      WriteVramWord(snes, 0U, 0U, now);
+      WriteVramWord(snes, 1U, 0x4000U, now);  // Same tile, horizontally flipped.
+      BusWrite(snes, sppu::regs::kBg12Nba, 0x01U, now++);
+      BusWrite(snes, sppu::regs::kBgmode, bpp == 2U ? 0U : 1U, now++);
+      BusWrite(snes, sppu::regs::kTm, 1U, now++);
+      REQUIRE(now < 1452U);
+      ppu.CatchUpTo(9U * 1364U);
+      for (uint32_t y = 0; y < 8; ++y) {
+        for (uint32_t x = 0; x < 8; ++x) {
+          CAPTURE(x, y);
+          const uint32_t row = (y + 1U) * sppu::regs::kFrameBufferWidth + sppu::regs::kVisibleHStart;
+          REQUIRE(ppu.GetBackBuffer()[row + x] == tile[y * 8U + x]);
+          REQUIRE(ppu.GetBackBuffer()[row + 8U + x] == tile[y * 8U + 7U - x]);
+        }
+      }
+    }
+  }
+}
+
+TEST_CASE("Every BG priority competes with every OBJ priority on both screens", "[unit][ppu]") {
+  // Explicit highest-wins ranks for Mode 0, Mode 1, and Mode 1 BG3-high.
+  // Keep this oracle independent of the renderer's compiled priority plans.
+  constexpr uint8_t kModes[] = {0U, 1U, 9U};
+  constexpr uint8_t kBgRanks[3][4][2] = {
+      {{8U, 11U}, {7U, 10U}, {2U, 5U}, {1U, 4U}},
+      {{6U, 9U}, {5U, 8U}, {1U, 3U}, {0U, 0U}},
+      {{5U, 8U}, {4U, 7U}, {1U, 10U}, {0U, 0U}},
+  };
+  constexpr uint8_t kObjRanks[3][4] = {{3U, 6U, 9U, 12U}, {2U, 4U, 7U, 10U}, {2U, 3U, 6U, 9U}};
+  for (uint8_t mode_index = 0; mode_index < 3; ++mode_index) {
+    const uint8_t mode = kModes[mode_index];
+    for (uint8_t bg = 0; bg < (mode == 0U ? 4U : 3U); ++bg) {
+      for (uint8_t bg_priority = 0; bg_priority < 2; ++bg_priority) {
+        for (uint8_t obj_priority = 0; obj_priority < 4; ++obj_priority) {
+          CAPTURE(mode, bg, bg_priority, obj_priority);
+          SNES snes;
+          Ppu& ppu = snes.GetPpu();
+          ppu.Reset();
+          TimeMasterT now = 1;
+          BusWrite(snes, sppu::regs::kInidisp, 0x0FU, now++);
+          BusWrite(snes, sppu::regs::kVmain, 0x80U, now++);
+          const uint8_t bg_palette = mode == 0U ? static_cast<uint8_t>(bg * 32U + 1U) : 1U;
+          WriteCgramWord(snes, bg_palette, 7U, now);
+          WriteCgramWord(snes, 0xC1U, 7U << 5U, now);
+          uint8_t tile[64];
+          for (auto& pixel : tile) pixel = 1U;
+          WriteTile4bpp(snes, 0U, 1U, tile, now);  // OBJ tile 1.
+          if (mode == 0U || bg == 2U) {
+            WriteTile2bpp(snes, 0x1000U, 0U, tile, now);
+          } else {
+            WriteTile4bpp(snes, 0x1000U, 0U, tile, now);
+          }
+          WriteVramWord(snes, 0x2000U, static_cast<uint16_t>(bg_priority << 13U), now);
+          BusWrite(snes, static_cast<uint16_t>(sppu::regs::kBg1Sc + bg), 0x20U, now++);
+          BusWrite(snes, sppu::regs::kBg12Nba, 0x11U, now++);
+          BusWrite(snes, sppu::regs::kBg34Nba, 0x11U, now++);
+          WriteOamLowEntry(snes, 0U, 0U, 0U, 1U,
+                           static_cast<uint8_t>((static_cast<unsigned>(obj_priority) << 4U) | 0x08U), now);
+          WriteOamHighGroupByte(snes, 0U, 0U, now);
+          BusWrite(snes, sppu::regs::kBgmode, mode, now++);
+          const uint8_t mask = static_cast<uint8_t>((1U << bg) | sppu::regs::kTmObjMask);
+          BusWrite(snes, sppu::regs::kTm, mask, now++);
+          BusWrite(snes, sppu::regs::kTs, mask, now++);
+          BusWrite(snes, sppu::regs::kCgwsel, sppu::regs::kCgwselSubScreenEnableMask, now++);
+          BusWrite(snes, sppu::regs::kCgadsub, 0x3FU, now++);
+          REQUIRE(now < 1452U);
+          ppu.CatchUpTo(1456U);
+          const bool bg_wins = kBgRanks[mode_index][bg][bg_priority] > kObjRanks[mode_index][obj_priority];
+          // Both screens have the same winner. OBJ palette 4 enables its
+          // color math, so the selected red/green channel doubles to 14.
+          const uint16_t expected = bg_wins ? 14U : (14U << 5U);
+          const uint32_t index = sppu::regs::kFrameBufferWidth + sppu::regs::kVisibleHStart;
+          REQUIRE(ppu.GetBackBuffer()[index] == expected);
+        }
+      }
+    }
+  }
+}
+
 TEST_CASE("CGADSUB layer mask gates math per-layer", "[unit][ppu]") {
   // Confirm a foreground layer (BG1) that ISN'T in CGADSUB stays untouched
   // while backdrop pixels still get math applied. Strategy: BG1 tile 0 has
@@ -2389,6 +2565,18 @@ TEST_CASE("Mid-line VRAM write to BG1 tile data propagates to subsequent pixels"
   BusWrite(snes, sppu::regs::kBgmode, 0x01U, now++);
   BusWrite(snes, sppu::regs::kTm, sppu::regs::kTmBg1Mask, now++);
 
+  uint16_t expected_red = 0x001FU;
+  uint16_t expected_blue = 0x7C00U;
+  SECTION("Main screen only") {}
+  SECTION("Same background supplies both main and sub screens") {
+    BusWrite(snes, sppu::regs::kTs, sppu::regs::kTmBg1Mask, now++);
+    BusWrite(snes, sppu::regs::kCgwsel, sppu::regs::kCgwselSubScreenEnableMask, now++);
+    BusWrite(snes, sppu::regs::kCgadsub, sppu::regs::kCgadsubBg1Mask | sppu::regs::kCgadsubHalfMask, now++);
+    // Current math saturates the sum at 31 before halving to 15.
+    expected_red = 0x000FU;
+    expected_blue = 0x3C00U;
+  }
+
   // Render through screen_x=5 of line V=1. Dot H=27 ends at master cycle
   // 1*1364 + (27 - 0 + 1)*4 = 1476 (each pre-long dot costs 4 mcyc).
   ppu.CatchUpTo(1476U);
@@ -2402,12 +2590,14 @@ TEST_CASE("Mid-line VRAM write to BG1 tile data propagates to subsequent pixels"
   const FrameBufferView view = ppu.BuildFrontView();
 
   // Pixels rendered before the VRAM write keep the red color.
-  REQUIRE(view.pixels[0U * view.stride + 0U] == 0x001FU);
-  REQUIRE(view.pixels[0U * view.stride + 5U] == 0x001FU);
+  REQUIRE(view.pixels[0U * view.stride + 0U] == expected_red);
+  REQUIRE(view.pixels[0U * view.stride + 5U] == expected_red);
+  // The write lands inside pixel 6's dot; it first takes effect at pixel 7.
+  REQUIRE(view.pixels[0U * view.stride + 6U] == expected_red);
   // Pixel rendered after the VRAM write reads the new plane bytes → blue.
   // (Same tile_x as screen_x=5 — both inside tile 0 — so this only passes
   // when the cache notices the VMDATA invalidation.)
-  REQUIRE(view.pixels[0U * view.stride + 7U] == 0x7C00U);
+  REQUIRE(view.pixels[0U * view.stride + 7U] == expected_blue);
 }
 
 TEST_CASE("OBJ list latched per scanline — mid-line OAM write does not unrender sprite", "[unit][ppu]") {

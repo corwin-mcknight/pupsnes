@@ -242,6 +242,7 @@ class Ppu : public Device {
   //   out_channel = (channel * (brightness + 1)) >> 4
   // Brightness 0 collapses to ~1/16th; brightness 15 passes through unchanged.
   [[nodiscard]] static constexpr uint16_t BrightnessScale(uint16_t bgr555, uint8_t brightness) {
+    if (brightness == 15U) return static_cast<uint16_t>(bgr555 & 0x7FFFU);
     const uint32_t r = bgr555 & 0x1FU;
     const uint32_t g = (static_cast<uint32_t>(bgr555) >> 5U) & 0x1FU;
     const uint32_t b = (static_cast<uint32_t>(bgr555) >> 10U) & 0x1FU;
@@ -355,22 +356,17 @@ class Ppu : public Device {
   };
   [[nodiscard]] BgPixel FetchBgPixel(uint8_t bg, uint8_t bpp, uint32_t screen_x, uint32_t screen_y) const;
 
-  // One BG's cached 8-pixel column. The 4 plane bytes are pre-selected for
-  // the current row of the current (sub-)tile; pixel extraction only reads
-  // the bit at column position within these bytes. Cleared at scanline
+  // One BG's cached 8-pixel column. Planes are decoded into eight 4-bit
+  // color indices for the current row of the current (sub-)tile. Cleared at scanline
   // boundaries; invalidated mid-line via `bg_row_dirty_[bg]` when a register
   // write changes the data the cache holds (VRAM write, scroll, tilemap base,
   // tile size mode, etc.).
   struct BgRowCache {
     int32_t key = -1;  // (eff_x >> 3) when valid; -1 forces refetch
-    uint8_t plane0 = 0;
-    uint8_t plane1 = 0;
-    uint8_t plane2 = 0;
-    uint8_t plane3 = 0;
-    uint8_t palette_group = 0;
+    uint32_t pixels = 0;
+    uint8_t palette_base = 0;
     bool priority = false;
     bool hflip = false;
-    bool is_2bpp = false;  // remembered so extraction skips planes 2/3 in 2bpp
   };
 
   // OBJ pixel at screen-space (x, y). Iterates the per-scanline OAM evaluation
@@ -412,19 +408,19 @@ class Ppu : public Device {
     uint8_t layer_id;
     bool obj_palette_high;
   };
-  // Walk the active priority ladder for the current BGMODE/BG3-priority and
-  // return the first opaque pixel whose layer is in `layer_mask`. The
-  // pre-computed OBJ pixel is passed in so main + sub resolution share one
-  // FetchObjPixel call per dot. Returns {backdrop colour, layer_id=5} when
-  // nothing opaque renders.
-  [[nodiscard]] ResolvedPixel ResolveScreenPixel(uint8_t layer_mask, uint32_t screen_x, uint32_t screen_y,
-                                                 const ObjPixel& obj_px) const;
+  struct ResolvedScreens {
+    ResolvedPixel main;
+    ResolvedPixel sub;
+  };
+  // Resolve both screens together, fetching each needed BG pixel once.
+  // Ranking preserves the current mode's priority ladder and OBJ palette
+  // eligibility. All inputs belong to this dot, after pending writes drain.
+  [[nodiscard]] ResolvedScreens ResolveScreenPixels(uint32_t screen_x, uint32_t screen_y, const ObjPixel& obj_px) const;
 
-  // Apply $2131 CGADSUB math to the resolved main pixel. Sub source is the
-  // sub-screen resolution when CGWSEL.1 is set and a sub-screen layer renders
-  // here; otherwise the COLDATA fixed colour fills in. Returns BGR555.
-  [[nodiscard]] uint16_t ApplyColorMath(uint16_t main_bgr, uint8_t main_layer, bool main_obj_high, uint32_t screen_x,
-                                        uint32_t screen_y, const ObjPixel& obj_px) const;
+  // Apply $2131 CGADSUB math to the resolved main pixel. A sub-screen
+  // backdrop selects the COLDATA fixed colour. Returns BGR555.
+  [[nodiscard]] uint16_t ApplyColorMath(uint16_t main_bgr, uint8_t main_layer, bool main_obj_high,
+                                        const ResolvedPixel& sub) const;
 
   // --- Register shadow + decoded fields ---
   std::array<uint8_t, sppu::regs::kShadowSize> shadow_{};
