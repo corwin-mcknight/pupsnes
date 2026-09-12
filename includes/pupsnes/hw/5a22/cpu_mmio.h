@@ -9,12 +9,11 @@ namespace pupsnes {
 
 class SystemBus;
 
-// 5A22 CPU MMIO registers at $4200-$43FF on banks $00-$3F / $80-$BF.
-//
-// Today this device only stores MEMSEL ($420D) so the LoROM mapper can honor
-// FASTROM. Other registers (NMITIMEN, joypad, HDMA) are stubbed — reads return
-// open-bus sentinel and writes are accepted silently so ROMs can poke them
-// without the bus rejecting the transaction.
+// 5A22 CPU registers and controller ports on banks $00-$3F / $80-$BF.
+// Owns MEMSEL, NMI/IRQ controls, programmable I/O, and DMA enable registers;
+// delegates controller data to Joypad and transfers to DmaController, which
+// also owns the $43xx channel registers. Unimplemented register reads leave
+// the bus undriven and their writes are ignored.
 class CpuMmio : public Device {
  public:
   // MEMSEL ($420D): bit 0 selects the access speed for banks $80-$FD pages
@@ -25,7 +24,7 @@ class CpuMmio : public Device {
   // bit 7: VBlank NMI enable (gates the PPU /NMI line into the CPU's NMI
   //        flip-flop. Transition quirks are handled by
   //        CPU::OnNmiTimenChanged — see CpuMmio::WriteRegister).
-  // bits 5:4: H/V-IRQ trigger mode — 00 disabled, 01 V-only, 10 H-only,
+  // bits 5:4: H/V-IRQ trigger mode — 00 disabled, 01 H-only, 10 V-only,
   //           11 both. Mode 00 clears the TIMEUP latch and de-asserts /IRQ.
   // bit 0: auto-joypad read enable (deferred).
   static constexpr uint32_t kNmiTimenOffset = 0x4200U;
@@ -76,11 +75,9 @@ class CpuMmio : public Device {
   static constexpr uint8_t kHvbJoyAutoJoypadMask = 0x01U;
   static constexpr uint8_t kHvbJoyDrivenMask = kHvbJoyVblankMask | kHvbJoyHblankMask | kHvbJoyAutoJoypadMask;
 
-  // JOYSER0/JOYSER1 ($4016/$4017) — legacy serial joypad-read ports. The
-  // controller-state stub returns $00 (no buttons held) so games' polling
-  // code reads stable zero instead of open-bus garbage. Auto-joypad result
-  // registers $4218-$421F (JOY1L .. JOY4H) similarly read $00 until the
-  // controller model lands.
+  // JOYSER0/JOYSER1 ($4016/$4017) — serial joypad ports. Joypad provides P1
+  // serial data and the JOY1 result bytes; absent P2-P4 controllers read zero.
+  // The timed auto-read sequence and HVBJOY busy interval remain unmodeled.
   static constexpr uint32_t kJoySer0Offset = 0x4016U;
   static constexpr uint32_t kJoySer1Offset = 0x4017U;
   static constexpr uint32_t kAutoJoyResultFirst = 0x4218U;
@@ -88,7 +85,8 @@ class CpuMmio : public Device {
 
   // MDMAEN ($420B): write-only, bit N = trigger general DMA on channel N.
   // HDMAEN ($420C): write-only, bit N = enable HDMA on channel N for the frame.
-  // HDMA itself is deferred; in v1 we shadow the byte for debug visibility.
+  // DmaController samples HDMAEN at frame init and gates channels with its
+  // live value on each line.
   static constexpr uint16_t kMdmaEnOffset = 0x420BU;
   static constexpr uint16_t kHdmaEnOffset = 0x420CU;
 
@@ -138,8 +136,7 @@ class CpuMmio : public Device {
   // Lives on CpuMmio because it owns the register surface and IRQ line state.
   void HandleIrqMatch(TimeMasterT t);
 
-  // HDMA execution is not yet implemented; expose the $420C shadow so the
-  // debugger can show what the game has programmed.
+  // Live $420C shadow, consumed by DmaController and exposed to the debugger.
   [[nodiscard]] uint8_t GetHdmaEn() const { return hdmaen_; }
 
  private:

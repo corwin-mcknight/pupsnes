@@ -138,11 +138,9 @@ bool DebuggerApp::LoadRomFromPath(const std::string& path) {
   // ROM image. Strip it before the SHA-1 and the mapper validation so a
   // headered LoROM is accepted and mapped as its raw payload.
   StripSmcCopierHeader(rom);
-  {
-    Sha1 hasher;
-    hasher.Update(rom.data(), rom.size());
-    rom_sha1_ = hasher.Finalize();
-  }
+  Sha1 hasher;
+  hasher.Update(rom.data(), rom.size());
+  const Sha1Digest rom_sha1 = hasher.Finalize();
 
   try {
     const BuildResult load_result = snes_.LoadRom(rom);
@@ -165,6 +163,8 @@ bool DebuggerApp::LoadRomFromPath(const std::string& path) {
     run_control_.ResetMachineState();
     loaded_rom_ = true;
     loaded_rom_path_ = path;
+    // Failed replacement loads must keep the running ROM's trace identity.
+    rom_sha1_ = rom_sha1;
     std::error_code abs_ec;
     const fs::path absolute = fs::weakly_canonical(fs::path(path), abs_ec);
     const std::string resolved = abs_ec ? path : absolute.string();

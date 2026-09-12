@@ -22,14 +22,16 @@ enum class TimingCondition : uint8_t {
   kBranchPageCrossed = 4,
   // Shares bit 4 with kBranchPageCrossed. No opcode uses both because branch
   // instructions never touch the direct page and DP-addressed instructions
-  // never branch. CPU code sets timing_context_.branch_page_crossed from the
-  // relevant source at opcode-fetch (DP-low-nonzero) or branch-apply time.
+  // never branch. EvaluateTimingRule ORs the separate DP-low-nonzero and
+  // branch-page-crossed state into this slot. Opcode validation rejects
+  // sequences that combine a DP fragment with a branch/index-cross producer.
   kDirectPageLowNonzero = 4,
   // Also shares bit 4. Set by kSetAddrHighDbrAddIndex when an absolute-indexed
   // *read* crosses a 256-byte page boundary; OR'd into the bit-4 source in
   // EvaluateTimingRule. Safe to alias: absolute-indexed reads never branch and
   // never use direct-page addressing, so the three bit-4 sources are mutually
-  // exclusive per opcode.
+  // exclusive per opcode. Indirect-indexed DP reads currently pay their index
+  // cycle unconditionally; a conditional crossing there needs a separate bit.
   kIndexedPageCrossed = 4,
 };
 

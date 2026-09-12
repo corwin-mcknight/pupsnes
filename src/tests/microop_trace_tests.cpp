@@ -1,4 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
+#include <array>
+#include <initializer_list>
 #include <string_view>
 
 #include "pupsnes/hw/5a22/cpu.h"
@@ -135,6 +137,7 @@ TEST_CASE("MicroOpTrace clear resets state", "[microop]") {
 
 #include "pupsnes/core/snes.h"
 #include "pupsnes/hw/rom/cartridge.h"
+#include "cpu_test_fixture.h"
 
 namespace pupsnes {
 namespace {
@@ -240,12 +243,77 @@ TEST_CASE("MicroOpRecorder captures bus address for opcode fetch", "[microop]") 
     if (e.kind == CapturedEvent::Kind::kOp && e.rec.index == 0 && e.rec.bus_action == MicroBusAction::kFetchPc) {
       CHECK(e.rec.has_bus);
       // bus_addr should point to the opcode address (PBR:PC at fetch time).
+      CHECK(e.rec.bus_addr == 0x008000U);
       CHECK(e.rec.bus_value == 0xA9);
       found = true;
       break;
     }
   }
   CHECK(found);
+}
+
+TEST_CASE("Micro-op bus operands match actual transfers before internal state changes", "[unit][microop][cpu]") {
+  struct RecordingBus : BusEventSink {
+    std::vector<BusEvent> events;
+    void OnBusEvent(const BusEvent& event) override { events.push_back(event); }
+  };
+  struct Program {
+    const char* name;
+    std::initializer_list<uint8_t> bytes;
+    bool wide = false;
+  };
+  const Program programs[]{
+      {"STA absolute", {0x8D, 0x34, 0x12}},
+      {"LDA absolute 16-bit", {0xAD, 0x34, 0x12}, true},
+      {"ASL absolute", {0x0E, 0x34, 0x12}},
+      {"PHA", {0x48}},
+      {"PLA", {0x68}},
+      {"PLB", {0xAB}},
+      {"MVN", {0x54, 0x7F, 0x7E}},
+  };
+  for (const Program& program : programs) {
+    CAPTURE(program.name);
+    test::ResetFixture f;
+    f.LoadInstruction(program.bytes);
+    f.cpu.Reset();
+    f.ModifyRegs([&](auto& regs) {
+      regs.A = 0x005A;
+      regs.DBR = 0x7E;
+      regs.SP = 0x01FE;
+      regs.X = 0x1234;
+      regs.Y = 0x2345;
+      regs.P.E = false;
+      regs.P.M = !program.wide;
+      regs.P.X = false;
+    });
+    f.wram.WriteRegister(0x1234, 0x81, 0);
+    f.wram.WriteRegister(0x1235, 0xAB, 0);
+    f.wram.WriteRegister(0x01FF, 0xA5, 0);
+
+    VectorRecorder recorder;
+    RecordingBus bus;
+    f.cpu.SetMicroOpRecorder(&recorder);
+    f.snes.system_bus->SetEventSink(&bus);
+    f.cpu.MutableDebuggerContract().step_target = 1;
+    REQUIRE(f.cpu.TickToTarget(1000).reason == TickStopReason::kRetiredStepTarget);
+
+    std::size_t bus_index = 0;
+    for (const CapturedEvent& event : recorder.events) {
+      if (event.kind != CapturedEvent::Kind::kOp || event.rec.status != MicroOpStatus::kExecuted ||
+          !event.rec.has_bus) {
+        continue;
+      }
+      CAPTURE(bus_index, event.rec.index);
+      REQUIRE(bus_index < bus.events.size());
+      CHECK(event.rec.bus_addr == bus.events[bus_index].address);
+      CHECK(event.rec.bus_value == bus.events[bus_index].data);
+      ++bus_index;
+    }
+    REQUIRE(bus_index == bus.events.size());
+    REQUIRE(bus_index > 1U);
+    f.cpu.SetMicroOpRecorder(nullptr);
+    f.snes.system_bus->SetEventSink(nullptr);
+  }
 }
 
 TEST_CASE("MicroOpRecorder emits Skipped for untaken branch", "[microop]") {

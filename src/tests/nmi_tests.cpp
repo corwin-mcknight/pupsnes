@@ -7,7 +7,6 @@
 //     runs, flags pushed with B=0 in emulation.
 //   * WAI wakes on NMI assertion, takes the 2-cycle internal wake latency,
 //     then delivers. STP never wakes.
-//   * ABORT > NMI > IRQ priority is respected by SelectPendingInterrupt.
 //
 // Tests drive the machine via TickToTarget through a real LoROM ResetFixture
 // (the same one the CPU tests use). The reset ROM traps the CPU in a tight
@@ -22,6 +21,7 @@
 
 #include <algorithm>
 #include <catch2/catch_test_macros.hpp>
+#include <initializer_list>
 
 #include "cpu_test_fixture.h"
 #include "pupsnes/hw/5a22/cpu.h"
@@ -302,6 +302,63 @@ TEST_CASE("WAI halts until NMI assertion, then delivers", "[unit][cpu][nmi][wai]
   // past the handler entry and still in handler-land (not back in reset spin).
   REQUIRE(regs.PC >= 0x9000U);
   REQUIRE(regs.PC < 0x9400U);
+}
+
+TEST_CASE("WAI wake latency is independent of target slice size", "[unit][cpu][nmi][wai]") {
+  // Keep NMITIMEN clear: the raw NMI pin wakes WAI, but no interrupt entry
+  // obscures the exact twelve-master-cycle wake duration.
+  for (const TimeMasterDeltaT slice : {1U, 2U, 3U, 4U, 5U, 6U, 7U, 11U, 12U}) {
+    CAPTURE(slice);
+    ResetFixture f;
+    f.LoadInstruction({0xCB, 0xEA});
+    f.snes.Reset();
+    f.cpu.MutableDebuggerContract().step_target = 1;
+    REQUIRE(f.cpu.TickToTarget(100).reason == TickStopReason::kRetiredStepTarget);
+    REQUIRE(f.cpu.GetHaltState() == HaltState::kWai);
+    REQUIRE(f.cpu.GetRetiredInstructionCount() == 1U);
+
+    // The halted CPU advances to VBlank without executing another opcode.
+    REQUIRE(f.cpu.TickToTarget(kStartOfV225).reason == TickStopReason::kReachedTarget);
+    for (TimeMasterDeltaT elapsed = 0; elapsed < 12U;) {
+      const TimeMasterDeltaT step = std::min<TimeMasterDeltaT>(slice, 12U - elapsed);
+      elapsed += step;
+      const TickResult result = f.cpu.TickToTarget(kStartOfV225 + elapsed);
+      CAPTURE(elapsed);
+      REQUIRE(result.completed_cycles == step);
+      REQUIRE(f.snes.GetMasterTime() == kStartOfV225 + elapsed);
+      REQUIRE(f.cpu.GetWaiWakeCyclesRemaining() == (12U - elapsed + 5U) / 6U);
+      REQUIRE(f.cpu.GetHaltState() == (elapsed < 12U ? HaltState::kWai : HaltState::kNone));
+      REQUIRE(f.cpu.GetRegs().PC == 0x8001U);
+      REQUIRE(f.cpu.GetRetiredInstructionCount() == 1U);
+    }
+
+    f.cpu.MutableDebuggerContract().step_target = 1;
+    const TickResult resumed = f.cpu.TickToTarget(kStartOfV225 + 100U);
+    REQUIRE(resumed.reason == TickStopReason::kRetiredStepTarget);
+    REQUIRE(resumed.completed_cycles == 14U);  // NOP: one 8-cycle fetch + 6 internal.
+    REQUIRE(f.cpu.GetRegs().PC == 0x8002U);
+  }
+}
+
+TEST_CASE("Reset discards a partially served WAI wake cycle", "[unit][cpu][nmi][wai]") {
+  ResetFixture f;
+  f.LoadInstruction({0xCB, 0xEA});
+  for (unsigned attempt = 0; attempt < 2U; ++attempt) {
+    f.snes.Reset();
+    f.cpu.MutableDebuggerContract().step_target = 1;
+    REQUIRE(f.cpu.TickToTarget(100).reason == TickStopReason::kRetiredStepTarget);
+    (void)f.cpu.TickToTarget(kStartOfV225);
+    // Reset the first run after five wake cycles. The second run must still
+    // need all twelve cycles rather than inherit those five banked cycles.
+    const TimeMasterDeltaT elapsed = attempt == 0U ? 5U : 11U;
+    (void)f.cpu.TickToTarget(kStartOfV225 + elapsed);
+    REQUIRE(f.cpu.GetHaltState() == HaltState::kWai);
+    if (attempt == 1U) {
+      REQUIRE(f.cpu.GetWaiWakeCyclesRemaining() == 1U);
+      (void)f.cpu.TickToTarget(kStartOfV225 + 12U);
+      REQUIRE(f.cpu.GetHaltState() == HaltState::kNone);
+    }
+  }
 }
 
 TEST_CASE("STP halts permanently — NMI does not wake", "[unit][cpu][nmi][stp]") {

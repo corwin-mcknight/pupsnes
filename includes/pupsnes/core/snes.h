@@ -58,16 +58,12 @@ class SNES {
   SNES();
   ~SNES();
 
-  // Load a cartridge image as the named mapper. On success the bus is fully
-  // re-mapped and the result carries a one-line detection summary. On
-  // failure the previous cartridge state is left untouched and the result's
-  // `message` explains specifically what was wrong (empty, copier header
-  // present, mapper mismatch, etc.).
   // Auto-detect the cart profile from the ROM header and dispatch through
-  // the registry. The returned BuildResult carries the new Cartridge (when
-  // ok=true) which has already been installed on this SNES; the unique_ptr
-  // remains live in BuildResult only so the caller can inspect the cart
-  // alongside the message and profile fields.
+  // the registry. A successful load installs the new cartridge and its bus
+  // mappings on this SNES, consuming BuildResult::cart. The returned result
+  // retains the profile and message; inspect the installed cartridge through
+  // GetCartridge(). On failure the previous cartridge and mappings remain
+  // intact, and the result's message explains why the load was refused.
   BuildResult LoadRom(std::span<const uint8_t> rom_data);
 
   // Same as LoadRom but skips detection and uses the caller-supplied profile.

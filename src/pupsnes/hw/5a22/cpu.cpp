@@ -138,6 +138,7 @@ void CPU::Reset() {
   fault_.reset();
   halt_state_ = HaltState::kNone;
   wai_wake_cycles_remaining_ = 0;
+  wai_wake_partial_cycles_ = 0;
   nmi_curr_ = false;
   nmi_gated_prev_ = false;
   nmi_pending_ = false;
@@ -725,6 +726,7 @@ void CPU::ExecuteInternalOp(MicroInternalOp op, [[maybe_unused]] uint8_t params)
       const bool is_stp = (params & 0x01U) != 0U;
       halt_state_ = is_stp ? HaltState::kStp : HaltState::kWai;
       wai_wake_cycles_remaining_ = 0;
+      wai_wake_partial_cycles_ = 0;
       return;
     }
 
@@ -1089,17 +1091,35 @@ CPU::StepResult CPU::FetchOpcode(TimeMasterDeltaT cycle_time) {
   return StepResult{TickStopReason::kReachedTarget, false};
 }
 
-TickResult CPU::PerformBusAction(MicroBusAction action, [[maybe_unused]] uint8_t params, TimeMasterDeltaT cycle_time) {
+TickResult CPU::PerformBusAction(MicroBusAction action, [[maybe_unused]] uint8_t params, TimeMasterDeltaT cycle_time,
+                                 MicroOpBusAccess* recorded_access) {
   namespace mp = opcode_defs_internal::micro_op_params;
+  // Preserve the byte actually transferred and the address used by the bus.
+  // The paired internal operation may immediately overwrite fetch_data_ or
+  // addr_, and stack accesses use SP rather than addr_.
+  const auto read = [&](SnesAddrT address) {
+    const TickResult result = BusRead(address, cycle_time);
+    if (recorded_access != nullptr) {
+      *recorded_access = {address & 0xFFFFFFU, fetch_data_};
+    }
+    return result;
+  };
+  const auto write = [&](SnesAddrT address, uint8_t value) {
+    const TickResult result = BusWrite(address, value, cycle_time);
+    if (recorded_access != nullptr) {
+      *recorded_access = {address & 0xFFFFFFU, value};
+    }
+    return result;
+  };
   switch (action) {
     case MicroBusAction::kNone: return TickResult{0, TickStopReason::kReachedTarget};
     case MicroBusAction::kFetchPc: {
-      TickResult blocked = BusRead(PcAddr(regs_), cycle_time);
+      TickResult blocked = read(PcAddr(regs_));
       if (blocked.reason != TickStopReason::kReachedTarget) return blocked;
       regs_.PC = static_cast<uint16_t>(regs_.PC + 1U);
       return TickResult{0, TickStopReason::kReachedTarget};
     }
-    case MicroBusAction::kReadAddr: return BusRead(addr_, cycle_time);
+    case MicroBusAction::kReadAddr: return read(addr_);
     case MicroBusAction::kWriteRegByte: {
       const WriteSrc src = mp::UnpackWriteAddrSrc(params);
       const ByteSel sel = mp::UnpackWriteAddrByteSel(params);
@@ -1118,7 +1138,7 @@ TickResult CPU::PerformBusAction(MicroBusAction action, [[maybe_unused]] uint8_t
         case WriteSrc::kZero: byte = 0; break;
         case WriteSrc::kScratchLow: byte = static_cast<uint8_t>(addr_scratch_ & 0x00FFU); break;
       }
-      return BusWrite(addr_, byte, cycle_time);
+      return write(addr_, byte);
     }
     case MicroBusAction::kPushStack: {
       uint8_t byte = 0;
@@ -1149,9 +1169,9 @@ TickResult CPU::PerformBusAction(MicroBusAction action, [[maybe_unused]] uint8_t
         case PushSrc::kAddrLow: byte = static_cast<uint8_t>(addr_ & 0xFFU); break;
         case PushSrc::kAddrHigh: byte = static_cast<uint8_t>((addr_ >> 8U) & 0xFFU); break;
       }
-      return BusWrite(StackAddr(regs_), byte, cycle_time);
+      return write(StackAddr(regs_), byte);
     }
-    case MicroBusAction::kPullStack: return BusRead(StackAddr(regs_), cycle_time);
+    case MicroBusAction::kPullStack: return read(StackAddr(regs_));
     case MicroBusAction::kPreIncPullStack: {
       // Stack pulls: SP must point at the top of the stack before reading.
       // "New" 65C816 instructions in E=1 use 16-bit SP math (no page-1 wrap);
@@ -1163,7 +1183,7 @@ TickResult CPU::PerformBusAction(MicroBusAction action, [[maybe_unused]] uint8_t
       } else {
         regs_.SP = static_cast<uint16_t>(regs_.SP + 1U);
       }
-      return BusRead(StackAddr(regs_), cycle_time);
+      return read(StackAddr(regs_));
     }
   }
   return TickResult{0, TickStopReason::kReachedTarget};
@@ -1180,8 +1200,9 @@ CPU::StepResult CPU::ExecuteMicroOp(TimeMasterDeltaT cycle_time) {
 
   const MicroOp* const ops = instr->ops.data();
   const MicroOp& mop = ops[op_idx];
-  const SnesAddrT pre_pc = PcAddr(regs_);
-  TickResult bus_result = PerformBusAction(mop.bus_action, mop.params, cycle_time);
+  MicroOpBusAccess bus_access;
+  TickResult bus_result =
+      PerformBusAction(mop.bus_action, mop.params, cycle_time, micro_op_recorder_ != nullptr ? &bus_access : nullptr);
   if (bus_result.reason != TickStopReason::kReachedTarget) {
     return StepResult{bus_result.reason, true};
   }
@@ -1197,8 +1218,8 @@ CPU::StepResult CPU::ExecuteMicroOp(TimeMasterDeltaT cycle_time) {
     rec.fetch_data = fetch_data_;
     rec.addr = addr_;
     rec.has_bus = (mop.bus_action != MicroBusAction::kNone);
-    rec.bus_addr = (mop.bus_action == MicroBusAction::kFetchPc) ? pre_pc : addr_;
-    rec.bus_value = fetch_data_;
+    rec.bus_addr = bus_access.address;
+    rec.bus_value = bus_access.value;
     micro_op_recorder_->OnMicroOp(rec);
   }
 
@@ -1293,19 +1314,16 @@ TickResult CPU::TickToTarget(TimeMasterT target_master_time) {
 
     if (wai_wake_cycles_remaining_ > 0) {
       while (wai_wake_cycles_remaining_ > 0 && snes_->GetMasterTime() < target_master_time) {
-        const TimeMasterDeltaT step = kInternalCpuCycleMaster;
-        if (snes_->GetMasterTime() + step > target_master_time) {
-          // Budget exhausted mid-wake cycle — consume what we can and bail;
-          // resume on next Tick.
-          const TimeMasterDeltaT avail = target_master_time - snes_->GetMasterTime();
-          snes_->SetMasterTime(target_master_time);
-          local_time_ = target_master_time;
-          (void)avail;
-          return {snes_->GetMasterTime() - start, TickStopReason::kReachedTarget};
-        }
+        const TimeMasterDeltaT remaining = kInternalCpuCycleMaster - wai_wake_partial_cycles_;
+        const TimeMasterDeltaT available = target_master_time - snes_->GetMasterTime();
+        const TimeMasterDeltaT step = std::min(remaining, available);
         snes_->SetMasterTime(snes_->GetMasterTime() + step);
         local_time_ = snes_->GetMasterTime();
-        --wai_wake_cycles_remaining_;
+        wai_wake_partial_cycles_ += step;
+        if (wai_wake_partial_cycles_ == kInternalCpuCycleMaster) {
+          wai_wake_partial_cycles_ = 0;
+          --wai_wake_cycles_remaining_;
+        }
       }
       if (wai_wake_cycles_remaining_ == 0) {
         halt_state_ = HaltState::kNone;

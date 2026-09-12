@@ -31,6 +31,9 @@ class MicroOpTrace : public MicroOpRecorder {
   void OnInstructionBegin(uint8_t opcode, SnesAddrT pc) override;
   void OnMicroOp(const MicroOpRecord& rec) override;
   void OnInstructionEnd(uint64_t retired_seq) override;
+  // An instruction interrupted by unrecorded execution cannot be completed
+  // accurately. Keep retired history and resume at the next instruction begin.
+  void OnRecordingInterrupted() override { current_.reset(); }
 
   [[nodiscard]] const std::optional<InstructionTrace>& Current() const { return current_; }
   [[nodiscard]] std::size_t RetiredSize() const { return retired_.Size(); }

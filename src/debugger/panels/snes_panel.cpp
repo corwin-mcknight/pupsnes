@@ -1,6 +1,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <filesystem>
 #include <string>
 #include <string_view>
 
@@ -91,7 +92,8 @@ void RenderCartridgeSection(const Cartridge& cart, std::string_view rom_path) {
   FormatByteSize(rom_size_buf, sizeof(rom_size_buf), cart.Size());
   FormatByteSize(sram_size_buf, sizeof(sram_size_buf), cart.SramSize());
 
-  LabelValue("File:", rom_path.empty() ? std::string_view{"(none)"} : rom_path);
+  const std::string rom_filename = std::filesystem::path(rom_path).filename().string();
+  LabelValue("File:", rom_filename.empty() ? std::string_view{"(none)"} : std::string_view{rom_filename});
   LabelValue("Title:", cart.GetInternalTitle());
   LabelValue("Mapper:", MapperLabel(cart.GetMapperKind()));
   LabelValue("ROM size:", rom_size_buf);

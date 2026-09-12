@@ -15,14 +15,12 @@ namespace pupsnes {
 
 class SNES;
 
-// Result of building a cartridge from raw bytes + a detected profile. Always
-// fully populated: on success `ok=true` and `message` carries a one-line
-// summary; on failure `ok=false`, `message` explains why no builder claimed
-// the (mapper, coprocessor) pair. The `cart` unique_ptr is left null in the
-// "stable Cartridge instance" lifecycle phase — the destroy-and-rebuild
-// path in Phase 5+ will populate it. `profile` always reflects what the
-// build path used to dispatch (either the auto-detected profile or a
-// caller-provided override).
+// Result of building a cartridge from raw bytes + a detected profile.
+// A successful registry builder returns ownership of the newly mapped cart
+// with `ok=true`. SNES::LoadRom / LoadRomWithProfile consume that pointer
+// when installing the cartridge, so their returned result has an empty cart.
+// `message` describes the load or failure, and `profile` records the profile
+// used for dispatch (auto-detected or supplied by the caller).
 struct BuildResult {
   bool ok = false;
   std::unique_ptr<Cartridge> cart;

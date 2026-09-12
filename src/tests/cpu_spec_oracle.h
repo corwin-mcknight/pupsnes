@@ -1,7 +1,7 @@
 #pragma once
 
 // Test-private oracle derived from Bruce Clark's 65C816 reference
-// (docs/plans/6502opcodes.md). Every implemented opcode gets one SpecEntry
+// (see docs/cpu-opcodes.md). Every implemented opcode gets one SpecEntry
 // row with its canonical mnemonic, addressing mode, length formula, cycle
 // formula, and touched-flag bitmask. Sweep tests in cpu_opcode_defs_tests.cpp
 // cross-check the lowered opcode table against these rows so drift between
@@ -190,7 +190,7 @@ constexpr std::string_view NormalizeAddressing(std::string_view internal) {
 }
 
 // One row per currently implemented opcode. Add rows as new opcodes land.
-// Columns lifted verbatim from docs/plans/6502opcodes.md. Flag masks built
+// Columns follow Bruce Clark's reference. Flag masks built
 // with FlagsFrom() from Clark's nvmxdizc column.
 constexpr std::array<SpecEntry, 256> kSpec = {{
     // Misc
@@ -263,8 +263,8 @@ constexpr std::array<SpecEntry, 256> kSpec = {{
     {0x47, "EOR", "[dir]", "2", "7-m+w", FlagsFrom("n.m...m."), 0U, true},
     {0xC7, "CMP", "[dir]", "2", "7-m+w", FlagsFrom("n.m...mm"), 0U, true},
 
-    // ALU / Load abs,Y. Same "always pay index-add" model as abs,X — formula
-    // collapses to 5-m for ALU + LDA, 5-x for LDX.
+    // ALU / Load abs,Y: index-add cycle for a 16-bit index or page crossing,
+    // plus the second data read when the destination is 16-bit.
     {0x79, "ADC", "abs,Y", "3", "6-m-x+x*p", FlagsFrom("nvm...mm")},
     {0xF9, "SBC", "abs,Y", "3", "6-m-x+x*p", FlagsFrom("nvm...mm")},
     {0x39, "AND", "abs,Y", "3", "6-m-x+x*p", FlagsFrom("n.m...m.")},
@@ -274,7 +274,7 @@ constexpr std::array<SpecEntry, 256> kSpec = {{
     {0xB9, "LDA", "abs,Y", "3", "6-m-x+x*p", FlagsFrom("n.....z.")},
     {0xBE, "LDX", "abs,Y", "3", "6-2*x+x*p", FlagsFrom("n.....z.")},
 
-    // BIT misc — BIT dp (4-m+w) and BIT abs,X (5-m, always-pay model).
+    // BIT dp uses the DP penalty; BIT abs,X uses the conditional index cycle.
     {0x24, "BIT", "dir", "2", "4-m+w", FlagsFrom("nvm...m."), 0U, true},
     {0x3C, "BIT", "abs,X", "3", "6-m-x+x*p", FlagsFrom("nvm...m.")},
 
@@ -409,9 +409,8 @@ constexpr std::array<SpecEntry, 256> kSpec = {{
     {0x45, "EOR", "dir", "2", "4-m+w", FlagsFrom("n.m...m."), 0U, true},
     {0xC5, "CMP", "dir", "2", "4-m+w", FlagsFrom("n.m...mm"), 0U, true},
 
-    // ALU / Load abs,X (plan 01-07). Our lowering always pays the index-add
-    // penalty, so the effective formula is 5-m (LDY: 5-x). Bruce Clark's
-    // formula is "4-m+x+x*p" but with unconditional penalty it collapses.
+    // ALU / Load abs,X: the index-add cycle executes for a 16-bit index or
+    // page crossing. LDY's data width follows X rather than M.
     {0x7D, "ADC", "abs,X", "3", "6-m-x+x*p", FlagsFrom("nvm...mm")},
     {0xFD, "SBC", "abs,X", "3", "6-m-x+x*p", FlagsFrom("nvm...mm")},
     {0x3D, "AND", "abs,X", "3", "6-m-x+x*p", FlagsFrom("n.m...m.")},
@@ -561,14 +560,15 @@ constexpr int CountActiveCycles(const Entry& entry, uint32_t packed_bits) {
 // Encode a FormulaInputs into the packed TimingCondition bits. m=1/x=1 mean
 // the *16-bit* condition bit is 0 (the implementation flag tracks the
 // "wider" state). Branch conditions track t directly; page-cross/emulation
-// map onto their respective bits.
+// map onto their respective bits. The caller zeros the unused source of
+// bit 4 (p for DP opcodes, w otherwise) before packing.
 constexpr uint32_t PackConditionBits(const FormulaInputs& in) {
   uint32_t bits = 0;
   if (in.t) bits |= 1U << 0U;   // kBranchTaken
   if (!in.m) bits |= 1U << 1U;  // kAccumulator16 (m=0 → 16-bit → bit set)
   if (!in.x) bits |= 1U << 2U;  // kIndex16
   if (in.e) bits |= 1U << 3U;   // kEmulationMode
-  if (in.p) bits |= 1U << 4U;   // kBranchPageCrossed
+  if (in.p || in.w) bits |= 1U << 4U;  // page crossing or DP-low-nonzero
   return bits;
 }
 

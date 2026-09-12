@@ -1,4 +1,4 @@
-// Headless PPU screenshot CLI. Loads a LoROM, runs the emulator for N frames,
+// Headless PPU screenshot CLI. Loads a ROM, runs the emulator for N frame periods,
 // and writes the PPU's front-buffer view to a binary PPM (P6, 8-bit per channel).
 //
 // Used by external tools to take a visual snapshot of a ROM's PPU output
@@ -35,7 +35,7 @@ constexpr std::string_view kUsage =
     "Usage: pupsnes-screenshot --rom <path> --frames N [--output <path>]\n"
     "                          [--log-events <cats>] [--log-events-file <path>]\n"
     "\n"
-    "Loads a LoROM image, boots a SNES, runs for N frames, then writes the\n"
+    "Loads a supported ROM image, boots a SNES, runs for N frame periods, then writes the\n"
     "PPU front buffer (logical width x height, BGR555 -> RGB888) to a binary\n"
     "PPM file. Default output is pupsnes-screenshot.ppm in the cwd.\n"
     "\n"

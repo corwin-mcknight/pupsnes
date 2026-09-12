@@ -39,9 +39,8 @@ enum class MicroInternalOp : uint8_t;
 struct MicroOpRecord;
 class MicroOpRecorder;
 
-// Typed enums for MicroOp::params packing. Populated in subsequent refactor
-// steps as each enum group collapses into a parameterized category. For now
-// they exist alongside MicroInternalOp; no opcode uses them yet.
+// Typed operands packed into MicroOp::params by the opcode-building helpers
+// in cpu_opcode_defs_internal.h.
 enum class Reg : uint8_t { kA, kX, kY, kSp, kDp, kDbr, kP };
 enum class Width : uint8_t { kByMFlag, kByXFlag, kForce8, kForce16 };
 enum class ByteSel : uint8_t { kLow, kHigh, kBank };
@@ -123,9 +122,9 @@ struct InstructionEntry;
 
 // 65C816 CPU device.
 //
-// tick() walks a micro-op table: cycle 0 always fetches the opcode via the
+// TickToTarget walks a micro-op table: cycle 0 fetches the opcode via the
 // SystemBus, then the per-opcode remaining ops execute one per cycle. All bus
-// accesses use SystemBus plan/follow.
+// accesses use SystemBus, with a direct-memory fast path where available.
 class CPU : public MasterClockDriver {
  public:
   // Alias so existing call sites can keep using CPU::Regs while the type lives
@@ -217,6 +216,13 @@ class CPU : public MasterClockDriver {
     bool stopped = false;
   };
 
+  // Bus operands captured at the transaction, before the internal operation
+  // updates address/data scratch state. Populated only when recording.
+  struct MicroOpBusAccess {
+    SnesAddrT address = 0;
+    uint8_t value = 0;
+  };
+
   Regs regs_;
 
   // Micro-op execution state.
@@ -244,6 +250,9 @@ class CPU : public MasterClockDriver {
   // resumes (the next instruction-boundary sample delivers the interrupt if
   // still gated appropriately).
   uint8_t wai_wake_cycles_remaining_ = 0;
+  // Master cycles already served within the current six-master-cycle wake
+  // step. Retained across target boundaries just like normal micro-op progress.
+  TimeMasterDeltaT wai_wake_partial_cycles_ = 0;
 
   // --- Interrupt state ---
   // Raw /NMI line level from the PPU, sampled at instruction boundaries.
@@ -260,8 +269,8 @@ class CPU : public MasterClockDriver {
   // being written 0 (the gate going low clears the flip-flop).
   bool nmi_pending_ = false;
 
-  // Placeholders for future ABORT / IRQ wiring. No device drives these today;
-  // fields exist so the state-block layout is stable when those signals land.
+  // ABORT is reserved for future wiring. IRQ is sampled from CpuMmio's live
+  // TIMEUP latch at each instruction boundary.
   bool abort_pending_ = false;
   bool irq_line_asserted_ = false;
   uint64_t retired_instruction_count_ = 0;
@@ -301,7 +310,7 @@ class CPU : public MasterClockDriver {
   [[nodiscard]] StepResult FetchOpcode(TimeMasterDeltaT cycle_time);
   [[nodiscard]] StepResult ExecuteMicroOp(TimeMasterDeltaT cycle_time);
   [[nodiscard]] TickResult PerformBusAction(MicroBusAction action, [[maybe_unused]] uint8_t params,
-                                            TimeMasterDeltaT cycle_time);
+                                            TimeMasterDeltaT cycle_time, MicroOpBusAccess* recorded_access);
   // Returns 0 when the CPU can't estimate (e.g., mid-fetch); loop still forward-progresses.
   [[nodiscard]] TimeMasterDeltaT EstimateNextStepCostOrZero() const;
 
@@ -336,8 +345,8 @@ class CPU : public MasterClockDriver {
 
   // WAI wake predicate: any interrupt pin asserted at `t`. Samples the raw
   // /NMI line (NOT the gated flip-flop) so WAI wakes even when NMITIMEN.7 is
-  // clear or I=1 — wake is not the same as delivery. ABORT / IRQ are
-  // placeholder wires until those signals land.
+  // clear or I=1 — wake is not the same as delivery. IRQ comes from the
+  // TIMEUP latch; ABORT remains reserved for future wiring.
   [[nodiscard]] bool WaiShouldWake(TimeMasterT t);
 
  public:

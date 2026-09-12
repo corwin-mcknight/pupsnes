@@ -8,6 +8,7 @@
 #include "pupsnes/debugger/breakpoints.h"
 #include "pupsnes/debugger/error_log.h"
 #include "pupsnes/debugger/fan_out_trace_sink.h"
+#include "pupsnes/debugger/microop_trace.h"
 #include "pupsnes/debugger/run_control.h"
 #include "pupsnes/debugger/trace.h"
 #include "pupsnes/hw/apu/apu.h"
@@ -86,6 +87,128 @@ TEST_CASE("RunControl StepOne after Pause retires one instruction", "[unit][debu
   REQUIRE(run_control.GetState() == RunState::kPaused);
   REQUIRE(run_control.GetPauseReason() == PauseReason::kUser);
   REQUIRE(fixture.snes.GetCpu().GetRetiredInstructionCount() == retired_at_pause + 1);
+}
+
+TEST_CASE("RunControl records the first instruction after resetting a running machine", "[unit][debugger]") {
+  DebuggerFixture fixture;
+  RunControl run_control = fixture.BuildRunControl();
+  MicroOpTrace microops;
+  fixture.snes.GetCpu().SetMicroOpRecorder(&microops);
+
+  run_control.RequestRunUntilBreak();
+  run_control.TickFrame(std::chrono::seconds(1), 100);
+  REQUIRE(fixture.snes.GetCpu().GetRetiredInstructionCount() > 0);
+  REQUIRE(microops.RetiredSize() == 0);
+
+  // Match DebuggerApp::ResetMachine: reset the core, clear the trace, then
+  // reset run control while its free-run recorder is still detached.
+  fixture.snes.Reset();
+  microops.Clear();
+  run_control.ResetMachineState();
+  run_control.RequestStepOne();
+  run_control.TickFrame(std::chrono::seconds(1));
+
+  REQUIRE(fixture.snes.GetCpu().GetRetiredInstructionCount() == 1);
+  REQUIRE(microops.RetiredSize() == 1);
+  REQUIRE(microops.RetiredAt(0)->opcode_address == 0x008000);
+  REQUIRE(microops.RetiredAt(0)->completed);
+}
+
+TEST_CASE("RunControl resumes detailed recording when switching directly from Run to Step", "[unit][debugger]") {
+  DebuggerFixture fixture;
+  RunControl run_control = fixture.BuildRunControl();
+  MicroOpTrace microops;
+  fixture.snes.GetCpu().SetMicroOpRecorder(&microops);
+  run_control.RequestRunUntilBreak();
+  // One slow-ROM NOP ends at an instruction boundary, before HDMA init.
+  run_control.TickFrame(std::chrono::seconds(1), 14);
+  REQUIRE(fixture.snes.GetCpu().GetRetiredInstructionCount() == 1);
+  REQUIRE(microops.RetiredSize() == 0);
+
+  SECTION("one instruction") {
+    run_control.RequestStepOne();
+    run_control.TickFrame(std::chrono::seconds(1));
+    REQUIRE(microops.RetiredSize() == 1);
+    REQUIRE(microops.RetiredAt(0)->opcode_address == 0x008001);
+  }
+  SECTION("multiple instructions") {
+    run_control.RequestStepN(2);
+    run_control.TickFrame(std::chrono::seconds(1));
+    REQUIRE(microops.RetiredSize() == 2);
+    REQUIRE(microops.RetiredAt(0)->opcode_address == 0x008001);
+    REQUIRE(microops.RetiredAt(1)->opcode_address == 0x008002);
+  }
+  SECTION("one micro-op") {
+    run_control.RequestStepOne(StepGranularity::kMicroOp);
+    run_control.TickFrame(std::chrono::seconds(1));
+    if (const auto& current = microops.Current(); current.has_value()) {
+      REQUIRE(current->opcode_address == 0x008001);
+      REQUIRE(current->op_count == 1);
+    } else {
+      FAIL("Stepping one micro-op should start a detailed instruction trace");
+    }
+    REQUIRE(fixture.snes.GetCpu().GetRetiredInstructionCount() == 1);
+  }
+  REQUIRE(run_control.GetState() == RunState::kPaused);
+}
+
+TEST_CASE("RunControl zero-step request performs a complete user pause", "[unit][debugger]") {
+  DebuggerFixture fixture;
+  fixture.breakpoints.Set(0x008001);
+  RunControl run_control = fixture.BuildRunControl();
+  MicroOpTrace microops;
+  fixture.snes.GetCpu().SetMicroOpRecorder(&microops);
+  run_control.RequestRunUntilBreak();
+  run_control.TickFrame(std::chrono::seconds(1));
+  REQUIRE(run_control.GetPauseReason() == PauseReason::kBreakpoint);
+
+  run_control.RequestRunUntilBreak();
+  run_control.RequestStepN(0);
+  REQUIRE(run_control.GetState() == RunState::kPaused);
+  REQUIRE(run_control.GetPauseReason() == PauseReason::kUser);
+  REQUIRE(fixture.snes.GetCpu().GetMicroOpRecorder() == &microops);
+  REQUIRE(fixture.snes.GetCpu().MutableDebuggerContract().step_target == 0);
+  run_control.TickFrame(std::chrono::seconds(1));
+  REQUIRE(fixture.snes.GetCpu().GetRetiredInstructionCount() == 1);
+}
+
+TEST_CASE("RunControl discards interrupted micro-op traces and retains completed history", "[unit][debugger]") {
+  DebuggerFixture fixture;
+  RunControl run_control = fixture.BuildRunControl();
+  MicroOpTrace microops;
+  fixture.snes.GetCpu().SetMicroOpRecorder(&microops);
+  // Two NOPs leave completed history and advance past the initial HDMA
+  // scheduling boundary, so the following slice contains exactly one NOP.
+  run_control.RequestStepN(2);
+  run_control.TickFrame(std::chrono::seconds(1));
+  REQUIRE(microops.RetiredSize() == 2);
+  run_control.RequestStepOne(StepGranularity::kMicroOp);
+  run_control.TickFrame(std::chrono::seconds(1));
+  if (const auto& current = microops.Current(); current.has_value()) {
+    REQUIRE(current->opcode_address == 0x008002);
+  } else {
+    FAIL("Stepping one micro-op should start a detailed instruction trace");
+  }
+
+  run_control.RequestRunUntilBreak();
+  REQUIRE_FALSE(microops.Current().has_value());
+  REQUIRE(microops.RetiredSize() == 2);
+  // Finish the interrupted NOP and fetch the next one while detached.
+  run_control.TickFrame(std::chrono::seconds(1), 14);
+  REQUIRE(fixture.snes.GetCpu().GetRegs().PC == 0x8004);
+  run_control.RequestStepOne();
+  run_control.TickFrame(std::chrono::seconds(1));
+  REQUIRE(fixture.snes.GetCpu().GetRetiredInstructionCount() == 4);
+  REQUIRE_FALSE(microops.Current().has_value());
+  REQUIRE(microops.RetiredSize() == 2);  // Missing beginnings are not synthesized.
+
+  run_control.RequestStepOne();
+  run_control.TickFrame(std::chrono::seconds(1));
+  REQUIRE(microops.RetiredSize() == 3);
+  REQUIRE(microops.RetiredAt(0)->opcode_address == 0x008000);
+  REQUIRE(microops.RetiredAt(1)->opcode_address == 0x008001);
+  REQUIRE(microops.RetiredAt(2)->opcode_address == 0x008004);
+  REQUIRE(microops.RetiredAt(2)->completed);
 }
 
 TEST_CASE("RunControl StepOne after a breakpoint pause retires one instruction", "[unit][debugger]") {

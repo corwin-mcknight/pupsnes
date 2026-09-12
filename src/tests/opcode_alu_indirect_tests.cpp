@@ -1,5 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
+#include <array>
 #include <cstdint>
+#include <initializer_list>
 
 #include "cpu_test_fixture.h"
 #include "pupsnes/hw/5a22/cpu.h"
@@ -118,8 +120,8 @@ TEST_CASE("ADC (dp) 16-bit adds 16-bit value", "[unit][opcode][cpu][indirect]") 
 
 // ============================================================================
 // ALU (dp) — DL-nonzero penalty (DP low byte != 0) adds one internal (+6
-// master) cycle. 5 bus × 8 + 1 internal × 6 = 46 master; we ask for 48 so the
-// next opcode fetch's partial-op cycle absorbs the remaining 2 master.
+// master) cycle. 5 bus × 8 + 1 internal × 6 = 46 master. Stop on instruction
+// retirement so a subsequent opcode cannot absorb a missing penalty.
 // ============================================================================
 
 TEST_CASE("ADC (dp) DL-nonzero pays penalty cycle", "[unit][opcode][cpu][indirect]") {
@@ -138,10 +140,59 @@ TEST_CASE("ADC (dp) DL-nonzero pays penalty cycle", "[unit][opcode][cpu][indirec
   f.wram.WriteRegister(0x0091, 0x12, 0);
   f.wram.WriteRegister(kEffectiveAddr, 0x05, 0);
 
-  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 48);
+  f.cpu.MutableDebuggerContract().step_target = 1;
+  TickResult r = f.cpu.TickToTarget(f.snes.GetMasterTime() + 100);
 
-  REQUIRE(r.completed_cycles == 48);
+  REQUIRE(r.reason == TickStopReason::kRetiredStepTarget);
+  REQUIRE(r.completed_cycles == 46);
   REQUIRE(static_cast<uint8_t>(f.cpu.GetRegs().A) == 0x06);
+}
+
+TEST_CASE("Every DP-indirect addressing family charges its penalty at retirement", "[unit][opcode][cpu][indirect]") {
+  struct Mode {
+    uint8_t opcode;
+    bool long_pointer;
+    TimeMasterDeltaT narrow_cycles;
+  };
+  constexpr std::array kModes{
+      Mode{0xB2, false, 40},  // LDA (dp)
+      Mode{0xA7, true, 48},   // LDA [dp]
+      Mode{0xA1, false, 46},  // LDA (dp,X): internal index-add cycle
+      Mode{0xB1, false, 46},  // LDA (dp),Y: internal index-add cycle
+      Mode{0xB7, true, 48},   // LDA [dp],Y: index add folded into bank fetch
+  };
+  for (const Mode mode : kModes) {
+    for (const bool wide : {false, true}) {
+      for (const uint16_t dp : {uint16_t{0}, uint16_t{0x80}}) {
+        CAPTURE(mode.opcode, wide, dp);
+        ResetFixture f;
+        f.LoadInstruction({mode.opcode, kDpOffset});
+        f.cpu.Reset();
+        f.ModifyRegs([&](auto& regs) {
+          regs.P.E = false;
+          regs.P.M = !wide;
+          regs.DP = dp;
+          regs.DBR = kDbr;
+        });
+        const uint32_t pointer = static_cast<uint32_t>(dp) + kDpOffset;
+        f.wram.WriteRegister(pointer, 0x34, 0);
+        f.wram.WriteRegister(pointer + 1U, 0x12, 0);
+        if (mode.long_pointer) f.wram.WriteRegister(pointer + 2U, kDbr, 0);
+        f.wram.WriteRegister(kEffectiveAddr, 0x42, 0);
+        f.wram.WriteRegister(kEffectiveAddr + 1U, 0xAB, 0);
+
+        f.cpu.MutableDebuggerContract().step_target = 1;
+        const TickResult result = f.cpu.TickToTarget(100);
+        const TimeMasterDeltaT expected = mode.narrow_cycles + (wide ? 8U : 0U) + (dp != 0U ? 6U : 0U);
+        REQUIRE(result.reason == TickStopReason::kRetiredStepTarget);
+        REQUIRE(result.completed_cycles == expected);
+        REQUIRE(f.snes.GetMasterTime() == expected);
+        REQUIRE(f.cpu.GetRetiredInstructionCount() == 1U);
+        REQUIRE(f.cpu.GetRegs().PC == 0x8002U);
+        REQUIRE(f.cpu.GetRegs().A == (wide ? 0xAB42U : 0x42U));
+      }
+    }
+  }
 }
 
 // ============================================================================

@@ -74,7 +74,7 @@ TEST_CASE("Host audio starts inactive and silence never accumulates paused sampl
 TEST_CASE("Host audio primes with a video frame of samples and refills after an underrun", "[unit][audio_output]") {
   AudioBuffer buffer;
   Activate(buffer, 32000, 20);
-  REQUIRE(buffer.GetStats().capacity_frames == 1728);
+  REQUIRE(buffer.GetStats().capacity_frames == 2816);
   REQUIRE(Fill(buffer, 639));
   std::array<float, 8> output;
   buffer.Render(output);
@@ -91,15 +91,21 @@ TEST_CASE("Host audio primes with a video frame of samples and refills after an 
   REQUIRE(correct);
   REQUIRE(buffer.GetStats().queued_frames == 0);
   buffer.Render(output);
-  REQUIRE(Silent(output));
+  REQUIRE(output[0] > 0.0F);
+  REQUIRE(output[0] < 0.5F);  // Starvation fades the last sample instead of cutting it off.
   REQUIRE(buffer.GetStats().underrun_frames == 8);
-  REQUIRE(Fill(buffer, 639, -8192, 8192));
-  buffer.Render(output);
+  std::array<float, 192> tail;
+  buffer.Render(tail);
+  REQUIRE(tail.back() == 0.0F);
+  REQUIRE(Fill(buffer, 1183, -8192, 8192));
+  buffer.Render(output);  // Recovery waits for one extra video frame.
   REQUIRE(Silent(output));
   REQUIRE(buffer.PushSample(-8192, 8192));
-  buffer.Render(output);
-  REQUIRE(output[0] == -0.25F);
-  REQUIRE(output[1] == 0.25F);
+  buffer.Render(tail);
+  REQUIRE(tail[0] < 0.0F);
+  REQUIRE(tail[0] > -0.01F);
+  REQUIRE(tail[190] == -0.25F);
+  REQUIRE(tail[191] == 0.25F);
 }
 
 TEST_CASE("Host audio linearly resamples 32 kHz stereo to 48 kHz with independent channels", "[unit][audio_output]") {
@@ -126,7 +132,7 @@ TEST_CASE("Host audio priming covers a complete native callback with interpolati
     uint32_t capacity;
   };
   for (const auto [latency, prime, capacity] :
-       std::array<Preset, 4>{{{20, 640, 1728}, {40, 1184, 2368}, {80, 1824, 3648}, {160, 3104, 6208}}}) {
+       std::array<Preset, 4>{{{20, 640, 2816}, {40, 1184, 3456}, {80, 1824, 4736}, {160, 3104, 7296}}}) {
     CAPTURE(latency, prime, capacity);
     AudioBuffer buffer;
     Activate(buffer, 48000, latency);
@@ -238,6 +244,132 @@ TEST_CASE("Host audio resampling is independent of native callback slicing", "[u
   }
 }
 
+TEST_CASE("Host audio recovers from slower GUI delivery without repeated gaps", "[unit][audio_output]") {
+  for (uint32_t latency : {20U, 40U, 80U, 160U}) {
+    for (uint32_t rate : {32000U, 44100U, 48000U}) {
+      CAPTURE(latency, rate);
+      const uint64_t callback_period = static_cast<uint64_t>(latency) * 500000;
+      std::vector<float> callback(rate * latency / 2000 * 2);
+      for (const uint64_t phase : {uint64_t{0}, callback_period / 3, callback_period - 1}) {
+        CAPTURE(phase);
+        AudioBuffer buffer;
+        Activate(buffer, rate, latency);
+        uint64_t next_callback = phase;
+        uint64_t produced = 0;
+        uint64_t settled_underruns = 0;
+        bool accepted = true;
+        // 60 Hz, then two seconds at 30 Hz, then back to 60 Hz. Emulated time still
+        // tracks wall time, as in the frontends, but arrives in larger bursts.
+        for (uint64_t frame = 0; frame < 180; ++frame) {
+          const uint64_t time = frame < 60    ? frame * 1000000000 / 60
+                                : frame < 120 ? 1000000000 + (frame - 60) * 1000000000 / 30
+                                              : 3000000000 + (frame - 120) * 1000000000 / 60;
+          while (next_callback <= time) {
+            buffer.Render(callback);
+            next_callback += callback_period;
+          }
+          const uint64_t target = time * 32000 / 1000000000;
+          while (produced < target) {
+            accepted &= buffer.PushSample(8192, -8192);
+            ++produced;
+          }
+          if (frame == 90) settled_underruns = buffer.GetStats().underrun_frames;
+        }
+        REQUIRE(accepted);
+        REQUIRE(buffer.GetStats().dropped_frames == 0);
+        REQUIRE(buffer.GetStats().underrun_frames == settled_underruns);
+        REQUIRE_FALSE(Silent(callback));
+      }
+    }
+  }
+}
+
+TEST_CASE("Host audio fades across starvation and recovery instead of clicking", "[unit][audio_output]") {
+  AudioBuffer buffer;
+  Activate(buffer);
+  REQUIRE(Fill(buffer, 640));
+  std::vector<float> signal(640 * 2);
+  buffer.Render(signal);
+  REQUIRE(signal.back() == -0.5F);
+  std::vector<float> gap(320 * 2);
+  buffer.Render(gap);
+  float previous = 0.5F;
+  for (std::size_t index = 0; index < gap.size(); index += 2) {
+    REQUIRE(std::abs(gap[index] - previous) <= 0.006F);
+    REQUIRE(gap[index + 1] == -gap[index]);
+    previous = gap[index];
+  }
+  REQUIRE(gap.back() == 0.0F);
+  REQUIRE(Fill(buffer, 1600, -16384, 16384));
+  buffer.Render(gap);
+  for (std::size_t index = 0; index < gap.size(); index += 2) {
+    REQUIRE(std::abs(gap[index] - previous) <= 0.006F);
+    REQUIRE(gap[index + 1] == -gap[index]);
+    previous = gap[index];
+  }
+  REQUIRE(gap.front() > -0.01F);
+  REQUIRE(gap.back() == 0.5F);
+}
+
+TEST_CASE("Host audio recovery stays bounded and flush resets its delay and fade", "[unit][audio_output]") {
+  AudioBuffer buffer;
+  Activate(buffer);
+  const auto capacity = buffer.GetStats().capacity_frames;
+  std::vector<float> drain((capacity + 320) * 2);
+  for (int attempt = 0; attempt < 10; ++attempt) {
+    REQUIRE(Fill(buffer, capacity));
+    buffer.Render(drain);
+    REQUIRE(drain[200] == 0.5F);  // Even repeated starvation can always re-prime.
+    REQUIRE(drain.back() == 0.0F);
+    REQUIRE(buffer.GetStats().queued_frames == 0);
+  }
+  buffer.Flush();
+  REQUIRE(Fill(buffer, 640, -8192, 8192));  // Normal startup target is restored.
+  std::array<float, 1282> output;
+  buffer.Render(output);
+  REQUIRE(output[0] == -0.25F);
+  REQUIRE(output[1280] < 0.0F);  // The starvation tail has just begun.
+  buffer.SetMuted(true);
+  buffer.Render(output);
+  REQUIRE(Silent(output));
+  buffer.SetMuted(false);
+  buffer.SetActive(false);
+  buffer.Render(output);
+  REQUIRE(Silent(output));
+  buffer.SetActive(true);
+  REQUIRE(Fill(buffer, 640, 8192, -8192));
+  buffer.Render(output);
+  REQUIRE(output[0] == 0.25F);
+  buffer.Flush();  // Also cut an in-flight tail immediately, without leaking it.
+  buffer.Render(output);
+  REQUIRE(Silent(output));
+}
+
+TEST_CASE("Host audio starvation fades are independent of callback slicing", "[unit][audio_output]") {
+  for (uint32_t rate : {8000U, 32000U, 44100U, 48000U, 96000U, 384000U}) {
+    CAPTURE(rate);
+    AudioBuffer whole;
+    AudioBuffer sliced;
+    Activate(whole, rate);
+    Activate(sliced, rate);
+    for (int pass = 0; pass < 3; ++pass) {
+      const std::size_t count = pass == 0 ? 640 : 1800;
+      REQUIRE(Fill(whole, count));
+      REQUIRE(Fill(sliced, count));
+      std::vector<float> expected(rate / 10 * 2);
+      std::vector<float> actual(expected.size());
+      whole.Render(expected);
+      for (std::size_t offset = 0; offset < actual.size();) {
+        const auto size = std::min(std::size_t{74}, actual.size() - offset);
+        sliced.Render(std::span(actual).subspan(offset, size));
+        offset += size;
+      }
+      REQUIRE(actual == expected);
+      REQUIRE(whole.GetStats().underrun_frames == sliced.GetStats().underrun_frames);
+    }
+  }
+}
+
 TEST_CASE("Host gain and mute are bounded and muted playback consumes the queue", "[unit][audio_output]") {
   AudioBuffer buffer;
   Activate(buffer);
@@ -270,21 +402,23 @@ TEST_CASE("Host audio overflow drops new frames without replacing unread stereo 
   AudioBuffer buffer;
   Activate(buffer, 32000, 20);
   bool accepted = true;
-  for (int16_t index = 0; index < 1728; ++index) accepted &= buffer.PushSample(index, static_cast<int16_t>(-index));
+  const auto capacity = buffer.GetStats().capacity_frames;
+  for (int16_t index = 0; index < static_cast<int16_t>(capacity); ++index)
+    accepted &= buffer.PushSample(index, static_cast<int16_t>(-index));
   REQUIRE(accepted);
   REQUIRE_FALSE(Fill(buffer, 19, 30000, 30000));
-  REQUIRE(buffer.GetStats().queued_frames == 1728);
+  REQUIRE(buffer.GetStats().queued_frames == capacity);
   REQUIRE(buffer.GetStats().dropped_frames == 19);
-  std::array<float, 3456> output;
+  std::vector<float> output(capacity * 2);
   buffer.Render(output);
   bool intact = true;
-  for (std::size_t index = 0; index < 1728; ++index) {
+  for (std::size_t index = 0; index < capacity; ++index) {
     const auto sample = static_cast<float>(index) / 32768.0F;
     intact &= output[index * 2] == sample && output[index * 2 + 1] == -sample;
   }
   REQUIRE(intact);
   REQUIRE(buffer.GetStats().queued_frames == 0);
-  REQUIRE(Fill(buffer, 1728, 8192, -8192));
+  REQUIRE(Fill(buffer, capacity, 8192, -8192));
   buffer.Render(output);
   REQUIRE(output[0] == 0.25F);
   REQUIRE(output[1] == -0.25F);
@@ -344,7 +478,7 @@ TEST_CASE("Host audio reconfiguration resets cached samples and validates clock 
   buffer.Render(output);
   buffer.Configure(0, 0);
   REQUIRE(buffer.GetStats().sample_rate == 48000);
-  REQUIRE(buffer.GetStats().capacity_frames == 1728);
+  REQUIRE(buffer.GetStats().capacity_frames == 2816);
   REQUIRE(buffer.GetStats().queued_frames == 0);
   buffer.Render(output);  // Acknowledge cutoff before refilling the smaller queue.
   REQUIRE(Silent(output));
@@ -353,7 +487,7 @@ TEST_CASE("Host audio reconfiguration resets cached samples and validates clock 
   REQUIRE(output[0] == -0.5F);
   buffer.Configure(UINT32_MAX, UINT32_MAX);
   REQUIRE(buffer.GetStats().sample_rate == 48000);
-  REQUIRE(buffer.GetStats().capacity_frames == 6208);
+  REQUIRE(buffer.GetStats().capacity_frames == 7296);
   REQUIRE(buffer.GetStats().queued_frames == 0);
 }
 

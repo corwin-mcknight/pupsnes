@@ -91,6 +91,49 @@ TEST_CASE("RunTrace stops at the master-cycle budget", "[unit][trace_runner]") {
   REQUIRE(result.instructions_emitted >= 1);
 }
 
+TEST_CASE("RunTrace handles STP according to the selected budget", "[unit][trace_runner]") {
+  const auto rom_path = UniqueTempPath("trace_runner_stp_rom");
+  std::filesystem::copy_file(TestRomPath("reset_smoke"), rom_path);
+  {
+    std::fstream rom(rom_path, std::ios::binary | std::ios::in | std::ios::out);
+    REQUIRE(rom.good());
+    rom.put(static_cast<char>(0xDB));  // STP is the first instruction after reset.
+    rom.close();
+    REQUIRE(rom.good());
+  }
+
+  pupsnes::tools::TraceRunOptions opts;
+  opts.rom_path = rom_path;
+  opts.output_path = UniqueTempPath("trace_runner_stp_trace");
+  bool expect_success = true;
+  SECTION("STP itself can satisfy an instruction budget") { opts.budget.instructions = 1; }
+  SECTION("STP cannot satisfy a larger instruction budget") {
+    opts.budget.instructions = 2;
+    expect_success = false;
+  }
+  SECTION("Master time keeps advancing after STP") { opts.budget.master_cycles = 1000; }
+  SECTION("Frame-duration budgets keep advancing after STP") { opts.budget.frames = 1; }
+
+  const auto result = pupsnes::tools::RunTrace(opts);
+  INFO(result.error);
+  CHECK(result.ok == expect_success);
+  if (expect_success) {
+    CHECK(result.instructions_emitted == 1);
+    if (opts.budget.master_cycles.has_value()) {
+      CHECK(result.master_time_elapsed == *opts.budget.master_cycles);
+    } else if (opts.budget.frames.has_value()) {
+      CHECK(result.master_time_elapsed == pupsnes::tools::kMasterCyclesPerFrame);
+    }
+  } else {
+    CHECK(result.error.find("STP") != std::string::npos);
+  }
+  const auto lines = ReadAllLines(opts.output_path);
+  REQUIRE(lines.size() == 2);  // Header plus the one retired STP, including on failure.
+  CHECK(lines[1].find(" DB ") != std::string::npos);
+  std::filesystem::remove(rom_path);
+  std::filesystem::remove(opts.output_path);
+}
+
 TEST_CASE("DriveMachineToMasterTime reports SPC700 faults during catch-up", "[unit][trace_runner][apu]") {
   pupsnes::SNES snes;
   std::array<uint8_t, pupsnes::Cartridge::kLoROMWindowSize> rom{};

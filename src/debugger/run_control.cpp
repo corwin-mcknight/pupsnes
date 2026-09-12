@@ -4,6 +4,7 @@
 
 #include "pupsnes/core/scheduler.h"
 #include "pupsnes/hw/5a22/cpu.h"
+#include "pupsnes/hw/5a22/micro_op.h"
 
 namespace pupsnes::debugger {
 
@@ -31,8 +32,7 @@ void RunControl::InstallDebuggerContract() {
 }
 
 void RunControl::ResetMachineState() {
-  state_ = RunState::kPaused;
-  pause_reason_ = PauseReason::kUser;
+  Pause();
   logged_fault_pc_.reset();
   InstallDebuggerContract();
 }
@@ -41,7 +41,7 @@ void RunControl::Pause() {
   state_ = RunState::kPaused;
   pause_reason_ = PauseReason::kUser;
   snes_.GetCpu().MutableDebuggerContract().step_target = 0;
-  RestoreMicroOpRecorderForPause();
+  RestoreMicroOpRecorder();
 }
 
 void RunControl::DetachMicroOpRecorderForFreeRun() {
@@ -49,11 +49,12 @@ void RunControl::DetachMicroOpRecorderForFreeRun() {
   if (current == nullptr) {
     return;
   }
+  current->OnRecordingInterrupted();
   saved_microop_recorder_ = current;
   snes_.GetCpu().SetMicroOpRecorder(nullptr);
 }
 
-void RunControl::RestoreMicroOpRecorderForPause() {
+void RunControl::RestoreMicroOpRecorder() {
   if (saved_microop_recorder_ == nullptr) {
     return;
   }
@@ -72,19 +73,16 @@ void RunControl::SuppressBreakpointAtCurrentPc() {
 }
 
 void RunControl::RequestStepOne(StepGranularity granularity) {
-  SuppressBreakpointAtCurrentPc();
-  auto& c = snes_.GetCpu().MutableDebuggerContract();
-  c.step_target = 1;
-  c.step_granularity = granularity;
+  RequestStepN(1, granularity);
   state_ = RunState::kStepOne;
 }
 
 void RunControl::RequestStepN(uint64_t count, StepGranularity granularity) {
   if (count == 0) {
-    state_ = RunState::kPaused;
-    snes_.GetCpu().MutableDebuggerContract().step_target = 0;
+    Pause();
     return;
   }
+  RestoreMicroOpRecorder();
   SuppressBreakpointAtCurrentPc();
   auto& c = snes_.GetCpu().MutableDebuggerContract();
   c.step_target = count;
@@ -104,17 +102,13 @@ void RunControl::RequestRunUntilBreak() {
 SnesAddrT RunControl::GetCurrentPc() const { return ComposePcAddress(snes_.GetCpu().GetRegs()); }
 
 void RunControl::PauseForBreakpoint() {
-  state_ = RunState::kPaused;
+  Pause();
   pause_reason_ = PauseReason::kBreakpoint;
-  snes_.GetCpu().MutableDebuggerContract().step_target = 0;
-  RestoreMicroOpRecorderForPause();
 }
 
 void RunControl::PauseForError() {
-  state_ = RunState::kPaused;
+  Pause();
   pause_reason_ = PauseReason::kError;
-  snes_.GetCpu().MutableDebuggerContract().step_target = 0;
-  RestoreMicroOpRecorderForPause();
 }
 
 void RunControl::LogFaultIfPresent() {

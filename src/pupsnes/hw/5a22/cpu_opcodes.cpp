@@ -832,8 +832,8 @@ constexpr auto MakeJumpSpecs() {
       Opcode(0x00, "BRK", "immediate byte").Then(SoftwareInterrupt(/*is_cop=*/false)).Build(),
       Opcode(0x02, "COP", "immediate byte").Then(SoftwareInterrupt(/*is_cop=*/true)).Build(),
       // STP (0xDB) / WAI (0xCB): 3 cycles, halt the CPU (Bruce Clark §6.9).
-      // STP stops until reset; WAI waits for an interrupt. Without an interrupt
-      // model the two share behavior — both halt until Reset() clears halted_.
+      // STP stops until reset. WAI wakes on an interrupt request, even when
+      // delivery is masked, then serves a two-cycle wake latency.
       Opcode(0xDB, "STP", "implied")
           .Then(Idle())
           .Then(CycleSlotSpec{MicroBusAction::kNone, MicroInternalOp::kHaltCpu, Always(), "halt (STP)",
@@ -1175,12 +1175,10 @@ constexpr auto MakeAluSrIndyYSpecs() {
   };
 }
 
-// ALU / Load abs,X specs (plan 01-07) — 8 mnemonics. FetchAbsoluteIndexed
-// always pays the index-add cycle (matches the STA abs,X store lowering),
-// so the effective formula is 5-m for ALU reads and LDA, 5-x for LDY —
-// equivalent to Bruce Clark's "4-m+x+x*p" with x=1/p=1 collapsed to an
-// unconditional penalty. Low-16 index overflow carries into the bank byte
-// (bank_wrap=false packed in PackAddIndex for DBR-banked absolute-indexed).
+// ALU / Load abs,X specs — 8 mnemonics. FetchAbsoluteIndexedRead pays
+// the index-add cycle when the index is 16-bit or the address crosses a page.
+// Low-16 index overflow carries into the bank byte (bank_wrap=false packed
+// in PackAddIndex for DBR-banked absolute-indexed).
 // LDX abs,X does not exist as an opcode; LDX uses abs,Y (0xBE, a separate
 // family handled alongside abs,Y).
 constexpr auto MakeAluAbsXSpecs() {

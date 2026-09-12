@@ -1,5 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include "pupsnes/core/scheduler.h"
+#include "pupsnes/debugger/dma_channel_view.h"
 #include "pupsnes/hw/5a22/cpu_mmio.h"
 #include "pupsnes/hw/5a22/dma_controller.h"
 #include "pupsnes/core/snes.h"
@@ -170,4 +172,35 @@ TEST_CASE("CpuMmio exposes $420C HDMAEN shadow via GetHdmaEn", "[unit][debugger]
   REQUIRE(snes.GetCpuMmio().GetHdmaEn() == 0x00U);
   BusWrite(snes, 0x420CU, 0xA5U, now++);
   REQUIRE(snes.GetCpuMmio().GetHdmaEn() == 0xA5U);
+}
+
+TEST_CASE("DMA panel shows enabled HDMA channels independently of direct or indirect addressing",
+          "[unit][debugger][dma]") {
+  SNES snes;
+  TimeMasterT now = 1;
+  BusWrite(snes, 0x4300U, 0x00U, now++);  // Channel 0: direct HDMA.
+  BusWrite(snes, 0x4370U, 0x40U, now++);  // Channel 7: indirect HDMA.
+  BusWrite(snes, 0x4310U, 0x40U, now++);  // Bit 6 alone does not enable HDMA.
+  BusWrite(snes, 0x420CU, 0x81U, now++);
+
+  REQUIRE(debugger::ShowHdmaChannelState(snes.GetDma(), snes.GetCpuMmio(), 0));
+  REQUIRE(debugger::ShowHdmaChannelState(snes.GetDma(), snes.GetCpuMmio(), 7));
+  REQUIRE_FALSE(debugger::ShowHdmaChannelState(snes.GetDma(), snes.GetCpuMmio(), 1));
+  REQUIRE_FALSE(debugger::ShowHdmaChannelState(snes.GetDma(), snes.GetCpuMmio(), 2));
+}
+
+TEST_CASE("DMA panel retains this frame's HDMA state after a live disable", "[unit][debugger][dma]") {
+  SNES snes;
+  snes.Reset();
+  BusWrite(snes, 0x420CU, 0x01U, 1);
+  snes.MachineSync(24);
+  snes.GetScheduler().FireEventsThrough(24);  // HDMA init snapshots channel 0.
+  REQUIRE(snes.GetDma().GetHdmaActiveMask() == 0x01U);
+  BusWrite(snes, 0x420CU, 0x00U, snes.GetMasterTime());
+  REQUIRE(snes.GetCpuMmio().GetHdmaEn() == 0);
+
+  REQUIRE(debugger::ShowHdmaChannelState(snes.GetDma(), snes.GetCpuMmio(), 0));
+  REQUIRE_FALSE(debugger::ShowHdmaChannelState(snes.GetDma(), snes.GetCpuMmio(), 1));
+  snes.Reset();
+  REQUIRE_FALSE(debugger::ShowHdmaChannelState(snes.GetDma(), snes.GetCpuMmio(), 0));
 }

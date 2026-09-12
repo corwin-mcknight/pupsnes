@@ -10,8 +10,7 @@
 namespace pupsnes::opcode_defs_internal {
 
 namespace micro_op_params {
-// Packing helpers for MicroOp::params. Populated in subsequent refactor
-// steps as each enum group collapses into a parameterized category.
+// Packing helpers for the shared bus/internal MicroOp::params byte.
 
 // Register-to-register transfers (kTransferReg): src in low nibble, dst in high
 // nibble. Both nibbles reference the Reg enum defined in cpu.h.
@@ -44,7 +43,7 @@ inline constexpr uint8_t PackBranchCond(BranchCond cond) {
 }
 inline constexpr BranchCond UnpackBranchCond(uint8_t params) { return static_cast<BranchCond>(params & 0x0FU); }
 
-// Register load from fetch_data_ (kLoadReg): bits [3:0] = Reg (A/X/Y only),
+// Register load from fetch_data_ (kLoadReg): bits [3:0] = Reg (A/X/Y/DP/DBR/P),
 // bits [5:4] = ByteSel (kLow = 0, kHigh = 1), bit 6 = update_nz, bit 7 =
 // post_inc_addr. Dispatch lives in the kLoadReg case in ExecuteInternalOp in
 // cpu.cpp. On kHigh, update_nz must be true (that's the only high-byte
@@ -61,14 +60,14 @@ inline constexpr ByteSel UnpackLoadRegByteSel(uint8_t params) { return static_ca
 inline constexpr bool UnpackLoadRegNz(uint8_t params) { return (params & 0x40U) != 0U; }
 inline constexpr bool UnpackLoadRegPostIncAddr(uint8_t params) { return (params & 0x80U) != 0U; }
 
-// Push bus action (kPushStack): bits [3:0] = PushSrc (15 variants — A8/AHigh,
-// X8/XHigh, Y8/YHigh, Pcl/Pch/Pbr, Dbr, P, DpLow/DpHigh, AddrLow/AddrHigh).
+// Push bus action (kPushStack): bits [3:0] = PushSrc (16 variants — A8/AHigh,
+// X8/XHigh, Y8/YHigh, Pcl/Pch/Pbr, Dbr, P/PHwIrq, DpLow/DpHigh, AddrLow/AddrHigh).
 // Dispatch lives in the kPushStack case in PerformBusAction in cpu.cpp.
 inline constexpr uint8_t PackPushStack(PushSrc src) { return static_cast<uint8_t>(static_cast<uint32_t>(src) & 0x0FU); }
 inline constexpr PushSrc UnpackPushStack(uint8_t params) { return static_cast<PushSrc>(params & 0x0FU); }
 
 // Write bus action (kWriteRegByte): bits [2:0] = WriteSrc (kFetchData/kA/kX/
-// kY/kZero), bit 3 = ByteSel (0 = kLow, 1 = kHigh). For the generic fetch_data
+// kY/kZero/kScratchLow), bit 3 = ByteSel (0 = kLow, 1 = kHigh). For the generic fetch_data
 // writer, WriteSrc::kFetchData + ByteSel::kLow is the canonical encoding (the
 // ByteSel is ignored for fetch_data and kZero). Dispatch lives in the
 // kWriteRegByte case in PerformBusAction in cpu.cpp. Bit 4 is reserved for
@@ -83,7 +82,7 @@ inline constexpr ByteSel UnpackWriteAddrByteSel(uint8_t params) { return static_
 // Sbc, And, Ora, Eor, Cmp, Cpx, Cpy, Bit, BitMem). Bit 4 (kAlu16Imm only) = low byte
 // source: 0 = addr_[7:0] (immediate path, stashed by a prior
 // kSetAddrByteFromFetch(kLow)); 1 = addr_scratch_[7:0] (memory path, stashed
-// by a prior kStashIndirectLow on the low-byte read).  Dispatch lives in the
+// by a prior kStashOperandLow on the low-byte read). Dispatch lives in the
 // kAlu8Imm / kAlu16Imm cases in ExecuteInternalOp in cpu.cpp. Width selection
 // is baked into the enum variant (8 vs 16) because the two paths differ in
 // operand plumbing: 8-bit consumes fetch_data_ only; 16-bit consumes the
@@ -123,8 +122,8 @@ inline constexpr bool UnpackSetAddrFromDbr(uint8_t params) { return UnpackSetAdd
 // so the default (bit 4 = 0) is increment, which is also what results when
 // kModifyAddr shares its CycleSlotSpec::params byte with a WriteRegByte in
 // the same slot: WriteRegByte's packing occupies bits [3:0], leaving bit 4
-// at 0 so the address advances after the write. No ModifyAddr decrement call
-// site exists today; the plan reserves the encoding for future use.
+// at 0 so the address advances after the write. RMW explicitly sets bit 4
+// to write the high byte before decrementing to the low-byte address.
 inline constexpr uint8_t PackModifyAddr(bool increment) { return static_cast<uint8_t>(increment ? 0U : (1U << 4U)); }
 inline constexpr bool UnpackModifyAddrIncrement(uint8_t params) { return (params & 0x10U) == 0U; }
 
@@ -158,8 +157,8 @@ inline constexpr ByteSel UnpackLoadAddrByteAndSetPcSel(uint8_t params) { return 
 inline constexpr bool UnpackLoadAddrByteAndSetPcWithPbr(uint8_t params) { return (params & 0x04U) != 0U; }
 
 // Add index to addr (kAddIndexToAddr): bits [3:0] = Reg (kX or kY), bit [4] =
-// bank_wrap. When bank_wrap is 1 (default), addr_ is masked to 16 bits after
-// the add (bank forced to 0) — used by direct-page-indexed addressing. When 0,
+// bank_wrap. When bank_wrap is 1 (default), the add preserves the current bank
+// and wraps its low 16 bits — used by DP-indexed and (abs,X) pointers. When 0,
 // the add is 24-bit and carry can propagate into the bank byte — used by
 // absolute-indexed addressing where the effective address is DBR:(abs + idx).
 inline constexpr uint8_t PackAddIndex(Reg reg, bool bank_wrap = true, bool dp_wrap = false) {
@@ -188,7 +187,7 @@ inline constexpr bool UnpackFormAddrFromScratchBankWithYAdd(uint8_t params) { re
 inline constexpr uint8_t PackMaskStatus(bool or_bits) { return static_cast<uint8_t>(or_bits ? 1U : 0U); }
 inline constexpr bool UnpackMaskStatusOr(uint8_t params) { return (params & 0x01U) != 0U; }
 
-// Memory RMW (kRmwMem): bits [2:0] = RmwOp (kAsl/kLsr/kRol/kRor/kInc/kDec).
+// Memory RMW (kRmwMem): bits [2:0] = RmwOp (shifts, rotates, INC/DEC, TSB/TRB).
 // Width follows regs_.P.M at runtime — the op dispatches 8-bit vs 16-bit
 // dynamically rather than through a packed width bit. See kRmwMem dispatch in
 // ExecuteInternalOp in cpu.cpp.
@@ -218,6 +217,9 @@ struct CycleSlotSpec {
 struct CycleFragment {
   uint8_t cycle_count = 0;
   bool overflowed = false;
+  // Addressing fragments carry this execution property independently of the
+  // opcode's human-readable addressing-mode label.
+  bool uses_dp_penalty = false;
   std::array<CycleSlotSpec, kMaxRemainingOps> cycles{};
 };
 
@@ -233,6 +235,7 @@ struct OpcodeSpec {
   std::string_view addressing_mode{};
   uint8_t cycle_count = 0;
   bool overflowed = false;
+  bool uses_dp_penalty = false;
   // Mirrors InstructionEntry::is_new_65816_instruction; set via
   // OpcodeSpecBuilder::NewInstruction() for "new" 65C816 opcodes whose
   // emulation-mode quirks differ from the old 6502 set.
@@ -451,7 +454,7 @@ constexpr CycleSlotSpec AluImm8(AluOp op, TimingRuleExpr rule = Always(), std::s
 // Parameterized 16-bit ALU immediate. Emits a kFetchPc bus action paired with
 // the unified kAlu16Imm internal op; packs AluOp into CycleSlotSpec::params for
 // the kAlu16Imm case in ExecuteInternalOp in cpu.cpp. Consumes addr_[7:0] as the operand low byte
-// (stashed by a prior kSetAddrLowFromFetch) and fetch_data_ as the high byte.
+// (stashed by kSetAddrByteFromFetch(kLow)) and fetch_data_ as the high byte.
 constexpr CycleSlotSpec AluImm16(AluOp op, TimingRuleExpr rule = Always(), std::string_view label = {}) {
   return CycleSlotSpec{
       MicroBusAction::kFetchPc, MicroInternalOp::kAlu16Imm, rule, label, micro_op_params::PackAluOp(op),
@@ -474,7 +477,7 @@ constexpr CycleSlotSpec SetAddrByte(ByteSel byte_sel, bool from_dbr = false, Tim
   };
 }
 
-// Parameterized kModifyAddr. Defaults to increment; decrement is reserved.
+// Parameterized kModifyAddr. Defaults to increment; RMW uses decrement.
 constexpr CycleSlotSpec ModifyAddr(bool increment = true, TimingRuleExpr rule = Always(), std::string_view label = {}) {
   return CycleSlotSpec{
       MicroBusAction::kNone, MicroInternalOp::kModifyAddr, rule, label, micro_op_params::PackModifyAddr(increment),
@@ -547,6 +550,11 @@ constexpr CycleSlotSpec FetchPcBranchTest(BranchCond cond, std::string_view labe
 struct CycleFragmentBuilder {
   CycleFragment fragment{};
 
+  constexpr CycleFragmentBuilder& WithDpPenalty() {
+    fragment.uses_dp_penalty = true;
+    return *this;
+  }
+
   constexpr CycleFragmentBuilder& Then(const CycleSlotSpec& cycle) {
     if (fragment.cycle_count >= kMaxRemainingOps) {
       fragment.overflowed = true;
@@ -582,6 +590,7 @@ struct OpcodeSpecBuilder {
 
   constexpr OpcodeSpecBuilder& Then(const CycleFragment& fragment) {
     spec.overflowed = spec.overflowed || fragment.overflowed;
+    spec.uses_dp_penalty = spec.uses_dp_penalty || fragment.uses_dp_penalty;
     for (uint8_t i = 0; i < fragment.cycle_count; ++i) {
       Then(fragment.cycles[i]);
     }
@@ -590,7 +599,7 @@ struct OpcodeSpecBuilder {
 
   // Mark this opcode as a "new" 65C816 instruction (not present on the 6502 /
   // 65C02). In emulation mode the 65C816 applies different quirks to these:
-  //   - Stack ops (JSL/RTL/PEA/PEI/PER/PHB/PLB/PHD/PLD/PHK/PHX/PHY/PLX/PLY/
+  //   - Stack ops (JSL/RTL/PEA/PEI/PER/PHB/PLB/PHD/PLD/PHK/
   //     JSR(abs,X)) use 16-bit SP math during pushes/pulls (no wrap at $01xx)
   //     and restore the SP high byte to $01 at end-of-instruction (Bruce
   //     Clark §2688).
@@ -669,6 +678,15 @@ constexpr bool ValidateOpcodeSpec(const OpcodeSpec& spec) {
   }
   for (uint8_t i = 0; i < spec.cycle_count; ++i) {
     if (!ValidateTimingRule(spec.cycles[i].rule)) {
+      return false;
+    }
+    // DP penalties share truth-table bit 4 with branch/index page crossing.
+    // Reject a sequence that could drive both meanings. If indirect-indexed
+    // reads gain a conditional page-cross cycle, their condition must get a
+    // separate bit before they can be combined with a DP addressing fragment.
+    const MicroInternalOp op = spec.cycles[i].internal_op;
+    if (spec.uses_dp_penalty && (op == MicroInternalOp::kSetBranchTakenCond || op == MicroInternalOp::kBranchRelative ||
+                                 op == MicroInternalOp::kSetAddrHighDbrAddIndex)) {
       return false;
     }
   }
@@ -767,10 +785,6 @@ constexpr uint8_t FindRuleIndex(const InstructionEntry& entry, uint32_t truth_ta
   return entry.rule_count;
 }
 
-constexpr bool AddressingModeUsesDpPenalty(std::string_view mode) {
-  return mode == "direct page" || mode == "direct page indexed X" || mode == "direct page indexed Y";
-}
-
 constexpr InstructionEntry LowerOpcode(const OpcodeSpec& spec) {
   InstructionEntry entry{};
   if (spec.disposition != OpcodeSpecDisposition::kImplemented) {
@@ -779,7 +793,7 @@ constexpr InstructionEntry LowerOpcode(const OpcodeSpec& spec) {
 
   entry.disposition = InstructionDisposition::kImplemented;
   entry.remaining_op_count = spec.cycle_count;
-  entry.uses_dp_penalty = AddressingModeUsesDpPenalty(spec.addressing_mode);
+  entry.uses_dp_penalty = spec.uses_dp_penalty;
   entry.is_new_65816_instruction = spec.is_new_65816_instruction;
   entry.rule_count = 1;
   entry.rules[0] = ComputeTimingRuleTruthTable(Always());

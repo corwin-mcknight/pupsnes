@@ -5,6 +5,7 @@
 #include <string_view>
 
 #include "cpu_spec_oracle.h"
+#include "pupsnes/hw/5a22/addressing_fragments.h"
 #include "pupsnes/hw/5a22/cpu_opcode_defs_internal.h"
 
 using namespace pupsnes;                        // NOLINT(google-build-using-namespace)
@@ -31,6 +32,24 @@ constexpr auto kOversizedSpec = Opcode(0x01, "OVR", "test")
 
 static_assert(!ValidateUniqueOpcodes(kDuplicateOpcodeSpecs));
 static_assert(!ValidateOpcodeSpec(kOversizedSpec));
+
+// Execution properties follow composed addressing fragments, not their
+// display label. This also covers indirect modes that add pointer reads.
+constexpr auto kRelabeledIndirect = Opcode(0xB2, "LDA", "renamed indirect mode")
+                                        .Then(FetchDirectPage())
+                                        .Then(FetchDirectIndirect())
+                                        .Then(LoadRegFromAddr(Reg::kA, TimingCondition::kAccumulator16))
+                                        .Build();
+static_assert(ValidateOpcodeSpec(kRelabeledIndirect));
+static_assert(LowerOpcode(kRelabeledIndirect).uses_dp_penalty);
+
+constexpr auto kConflictingTimingSources =
+    Opcode(0xB2, "BAD", "test").Then(FetchDirectPage()).Then(FetchAbsoluteIndexedRead(Reg::kX)).Build();
+static_assert(!ValidateOpcodeSpec(kConflictingTimingSources));
+
+constexpr auto kDpWithUnconditionalBranch =
+    Opcode(0x80, "BAD", "test").Then(FetchDirectPage()).Then(BranchRelative(false)).Build();
+static_assert(!ValidateOpcodeSpec(kDpWithUnconditionalBranch));
 
 struct CycleExpect {
   MicroBusAction bus;
@@ -178,14 +197,13 @@ TEST_CASE("Every implemented opcode matches the 65C816 spec", "[cpu][opcode-defs
     INFO("addressing normalize: '" << meta.addressing_mode << "' -> '" << normalized << "' vs spec '"
                                    << spec->addressing << "'");
     REQUIRE(normalized == spec->addressing);
+    REQUIRE(entry.uses_dp_penalty == spec->dp_penalty_bit);
 
-    // Cycle-formula conformance: evaluate Clark's formula at four
+    // Cycle-formula conformance: evaluate Clark's formula at six
     // representative mode configurations and verify the lowered table
     // dispatches the same number of cycles (including the implicit opcode
-    // fetch). w is clamped to 0 because the implementation doesn't yet
-    // model the direct-page low-byte write penalty; any opcode whose
-    // formula depends on w gets a single-mode sanity check at w=0.
-    constexpr std::array<FormulaInputs, 4> kModes = {{
+    // fetch). Include both zero and nonzero DP low bytes in each width.
+    constexpr std::array<FormulaInputs, 6> kModes = {{
         // m=1, x=1, native, no branch taken / not page-crossed
         {.m = 1, .x = 1, .w = 0, .p = 0, .t = 0, .e = 0},
         // m=0, x=0, native — exercise 16-bit cycle penalties
@@ -194,16 +212,20 @@ TEST_CASE("Every implemented opcode matches the 65C816 spec", "[cpu][opcode-defs
         {.m = 1, .x = 1, .w = 0, .p = 0, .t = 1, .e = 0},
         // branch taken, emulation, page crossed — exercises t*e*p
         {.m = 1, .x = 1, .w = 0, .p = 1, .t = 1, .e = 1},
+        {.m = 1, .x = 1, .w = 1, .p = 0, .t = 0, .e = 0},
+        {.m = 0, .x = 0, .w = 1, .p = 0, .t = 0, .e = 0},
     }};
 
     for (const FormulaInputs& orig : kModes) {
-      // DP opcodes share bit-4 with branch page-cross; force p=0 for them so
-      // the "p=1" test modes don't spuriously fire the DP-low-nonzero penalty.
+      // DP opcodes share bit 4 with branch/index page crossing. Only pack
+      // the source used by this opcode so an unrelated input cannot fire it.
       FormulaInputs in = orig;
       if (spec->dp_penalty_bit) {
         in.p = 0;
+      } else {
+        in.w = 0;
       }
-      CAPTURE(in.m, in.x, in.t, in.p, in.e);
+      CAPTURE(in.m, in.x, in.t, in.p, in.e, in.w);
       const int expected = EvalFormula(spec->cycle_formula, in);
       const int actual = CountActiveCycles(entry, PackConditionBits(in) | spec->forced_condition_bits);
       INFO("cycle_formula '" << spec->cycle_formula << "' expected=" << expected << " actual=" << actual);

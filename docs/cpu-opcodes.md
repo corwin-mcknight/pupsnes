@@ -4,9 +4,10 @@ This document describes how opcodes are authored in PupSNES today.
 
 The important split is:
 
-* **Authoring lives in** `src/pupsnes/5a22/cpu_opcodes.cpp`
-* **Generic DSL/lowering helpers live in** `src/pupsnes/5a22/cpu_opcode_defs_internal.h`
-* **Execution types and runtime behavior live in** `includes/pupsnes/hw/5a22/cpu.h` and `src/pupsnes/5a22/cpu.cpp`
+* **Authoring lives in** `src/pupsnes/hw/5a22/cpu_opcodes.cpp`
+* **Generic DSL/lowering helpers live in** `src/pupsnes/hw/5a22/cpu_opcode_defs_internal.h`
+* **Shared addressing fragments live in** `src/pupsnes/hw/5a22/addressing_fragments.h`
+* **Execution types live in** `cpu_internal.h` and the public `cpu.h` / `micro_op.h` headers; runtime behavior lives in `src/pupsnes/hw/5a22/cpu.cpp`
 
 If you are adding or changing an opcode, start in `cpu_opcodes.cpp`.
 
@@ -26,20 +27,20 @@ Each authored cycle slot has:
 
 The authored specs are lowered at compile time into:
 
-* a compact execution table used by `CPU::Tick()`
+* a compact execution table used by `CPU::TickToTarget()`
 * a parallel metadata table for labels and future tooling
 
 Unspecified opcodes default to explicit unimplemented faults rather than silent placeholder behavior.
 
 ## Where To Edit
 
-### `src/pupsnes/5a22/cpu_opcodes.cpp`
+### `src/pupsnes/hw/5a22/cpu_opcodes.cpp`
 
 This is the source-of-truth file for authored opcodes.
 
 It contains:
 
-* reusable local fragments such as `FetchLongAddr()` or `BranchSequence()`
+* reusable instruction-family fragments such as `LoadAccumulatorImmediate()` or `BranchSequence()`
 * family-grouped authored opcode arrays:
   * `MakeMiscSpecs()`
   * `MakeLoadSpecs()`
@@ -50,7 +51,7 @@ It contains:
 
 Keep opcode authorship here, grouped by family rather than opcode byte order.
 
-### `src/pupsnes/5a22/cpu_opcode_defs_internal.h`
+### `src/pupsnes/hw/5a22/cpu_opcode_defs_internal.h`
 
 This file is not where new opcodes should normally be written.
 
@@ -72,30 +73,23 @@ The normal workflow is:
 
 1. Decide which opcode family the instruction belongs to.
 2. Add the authored spec to the corresponding `Make*Specs()` array in `cpu_opcodes.cpp`.
-3. Reuse an existing local fragment if one matches the bus-cycle pattern.
-4. If no fragment exists, add a small local fragment in `cpu_opcodes.cpp`.
+3. Reuse an existing instruction-family or addressing fragment if one matches the bus-cycle pattern.
+4. If no fragment exists, add the fragment in `cpu_opcodes.cpp` for instruction behavior or `addressing_fragments.h` for shared addressing.
 5. Only add new DSL primitives to `cpu_opcode_defs_internal.h` if the current authoring language cannot express the instruction cleanly.
 
-Example: immediate loads are authored directly in `MakeLoadSpecs()`:
+Example: immediate loads use width-aware fragments in `MakeLoadSpecs()`:
 
 ```cpp
-Opcode(0xA9, "LDA", "immediate")
-    .Then(LoadRegFromFetch(Reg::kA, ByteSel::kLow, /*update_nz=*/true,
-                           Always(), "fetch immediate"))
-    .Build(),
-
-Opcode(0xA2, "LDX", "immediate")
-    .Then(LoadRegFromFetch(Reg::kX, ByteSel::kLow, /*update_nz=*/true,
-                           Always(), "fetch immediate"))
-    .Build(),
+Opcode(0xA9, "LDA", "immediate").Then(LoadAccumulatorImmediate()).Build(),
+Opcode(0xA2, "LDX", "immediate index").Then(LoadIndexXImmediate()).Build(),
 ```
 
-Example: `STA long` reuses a local fragment:
+Example: `STA long` combines shared addressing with width-aware store behavior:
 
 ```cpp
 Opcode(0x8F, "STA", "absolute long")
-    .Then(FetchLongAddr())
-    .Then(WriteRegByte(WriteSrc::kA, ByteSel::kLow, MicroInternalOp::kNone, Always(), "write A low"))
+    .Then(FetchAbsoluteLong())
+    .Then(StoreAccumulator())
     .Build(),
 ```
 
@@ -112,8 +106,9 @@ Opcode(0xD0, "BNE", "relative")
 Use these rules to keep authorship readable:
 
 * If the pattern is specific to a few opcodes in one family, put it in `cpu_opcodes.cpp` as a local fragment.
+* If the pattern computes an address shared across instruction families, put it in `addressing_fragments.h`.
 * If the pattern is a generic authoring primitive that many future opcodes will need, add it to `cpu_opcode_defs_internal.h`.
-* If the instruction needs a new post-bus CPU behavior, add a new `MicroInternalOp` in `cpu.h` and implement it in `cpu.cpp`.
+* If the instruction needs a new post-bus CPU behavior, add a new `MicroInternalOp` in `micro_op.h` and implement it in `cpu.cpp`.
 * If the instruction needs a new named timing fact, add a new `TimingCondition` and populate it through CPU execution state.
 
 Avoid pushing ordinary opcode authorship into the internal header. The point of the system is to keep the authored opcode list easy to find and review.
@@ -140,9 +135,9 @@ Internal ops mutate CPU state after the bus action completes.
 Examples:
 
 * `kLoadReg` (parameterized: Reg × ByteSel × update_nz)
-* `kSetAddrLowFromFetch`
+* `kSetAddrByteFromFetch` (parameterized byte and bank source)
 * `kSetBranchTakenCond`
-* `kBranchRelative8`
+* `kBranchRelative` (8-bit or 16-bit displacement)
 
 If a new instruction cannot be expressed with the existing internal ops, add one intentionally instead of hiding logic in ad hoc code.
 
@@ -150,10 +145,11 @@ If a new instruction cannot be expressed with the existing internal ops, add one
 
 Guards are timing rules attached to cycle slots.
 
-Stage 1 currently uses:
+Current conditions include branch-taken, register width, emulation mode, direct-page alignment, and page crossing. Compose them with `Always()`, `Condition(...)`, `Not(...)`, `AllOf(...)`, and `AnyOf(...)`.
 
-* `Always()`
-* `Condition(TimingCondition::kBranchTaken)`
+Direct-page addressing fragments mark `uses_dp_penalty` through `WithDpPenalty()`. Composition carries that property into the execution table independently of the addressing-mode label, including indirect modes. The CPU seeds the alignment condition only for those opcodes.
+
+The compact timing table shares one bit between direct-page alignment and branch/index page crossing. Validation rejects sequences combining a direct-page fragment with a producer of either crossing condition. Adding conditional page-cross timing to indirect-indexed DP reads requires a separate condition bit first.
 
 Rule expressions are declarative. They should describe architectural timing conditions, not arbitrary executor details.
 
@@ -175,7 +171,7 @@ When adding an opcode:
 
 1. Add the authored definition in the correct family array in `cpu_opcodes.cpp`.
 2. Reuse or add a local fragment if that improves readability.
-3. Add any missing `MicroInternalOp` support in `cpu.h` and `cpu.cpp`.
+3. Add any missing `MicroInternalOp` support in `micro_op.h` and `cpu.cpp`.
 4. Add or update structural lowering coverage in `src/tests/cpu_opcode_defs_tests.cpp`.
 5. Add or update CPU execution coverage in `src/tests/cpu_tests.cpp`.
 
@@ -184,7 +180,7 @@ For straightforward instructions, the execution test should normally prove:
 * register result
 * flag result
 * program counter result
-* expected cycle count through `Tick()`
+* expected cycle count at instruction retirement
 
 ## Validation Rules
 
@@ -196,6 +192,7 @@ Current validation covers:
 * malformed timing rules
 * oversized cycle sequences
 * invalid rule-count lowering
+* incompatible uses of the shared direct-page/page-cross timing bit
 
 If validation fails, the build should fail. This is intentional: malformed opcode specs should not reach runtime.
 
@@ -220,7 +217,7 @@ Use these when you want to prove:
 
 File: `src/tests/cpu_tests.cpp`
 
-These verify actual execution behavior through `CPU::Tick()` and scheduler integration.
+These verify actual execution behavior through `CPU::TickToTarget()` and scheduler integration. For instruction timing, set the debugger contract to retire exactly one instruction and assert both the stop reason and elapsed cycles. A fixed target alone can hide a missing cycle because the next instruction consumes the remaining budget. Also compare execution split across small targets to ensure partial-cycle progress is preserved.
 
 Use these to prove:
 

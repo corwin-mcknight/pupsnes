@@ -59,22 +59,24 @@ uint8_t Cartridge::GetCountryCode() const {
 }
 
 bool Cartridge::IsFastRomCapable() const {
-  if (mapper_kind_ == MapperKind::kNone || rom_.empty()) {
-    return false;
+  std::size_t offset = 0;
+  switch (mapper_kind_) {
+    case MapperKind::kLoROM: offset = kLoRomMapModeOffset; break;
+    case MapperKind::kHiROM: offset = kHiRomMapModeOffset; break;
+    case MapperKind::kExHiROM: offset = kExHiRomMapModeOffset; break;
+    case MapperKind::kNone: return false;
   }
-  const std::size_t offset =
-      (mapper_kind_ == MapperKind::kLoROM) ? kLoRomMapModeOffset : kHiRomMapModeOffset;
   if (offset >= rom_.size()) {
     return false;
   }
-  // FastROM map-mode bytes: $30 (LoROM-fast), $31 (HiROM-fast). The high
-  // nibble's bit 4 is the FastROM flag; the low nibble is the mapper.
+  // FastROM map modes are $30/$31/$35 for LoROM/HiROM/ExHiROM.
+  // Bit 4 is the capability flag; the low nibble is the mapper.
   return (rom_[offset] & 0x10U) != 0U;
 }
 
 namespace {
 
-// Pre-flight validation shared by Cartridge::LoadLoRom / LoadHiRom. Hard
+// Pre-flight validation shared by the Cartridge loaders. Hard
 // failures fill `out` with a specific message and return false; the caller
 // should NOT touch its rom_/sram_ state in that case. Soft validity (map
 // mode mismatch) is checked separately so each loader can name the wrong
@@ -226,44 +228,16 @@ void Cartridge::MapHiRom(SystemBus& bus) {
 
 RomLoadResult Cartridge::LoadExHiRom(std::span<const uint8_t> rom_data) {
   // ExHiROM header lives at file offset $40FFB0; the cart must be at least
-  // 4 MiB + a few hundred bytes for the header to fit. Accept anything large
-  // enough to host the header offset; the mapper handles smaller-half
-  // mirroring for sizes below 8 MiB.
+  // large enough to contain the map-mode byte. Like LoROM/HiROM, tolerate
+  // absent optional header fields; a missing SRAM size byte means no SRAM.
   RomLoadResult result{};
-  constexpr std::size_t kExHiRomMapModeOffset = 0x40FFD5U;
-  if (rom_data.empty()) {
-    result.ok = false;
-    result.detected_kind = MapperKind::kNone;
-    result.message = "ROM is empty (0 bytes)";
-    return result;
-  }
-  if (HasSmcCopierHeader(rom_data.size())) {
-    result.ok = false;
-    result.detected_kind = MapperKind::kNone;
-    result.message = std::format(
-        "ROM still has a {}-byte SMC copier header (file size {} bytes is "
-        "{} bytes off a 32 KiB bank boundary). Strip the copier header "
-        "with StripSmcCopierHeader before loading.",
-        kSmcCopierHeaderSize, rom_data.size(), kSmcCopierHeaderSize);
-    return result;
-  }
-  if (rom_data.size() <= kExHiRomMapModeOffset) {
-    result.ok = false;
-    result.detected_kind = MapperKind::kNone;
-    result.message = std::format(
-        "ROM is too small for ExHiROM ({} bytes; need at least {} bytes to "
-        "cover the internal header at $40FFB0).",
-        rom_data.size(), kExHiRomMapModeOffset + 1U);
+  if (!CheckHardRomShape(rom_data, kExHiRomMapModeOffset, "ExHiROM", result)) {
     return result;
   }
 
   rom_.assign(rom_data.begin(), rom_data.end());
 
-  // SRAM size byte at $40FFD8 (same encoding as LoROM/HiROM SRAM bytes).
-  constexpr std::size_t kExHiRomSramSizeOffset = 0x40FFD8U;
-  const uint8_t sram_byte = rom_[kExHiRomSramSizeOffset];
-  const std::size_t sram_size =
-      (sram_byte == 0 || sram_byte > kMaxLoRomSramSizeByte) ? 0 : (std::size_t{1024} << sram_byte);
+  const std::size_t sram_size = ExHiRomSramSize(rom_data);
   sram_.assign(sram_size, 0xFFU);
   sram_dirty_ = false;
 

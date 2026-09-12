@@ -12,7 +12,7 @@ constexpr std::string_view kUsage =
     "Usage: pupsnes-trace --rom <path> [--output <path>]\n"
     "                    (--instructions N | --master-cycles N | --frames N)\n"
     "\n"
-    "Loads a LoROM image, boots a SNES, and writes one trace line per\n"
+    "Loads a supported ROM image, boots a SNES, and writes one trace line per\n"
     "retired instruction to <path> until the stop budget is satisfied.\n"
     "Default output is pupsnes-trace.log in the current directory.\n";
 
@@ -91,8 +91,7 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  std::cerr << "pupsnes-trace: wrote " << result.instructions_emitted
-            << " instructions (" << result.master_time_elapsed
+  std::cerr << "pupsnes-trace: wrote " << result.instructions_emitted << " instructions (" << result.master_time_elapsed
             << " master cycles) to " << opts.output_path.string() << "\n";
   return 0;
 }

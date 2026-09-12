@@ -53,7 +53,9 @@ class RunControl {
   // Returns true to keep running; false to exit the TickFrame loop.
   bool HandlePostTickState(const TickResult& result);
   void DetachMicroOpRecorderForFreeRun();
-  void RestoreMicroOpRecorderForPause();
+  // Detailed recording is enabled while paused or stepping, detached only
+  // during free-running execution.
+  void RestoreMicroOpRecorder();
 
   SNES& snes_;
   BreakpointSet& breakpoints_;

@@ -77,8 +77,8 @@ namespace {
 
 std::optional<std::string> DriveMachineToMasterTime(SNES& snes, TimeMasterT cap) {
   // Defensive cap: never run more than this many advance steps without making
-  // forward progress on master time. Prevents infinite loops if the CPU stalls
-  // (e.g. STP) while still short of the target.
+  // forward progress on master time. STP and WAI still advance master time so
+  // passive devices can continue running while the CPU is halted.
   constexpr int kMaxStuckIterations = 16;
   int stuck_iterations = 0;
   TimeMasterT last_master = snes.GetMasterTime();
@@ -93,7 +93,7 @@ std::optional<std::string> DriveMachineToMasterTime(SNES& snes, TimeMasterT cap)
 
     if (after_tick == last_master) {
       if (++stuck_iterations >= kMaxStuckIterations) {
-        return "CPU made no forward progress (STP/halt or tick budget too small)";
+        return "CPU made no forward progress on master time";
       }
     } else {
       stuck_iterations = 0;
@@ -157,8 +157,8 @@ TraceRunResult RunTrace(const TraceRunOptions& opts) {
   }
 
   // Defensive cap: never run more than this many advance steps without making
-  // forward progress on master time. Prevents infinite loops if the CPU stalls
-  // (e.g., STP) while the budget is in instruction-count mode.
+  // forward progress on master time. Instruction budgets also check for STP
+  // below: a stopped CPU advances time but cannot retire another instruction.
   constexpr int kMaxStuckIterations = 16;
   int stuck_iterations = 0;
   TimeMasterT last_master = start_master;
@@ -167,6 +167,11 @@ TraceRunResult RunTrace(const TraceRunOptions& opts) {
     const TimeMasterT now_master = snes.GetMasterTime();
     if (BudgetSatisfied(opts.budget, sink.LineCount(), now_master - start_master)) {
       break;
+    }
+    if (opts.budget.instructions.has_value() && snes.GetCpu().GetHaltState() == HaltState::kStp) {
+      result.error = "CPU reached STP before the instruction budget was satisfied";
+      sink.Flush();
+      return result;
     }
 
     TimeMasterT after_tick = 0;
@@ -180,7 +185,7 @@ TraceRunResult RunTrace(const TraceRunOptions& opts) {
 
     if (after_tick == last_master) {
       if (++stuck_iterations >= kMaxStuckIterations) {
-        result.error = "CPU made no forward progress (STP/halt or tick budget too small)";
+        result.error = "CPU made no forward progress on master time";
         sink.Flush();
         return result;
       }

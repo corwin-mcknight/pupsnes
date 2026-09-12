@@ -53,16 +53,18 @@ inline constexpr std::size_t kHiRomHeaderOffset = 0xFFB0U;
 // File offset of the SRAM size byte inside the HiROM header.
 inline constexpr std::size_t kHiRomSramSizeOffset = 0xFFD8U;
 
+// ExHiROM places its header in the ROM's second 4 MiB half.
+inline constexpr std::size_t kExHiRomSramSizeOffset = 0x40FFD8U;
+
 // Offsets of the map-mode byte inside each header. SNES headers encode the
 // mapper in this byte:
 //   $20 — LoROM (slow)        $30 — LoROM + FastROM
 //   $21 — HiROM (slow)        $31 — HiROM + FastROM
-// The byte sits at $XXFD5 in CPU space — file offset $7FD5 for LoROM and
-// $FFD5 for HiROM. Higher map modes ($22/$32 SA-1, $23/$33 SuperFX, $25
-// ExHiROM, $35 ExHiROM+FastROM) live outside the LoROM/HiROM bring-up
-// surface and are reported as "unsupported" by the detector.
+//   $25 — ExHiROM (slow)      $35 — ExHiROM + FastROM
+// File offsets differ by mapper; ExHiROM uses its second 4 MiB half.
 inline constexpr std::size_t kLoRomMapModeOffset = 0x7FD5U;
 inline constexpr std::size_t kHiRomMapModeOffset = 0xFFD5U;
+inline constexpr std::size_t kExHiRomMapModeOffset = 0x40FFD5U;
 
 // Offsets of the checksum + complement pair. Real SNES headers have the
 // complement at $XXFDC and the checksum at $XXFDE; the two 16-bit words
@@ -160,6 +162,19 @@ inline void StripSmcCopierHeader(std::vector<uint8_t>& rom) {
     return 0;
   }
   const uint8_t value = rom[kHiRomSramSizeOffset];
+  if (value == 0 || value > kMaxLoRomSramSizeByte) {
+    return 0;
+  }
+  return std::size_t{1024} << value;
+}
+
+// Returns the SRAM size declared at file offset $40FFD8. Like the other
+// mappers, an absent or invalid size byte means no SRAM.
+[[nodiscard]] inline std::size_t ExHiRomSramSize(std::span<const uint8_t> rom) noexcept {
+  if (rom.size() <= kExHiRomSramSizeOffset) {
+    return 0;
+  }
+  const uint8_t value = rom[kExHiRomSramSizeOffset];
   if (value == 0 || value > kMaxLoRomSramSizeByte) {
     return 0;
   }

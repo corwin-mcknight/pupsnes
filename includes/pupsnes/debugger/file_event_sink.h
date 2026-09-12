@@ -12,7 +12,7 @@ namespace pupsnes::debugger {
 
 // Writes one versioned line per emulation event to a file. Format:
 //   # pupsnes-events v1  rom-sha1=...  master-hz=...  lines-per-frame=...
-//   MT:<12-hex>  V:<3> H:<4>  <CATEGORY>  <NAME>  <message>
+//   MT:<12-hex>  V:<3> H:<3>  <CATEGORY>  <NAME>  <message>
 // Events arrive in deterministic emission order (single-threaded machine),
 // so output is byte-stable run-to-run for the same ROM and inputs. Errors
 // latch like FileTraceSink: the first failure is kept and later events drop.

@@ -8,7 +8,6 @@
 //     also cleared by writing NMITIMEN with bits 5:4 = 00.
 //   * CPU /IRQ delivery branches: gated by P.I, vectors to $00FFFE in
 //     emulation mode, blocked-then-unblocked by CLI.
-//   * WAI wake on IRQ assertion (RAW pin level, independent of I flag).
 //
 // All tests use a LoROM ResetFixture + BRA $-2 spin trick (see nmi_tests.cpp)
 // so the CPU stays parked at the entry point while the PPU walks toward the
@@ -108,7 +107,7 @@ TEST_CASE("HTIMEL/H, VTIMEL/H, TIMEUP register surface", "[unit][cpu_mmio][irq]"
   REQUIRE((result.data & CpuMmio::kTimeUpFlagMask) == 0U);
 }
 
-// ---------- Mode 01: V-only ----------
+// ---------- Mode 10: V-only ----------
 
 TEST_CASE("V-IRQ fires at start of VTIME line and latches TIMEUP", "[unit][cpu_mmio][irq]") {
   ResetFixture f;
@@ -121,7 +120,7 @@ TEST_CASE("V-IRQ fires at start of VTIME line and latches TIMEUP", "[unit][cpu_m
   f.ModifyRegs([](auto& r) { r.P.I = false; });
 
   constexpr uint8_t kVTime = 100U;
-  // Program VTIME = 100, then enable V-IRQ (NMITIMEN bits 5:4 = 01).
+  // Program VTIME = 100, then enable V-IRQ (NMITIMEN bits 5:4 = 10).
   WriteBus(f.snes, 0x00'4209U, kVTime, 0);
   WriteBus(f.snes, 0x00'420AU, 0x00U, 0);
   WriteBus(f.snes, 0x00'4200U, CpuMmio::kNmiTimenVIrqEnableMask, 0);
@@ -197,7 +196,7 @@ TEST_CASE("Writing NMITIMEN mode=00 clears pending TIMEUP", "[unit][cpu_mmio][ir
   REQUIRE((after & CpuMmio::kTimeUpFlagMask) == 0U);
 }
 
-// ---------- Mode 10: H-only ----------
+// ---------- Mode 01: H-only ----------
 
 TEST_CASE("H-IRQ fires every scanline at HTIME dot", "[unit][cpu_mmio][irq]") {
   // Drive H-IRQ at H=100 (master cycle 400 within a line). Run for several

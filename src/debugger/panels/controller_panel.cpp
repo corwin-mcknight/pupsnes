@@ -15,11 +15,8 @@ constexpr ImVec2 kDPadBtnSize{28.0F, 28.0F};
 constexpr ImVec2 kCenterBtnSize{52.0F, 22.0F};
 constexpr ImVec2 kShoulderBtnSize{40.0F, 22.0F};
 
-// Renders a single button that toggles its Joypad state on click. While the
-// button is held down (mouse pressed on it) the pad bit is also pressed —
-// that lets the user execute a "press and release" gesture by click-and-drag
-// off the button without needing a separate release click for fast inputs.
-// Releasing the mouse without moving toggles back to the pre-click state.
+// A completed click toggles the latched Joypad state. Mouse-down and dragging
+// away without clicking do not change the pad state.
 void RenderPadButton(Joypad& joypad, Joypad::Button button, const char* label, ImVec2 size) {
   const bool latched = joypad.GetButton(button);
   if (latched) {

@@ -3206,7 +3206,7 @@ TEST_CASE("MVP copies a block backward one byte per 7-cycle pass", "[unit][cpu][
   REQUIRE(f.cpu.GetRegs().PC == 0x8003);
 }
 
-TEST_CASE("WAI halts the CPU until reset", "[unit][cpu][opcode]") {
+TEST_CASE("WAI keeps the CPU halted while no interrupt is pending", "[unit][cpu][opcode]") {
   ResetFixture f;
   f.LoadInstruction({0xCB, 0xE8, 0xE8});
 

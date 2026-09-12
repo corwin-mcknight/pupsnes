@@ -14,10 +14,9 @@ enum class SignalKind : uint16_t {
   kVblankNmiBoundary = 1,  // start of vblank; checks NMI enable and raises CPU NMI
   kHIrqMatch = 2,          // H/V timer match; checks IRQ enable and raises CPU IRQ
 
-  // Reserved; not fired in v1.
-  kApuSampleDeadline = 16,
-  kDmaBurstComplete = 32,
-  kHdmaFire = 33,
+  kApuSampleDeadline = 16,  // Reserved; audio advances inside APU catch-up.
+  kDmaBurstComplete = 32,   // Reserved; not fired in v1.
+  kHdmaFire = 33,           // HDMA frame initialization and per-scanline transfers.
 
   kMaxKind = 0xFFFF,
 };

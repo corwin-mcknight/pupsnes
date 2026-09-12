@@ -15,7 +15,7 @@ The CLI is the binary `build/<preset>/pupsnes-screenshot`, source in `src/tools/
 build/ci/pupsnes-screenshot --rom <path> --frames N [--output <path>]
 ```
 
-- `--rom` — path to a LoROM `.sfc` or `.smc` (the SMC copier header is stripped automatically)
+- `--rom` — path to a supported LoROM, HiROM, or ExHiROM `.sfc` or `.smc` (the SMC copier header is stripped automatically)
 - `--frames` — how many frames to run before grabbing the front buffer
 - `--output` — destination PPM (default: `pupsnes-screenshot.ppm`)
 
@@ -71,7 +71,7 @@ Many test ROMs stop at the first failure and dump CPU state on screen, so the cr
 
 ## Caveats
 
-- LoROM only today — HiROM ROMs will fail the size-mod check at load. Same constraint as `pupsnes-trace`.
+- ROM loading uses the same mapper detection as the emulator and `pupsnes-trace`; unsupported cartridge coprocessors are rejected.
 - The CLI runs the CPU + scheduler loop exactly like `pupsnes-trace`; there's no controller input. If a ROM needs button presses to advance (e.g. "Press A for next tests..."), you'll only ever see the first stop screen.
 - Output is the PPU front buffer at the moment the frame budget expires. If the ROM is mid-render (forced blank, mode switch, BG disabled, etc.), the image reflects that — pick a stable frame count for the ROM in question.
 - No audio, no input log, no save state — this is strictly a visual snapshot.

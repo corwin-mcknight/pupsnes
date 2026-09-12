@@ -39,8 +39,8 @@ class AudioBuffer {
   [[nodiscard]] bool PushSample(int16_t left, int16_t right) noexcept;
   [[nodiscard]] AudioStats GetStats() const noexcept;
 
-  // Consumer only. Fills interleaved stereo float output; any underflow or
-  // inactive playback is silence. Odd trailing samples are also zeroed.
+  // Consumer only. Underflow fades to silence and refills with extra headroom;
+  // inactive playback is immediately silent. Odd trailing samples are zeroed.
   void Render(std::span<float> output) noexcept;
 
  private:
@@ -50,10 +50,13 @@ class AudioBuffer {
   };
 
   static constexpr uint32_t kVideoBurstFrames = 544;  // 17 ms at 32 kHz.
+  static constexpr uint32_t kTransitionMs = 3;
+  static_assert(160 * (kInputSampleRate / 1000) + 4 * kVideoBurstFrames <= kStorageFrames);
 
   [[nodiscard]] bool Pop(Frame& frame) noexcept;
   void ApplyFlush() noexcept;
   void ResetInterpolation() noexcept;
+  void WriteOutput(std::span<float> output, float left, float right) noexcept;
 
   std::array<Frame, kStorageFrames> frames_{};
   alignas(64) std::atomic<uint64_t> write_index_{0};
@@ -62,7 +65,7 @@ class AudioBuffer {
   std::atomic<uint64_t> generation_{0};
   std::atomic<uint64_t> dropped_frames_{0};
   std::atomic<uint64_t> underrun_frames_{0};
-  std::atomic<uint32_t> capacity_frames_{1280 + 2 * kVideoBurstFrames};
+  std::atomic<uint32_t> capacity_frames_{1280 + 4 * kVideoBurstFrames};
   std::atomic<uint32_t> prefill_frames_{1184};
   std::atomic<uint32_t> sample_rate_{48000};
   std::atomic<float> volume_{0.5F};
@@ -77,6 +80,13 @@ class AudioBuffer {
   bool have_left_ = false;
   bool have_right_ = false;
   bool primed_ = false;
+  uint32_t recovery_prefill_ = 1184;
+  bool recovering_ = false;
+  uint32_t transition_remaining_ = 0;
+  float last_left_ = 0.0F;
+  float last_right_ = 0.0F;
+  float transition_left_ = 0.0F;
+  float transition_right_ = 0.0F;
 };
 
 }  // namespace pupsnes::frontend

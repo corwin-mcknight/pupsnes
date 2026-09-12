@@ -16,6 +16,7 @@
 #include "pupsnes/hw/5a22/cpu_mmio.h"
 #include "pupsnes/hw/rom/cart_profile.h"
 #include "pupsnes/hw/rom/cartridge.h"
+#include "pupsnes/hw/rom/rom_format.h"
 #include "pupsnes/core/snes.h"
 #include "pupsnes/memory/systembus.h"
 #include "systembus_test_access.h"
@@ -35,8 +36,6 @@ constexpr std::size_t kExHiRom8M = 8U * 1024U * 1024U;
 // the 6 MiB mark exercise the wrap-around formula.
 constexpr std::size_t kExHiRom6M = 6U * 1024U * 1024U;
 
-constexpr std::size_t kExHiRomMapModeOffset = 0x40FFD5U;
-constexpr std::size_t kExHiRomSramSizeOffset = 0x40FFD8U;
 constexpr std::size_t kExHiRomChecksumComplementOffset = 0x40FFDCU;
 constexpr std::size_t kExHiRomChecksumOffset = 0x40FFDEU;
 
@@ -87,6 +86,40 @@ TEST_CASE("LoadRomWithProfile: forced kExHiROM on too-small image is rejected", 
   const BuildResult result = snes.LoadRomWithProfile(forced, rom);
   REQUIRE_FALSE(result.ok);
   REQUIRE_THAT(result.message, ContainsSubstring("ExHiROM"));
+}
+
+TEST_CASE("ExHiROM rejects an image ending before its map-mode byte", "[unit][exhirom]") {
+  SNES snes;
+  const std::vector<uint8_t> rom(kExHiRomMapModeOffset, 0);
+  CartProfile forced{};
+  forced.mapper = MapperKind::kExHiROM;
+  const BuildResult result = snes.LoadRomWithProfile(forced, rom);
+  REQUIRE_FALSE(result.ok);
+  REQUIRE_THAT(result.message, ContainsSubstring("too small for ExHiROM"));
+}
+
+TEST_CASE("ExHiROM tolerates absent SRAM metadata through automatic and explicit-profile loading", "[unit][exhirom]") {
+  // Cover every truncation between the required map-mode byte and the
+  // optional SRAM byte, plus the first size that includes the SRAM byte.
+  for (std::size_t size = kExHiRomMapModeOffset + 1U; size <= kExHiRomSramSizeOffset + 1U; ++size) {
+    const bool has_sram_byte = size > kExHiRomSramSizeOffset;
+    std::vector<uint8_t> rom(size, 0);
+    rom[kExHiRomMapModeOffset] = 0x25U;
+    if (has_sram_byte) rom[kExHiRomSramSizeOffset] = 3U;
+
+    for (const bool forced : {false, true}) {
+      CAPTURE(size, forced);
+      SNES snes;
+      CartProfile profile{};
+      profile.mapper = MapperKind::kExHiROM;
+      const BuildResult result = forced ? snes.LoadRomWithProfile(profile, rom) : snes.LoadRom(rom);
+      REQUIRE(result.ok);
+      REQUIRE(snes.GetCartridge().GetMapperKind() == MapperKind::kExHiROM);
+      REQUIRE(snes.GetCartridge().Size() == size);
+      REQUIRE(snes.GetCartridge().SramSize() == (has_sram_byte ? 8192U : 0U));
+      if (!forced) REQUIRE(result.profile.sram_bytes == snes.GetCartridge().SramSize());
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -206,6 +239,23 @@ TEST_CASE("ExHiROM: debug reads return the expected ROM bytes (lower banks)", "[
 // ---------------------------------------------------------------------------
 // FASTROM (MEMSEL) only affects upper banks
 // ---------------------------------------------------------------------------
+
+TEST_CASE("ExHiROM FastROM capability comes from its own header", "[unit][exhirom][fastrom]") {
+  for (const bool fast : {false, true}) {
+    CAPTURE(fast);
+    SNES snes;
+    auto rom = MakeExHiRom(kExHiRom6M);
+    rom[kExHiRomMapModeOffset] = fast ? 0x35U : 0x25U;
+    // Give the unused HiROM-header location the opposite FastROM bit.
+    // Neither value is a valid HiROM mode, so detection remains unambiguous.
+    rom[kHiRomMapModeOffset] = fast ? 0x00U : 0x10U;
+    const BuildResult result = snes.LoadRom(rom);
+    REQUIRE(result.ok);
+    REQUIRE(result.profile.mapper == MapperKind::kExHiROM);
+    REQUIRE(result.profile.fastrom_capable == fast);
+    REQUIRE(snes.GetCartridge().IsFastRomCapable() == fast);
+  }
+}
 
 TEST_CASE("ExHiROM: MEMSEL bit 0 retimes only $80-$FF", "[unit][exhirom]") {
   SNES snes;

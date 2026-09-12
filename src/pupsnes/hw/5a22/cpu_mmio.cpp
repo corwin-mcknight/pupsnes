@@ -151,9 +151,8 @@ MmioReadResult CpuMmio::ReadRegister(uint32_t offset, TimeMasterT current_time) 
         // polling doesn't pick up open-bus garbage as phantom button presses.
         return {0x00U, 0xFFU};
       }
-      // Stub: other CPU MMIO registers (NMITIMEN, RDNMI, HDMA) are not yet
-      // modeled. Return pure open-bus (mask=0) so the bus merges in the last
-      // data value instead of a hard zero.
+      // Write-only and unimplemented registers leave the bus undriven, so
+      // the bus retains its last data value instead of receiving a hard zero.
       return {0x00U, 0x00U};
   }
 }
@@ -238,7 +237,7 @@ void CpuMmio::WriteRegister(uint32_t offset, uint8_t data, TimeMasterT current_t
     return;
   }
   if (reg == kHdmaEnOffset) {
-    // HDMA enable: shadow only in v1 (HDMA itself not yet implemented).
+    // DmaController samples this at frame init and on every active line.
     hdmaen_ = data;
     return;
   }
@@ -280,10 +279,9 @@ bool CpuMmio::HandleDebugWrite(uint32_t offset, uint8_t data) {
   const uint32_t reg = offset & 0xFFFFU;
   if (reg == kMemSelOffset || reg == kNmiTimenOffset || reg == kWrioOffset || reg == kHTimeLOffset ||
       reg == kHTimeHOffset || reg == kVTimeLOffset || reg == kVTimeHOffset) {
-    // Debug writes are out-of-band and don't belong to a bus cycle; pass 0
-    // as the current time. CpuMmio commits synchronously, so the timestamp
-    // is unused. Devices that use lazy replay (PPU) must not be debug-written
-    // through this path — they provide their own HandleDebugWrite override.
+    // Debug writes are out-of-band. This path uses time zero; NMI transitions,
+    // H/V latching, and IRQ scheduling inside WriteRegister consume that time.
+    // Other devices provide their own HandleDebugWrite overrides.
     WriteRegister(reg, data, 0);
   }
   return true;
@@ -312,23 +310,13 @@ namespace {
 // fires. `now` is the master cycle the caller is asking from. Returns
 // CpuMmio::kNoMatch when no match is reachable (e.g., VTIME out of range).
 //
-// Mode bits per NMITIMEN: 01 = V only, 10 = H only, 11 = both.
+// NMITIMEN bits 5:4: 01 = H only, 10 = V only, 11 = both.
 constexpr TimeMasterT kMatchNoMatch = static_cast<TimeMasterT>(-1);
 
 TimeMasterT ComputeNextMatch(uint8_t irq_mode, uint16_t htime, uint16_t vtime, TimeMasterT now, const Ppu& ppu) {
-  // We anchor frames at master cycle 0 (the PPU reset point). All NTSC frames
-  // up to the first short-line frame are 1364×262 = 357,368 mcyc long; the
-  // short-line saving (V=240 on field==true) takes 4 mcyc off every other
-  // frame. We model this by walking frame origins forward from 0 using the
-  // field cadence — `field_` toggles at end-of-frame and `field_==true`
-  // means the *next* frame's V=240 is short. The PPU's reset puts field=false
-  // for frame 0, so frames alternate F=0 (1364×262 = 357368) and
-  // F=1 (357364) starting from frame 1.
-  //
-  // For correctness we don't try to be clever: walk frame-by-frame until the
-  // candidate match cycle lands at or after `now`. With a 60Hz frame rate this
-  // is at most a single iteration in the common case (write-during-frame → fire
-  // later in same frame, or next frame at the latest).
+  // Derive the frame origin from the PPU's current cursor, then walk forward
+  // to a match strictly after `now`. Ppu::LineCycles preserves the alternating
+  // NTSC short-line cadence; we do not approximate every frame as 262×1364.
   const bool h_enabled = (irq_mode & CpuMmio::kNmiTimenHIrqEnableMask) != 0U;
   const bool v_enabled = (irq_mode & CpuMmio::kNmiTimenVIrqEnableMask) != 0U;
   const uint32_t target_h = h_enabled ? static_cast<uint32_t>(htime) : 0U;
@@ -378,7 +366,6 @@ TimeMasterT ComputeNextMatch(uint8_t irq_mode, uint16_t htime, uint16_t vtime, T
       }
       ++v;
       if (v >= sppu::regs::kLinesPerFrameNtsc) {
-        frame_origin += Ppu::LineCycles(sppu::regs::kLinesPerFrameNtsc - 1U, field) * 0U;  // placeholder
         // Compute full frame length and roll over.
         TimeMasterT frame_len = 0;
         for (uint32_t vv = 0; vv < sppu::regs::kLinesPerFrameNtsc; ++vv) {
@@ -393,8 +380,8 @@ TimeMasterT ComputeNextMatch(uint8_t irq_mode, uint16_t htime, uint16_t vtime, T
     }
   }
 
-  // V-only (mode 01) or both (mode 11): match once per frame at (target_h,
-  // target_v). For mode 01, target_h is 0 (start of line). For mode 11, both
+  // V-only (mode 10) or both (mode 11): match once per frame at (target_h,
+  // target_v). For mode 10, target_h is 0 (start of line). For mode 11, both
   // h_enabled and v_enabled are true. Walk frames forward.
   while (true) {
     const TimeMasterT cand = Ppu::MasterCycleAt(target_h, vtime, frame_origin, field);

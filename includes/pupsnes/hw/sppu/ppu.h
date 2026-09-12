@@ -26,11 +26,12 @@ struct FrameBufferView {
 };
 
 // Entry in the PPU's pending-write log. Same-clock MMIO writes don't trigger
-// catch-up; they append here and the dot loop replays them in order at the
-// cycle they arrived. See `ppu_scaffold_design.md` (memory) for rationale.
+// catch-up; they append here. The dot loop replays writes in order before
+// rendering the first dot that starts at or after their timestamp. A register
+// read also drains all writes through its timestamp before sampling state.
 struct PpuPokeLogEntry {
   TimeMasterT cycle;
-  uint16_t offset;  // Full 24-bit device offset; only bits [7:0] map to $21xx.
+  uint16_t offset;  // PPU register address in $2100-$213F.
   uint8_t data;
 };
 
@@ -44,7 +45,7 @@ struct PpuHvbStatus {
 
 // SPPU — Super Nintendo Picture Processing Unit. Owns the B-bus PPU window
 // ($2100-$213F) mirrored across banks $00-$3F / $80-$BF, advances via a
-// dot-major Tick, and renders Mode 1 per-dot (so per-line HDMA scroll
+// dot loop in CatchUpTo, and renders Modes 0/1 per-dot (so per-line HDMA scroll
 // modulation needs no extra plumbing — the dot loop drains pending writes up
 // to the dot's start cycle before fetching).
 //
@@ -52,8 +53,8 @@ struct PpuHvbStatus {
 //   * WriteRegister appends to `pending_writes_` and returns immediately.
 //   * ReadRegister runs after the bus has already caught us up to the read's
 //     master cycle (SystemBus gates `kSameClockMmio` catch-up on reads), so
-//     the pending log is drained through the caller's Tick before the read
-//     observes decoded state.
+//     the rendering loop has processed every completed dot. The read handler
+//     drains remaining writes through the read timestamp before sampling.
 class Ppu : public Device {
  public:
   explicit Ppu(SNES& snes);
@@ -273,14 +274,13 @@ class Ppu : public Device {
   // 64K-wrapped VRAM byte read; shared by FetchBgPixel and FetchObjPixel.
   [[nodiscard]] uint8_t GetVramByte(uint32_t addr) const { return (*vram_)[addr & 0xFFFFU]; }
 
-  // Append a same-clock MMIO write to the pending log. Returns true on
-  // success, false when the log is full (caller triggers an internal flush via
-  // Tick in that case).
+  // Append a same-clock MMIO write to the pending log. A full log is drained
+  // synchronously before appending; the write is retained and returns true.
   bool EnqueueWrite(uint16_t offset, uint8_t data, TimeMasterT cycle);
 
   // Drain the pending-write log up to `cutoff` (inclusive). Writes at later
-  // cycles stay in the log for the next Tick iteration. Once the cursor
-  // reaches the tail, the log is reset so subsequent enqueues start at index 0.
+  // cycles stay in the log for a later catch-up or register read. Once the
+  // cursor reaches the tail, the log resets so enqueues start at index 0.
   void DrainPendingWritesUpTo(TimeMasterT cutoff);
 
   // Replay dispatcher — applies one pending write's semantics. Writes that
@@ -511,12 +511,10 @@ class Ppu : public Device {
   bool vblank_nmi_flag_ = false;
 
   // OPHCT/OPVCT latched H/V counters (9-bit) and per-register read-twice
-  // flipflops. The latch fires on $2137 (SLHV) dummy-read, on a WRIO ($4201)
-  // bit-7 1→0 transition, or on a lightgun pulse. We don't model WRIO yet —
-  // its reset value FFh has bit 7 set, which is the gating condition fullsnes
-  // calls out, so SLHV reads unconditionally trigger today. Both flipflops
-  // reset on a $213F (STAT78) read; the latch flag (STAT78.bit6) also clears
-  // on that read.
+  // flipflops. SLHV ($2137) captures the counters only while WRIO ($4201)
+  // bit 7 is high; WRIO's bit-7 falling edge also captures them. Capturing
+  // leaves the read flipflops unchanged. Reading STAT78 ($213F) resets both
+  // flipflops and clears the latch flag (bit 6).
   uint16_t ophct_ = 0;
   uint16_t opvct_ = 0;
   bool ophct_read_high_ = false;
@@ -575,8 +573,8 @@ class Ppu : public Device {
   std::unique_ptr<std::array<PpuPokeLogEntry, kPendingWriteLogSize>> pending_writes_;
   uint32_t pending_writes_count_ = 0;
   // Position within pending_writes_ of the next entry to replay. Writes with
-  // a cycle above the current drain cutoff sit here until a later Tick picks
-  // them up. Collapses to 0 once the tail is reached.
+  // a cycle above the current drain cutoff sit here until a later catch-up
+  // or read drains them. Collapses to 0 once the tail is reached.
   uint32_t pending_writes_cursor_ = 0;
 };
 

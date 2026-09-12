@@ -8,6 +8,7 @@
 #include "imgui.h"
 #include "panel_utils.h"
 #include "panels.h"
+#include "pupsnes/debugger/dma_channel_view.h"
 #include "pupsnes/hw/5a22/cpu_mmio.h"
 #include "pupsnes/hw/5a22/dma_controller.h"
 
@@ -15,7 +16,7 @@ namespace pupsnes::debugger {
 
 namespace {
 
-constexpr uint8_t kDmapHdmaBit = 0x40U;
+constexpr uint8_t kDmapHdmaIndirectBit = 0x40U;
 constexpr uint8_t kDmapDirBit = 0x80U;
 constexpr uint8_t kDmapStepMask = 0x18U;
 constexpr uint8_t kDmapModeMask = 0x07U;
@@ -31,7 +32,6 @@ const char* StepLabel(uint8_t dmap) {
 }
 
 const char* DirLabel(uint8_t dmap) { return (dmap & kDmapDirBit) != 0U ? "B->A" : "A->B"; }
-bool IsHdmaChannel(uint8_t dmap) { return (dmap & kDmapHdmaBit) != 0U; }
 
 std::string FormatMaskBits(uint8_t mask) {
   if (mask == 0U) return "none";
@@ -81,14 +81,14 @@ void DrawChannelRowExpansion(uint8_t ch, const DmaController::ChannelState& s) {
   ImGui::BulletText("bit 7 direction:    %s", DirLabel(s.dmap));
   // DMAP bit 6 selects the HDMA table addressing mode: set = indirect, clear =
   // direct. This matches the hardware decode in dma_controller.cpp (s.dmap & 0x40).
-  ImGui::BulletText("bit 6 HDMA addr:    %s", (s.dmap & kDmapHdmaBit) != 0U ? "indirect" : "direct");
+  ImGui::BulletText("bit 6 HDMA addr:    %s", (s.dmap & kDmapHdmaIndirectBit) != 0U ? "indirect" : "direct");
   ImGui::BulletText("bits 4-3 A-step:    %s", StepLabel(s.dmap));
   ImGui::BulletText("bits 2-0 mode:      %u", static_cast<unsigned>(s.dmap & kDmapModeMask));
   ImGui::Unindent();
   ImGui::PopID();
 }
 
-void DrawChannelsSection(const DmaController& dma) {
+void DrawChannelsSection(const DmaController& dma, const CpuMmio& cpu_mmio) {
   constexpr ImGuiTableFlags kFlags =
       ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingFixedFit;
   if (!ImGui::BeginTable("dma_channels", 9, kFlags)) return;
@@ -105,7 +105,7 @@ void DrawChannelsSection(const DmaController& dma) {
 
   for (uint8_t ch = 0; ch < 8U; ++ch) {
     const auto& s = dma.GetChannelState(ch);
-    const bool hdma = IsHdmaChannel(s.dmap);
+    const bool hdma = ShowHdmaChannelState(dma, cpu_mmio, ch);
 
     ImGui::TableNextRow();
     ImGui::TableSetColumnIndex(0);
@@ -239,7 +239,7 @@ void RenderDmaPanel(DebuggerApp& app) {
     DrawEnableSection(dma, cpu_mmio);
   }
   if (ImGui::CollapsingHeader("Channels", ImGuiTreeNodeFlags_DefaultOpen)) {
-    DrawChannelsSection(dma);
+    DrawChannelsSection(dma, cpu_mmio);
   }
   if (ImGui::CollapsingHeader("Recent triggers", ImGuiTreeNodeFlags_DefaultOpen)) {
     DrawTriggersSection(app, dma);

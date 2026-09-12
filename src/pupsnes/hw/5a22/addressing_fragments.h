@@ -56,12 +56,15 @@ constexpr CycleFragment FetchAbsolute() {
 // Direct-page effective address: fetch the 1-byte DP offset from PC and
 // compute addr_ = bank 0, (DP + offset) & 0xFFFF in a single slot. The
 // optional "+w" penalty cycle (DP low byte nonzero) is appended as a separate
-// conditional internal slot — instructions that follow DP must include it.
+// conditional internal slot. WithDpPenalty carries the corresponding CPU
+// condition into any opcode that composes this fragment, including indirect
+// modes, independently of the opcode's display label.
 //
 // Cycle accounting: 1 fixed cycle (fetch + address compute) + 1 conditional
 // cycle (DL != 0). Callers: LDA/STA/etc. in direct-page mode.
 constexpr CycleFragment FetchDirectPage() {
   return Fragment()
+      .WithDpPenalty()
       .Then(CycleSlotSpec{
           MicroBusAction::kFetchPc,
           MicroInternalOp::kSetAddrFromDp,
@@ -81,6 +84,7 @@ constexpr CycleFragment FetchDirectPage() {
 // distinguishes 5-m+w from 4-m+w). index_reg must be Reg::kX or Reg::kY.
 constexpr CycleFragment FetchDirectPageIndexed(Reg index_reg) {
   return Fragment()
+      .WithDpPenalty()
       .Then(CycleSlotSpec{
           MicroBusAction::kFetchPc,
           MicroInternalOp::kSetAddrFromDp,
@@ -227,8 +231,9 @@ constexpr CycleFragment FetchDirectIndexedIndirectX() {
 // addr), assemble into DBR:(high:low), then add Y with 24-bit carry into the
 // bank byte. Three additional cycles on top of FetchDirectPage. Used by
 // (dp),Y addressing. Always pays the index-add cycle (matches the abs,X
-// model — overcounts the no-page-cross case by one cycle, awaiting a future
-// kIndexedPageCrossed condition).
+// model for stores; reads overcount the no-page-cross, 8-bit-index case by
+// one cycle). A future conditional read penalty needs a separate timing bit
+// because DP-low-nonzero already occupies the current page-cross slot.
 constexpr CycleFragment FetchDirectIndirectIndexedY() {
   return Fragment()
       .Then(CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kStashDpIndirectLow, Always(), "read pointer low",
@@ -427,8 +432,7 @@ constexpr CycleFragment LoadRegFromAddr(Reg reg, TimingCondition wide_cond) {
 // read at $xxFFFF correctly pulls its high byte from $(xx+1):0000. Using
 // kStashIndirectLow here would bank-wrap and read the wrong byte.
 //
-// wide_cond must be kAccumulator16 for A-based ALU ops. This helper is not
-// used for CPX/CPY (they use immediate-only in the current opcode set).
+// wide_cond is kAccumulator16 for A-based ALU ops and kIndex16 for CPX/CPY.
 constexpr CycleFragment AluFromAddr(AluOp op, TimingCondition wide_cond) {
   return Fragment()
       .Then(CycleSlotSpec{MicroBusAction::kReadAddr, MicroInternalOp::kAlu8Imm, Not(Condition(wide_cond)),

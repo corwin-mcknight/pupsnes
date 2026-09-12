@@ -14,8 +14,6 @@ namespace {
 
 // ExHiROM header lives at file offset $40FFB0 — bank $40 page $FF in the
 // post-load address space. Same byte offsets within the header as HiROM.
-constexpr std::size_t kExHiRomMapModeOffset = 0x40FFD5U;
-constexpr std::size_t kExHiRomSramSizeOffset = 0x40FFD8U;
 constexpr std::size_t kExHiRomChecksumComplementOffset = 0x40FFDCU;
 constexpr std::size_t kExHiRomChecksumOffset = 0x40FFDEU;
 constexpr std::size_t kExHiRomChipsetOffset = 0x40FFD6U;

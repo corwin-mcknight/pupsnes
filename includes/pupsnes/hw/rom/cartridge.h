@@ -47,8 +47,8 @@ class Cartridge : public Device {
   [[nodiscard]] uint8_t GetCountryCode() const;
 
   // True when the header map-mode byte advertises FastROM ($30 LoROM-fast,
-  // $31 HiROM-fast). Whether FastROM is currently *active* is a runtime
-  // MEMSEL state owned by CpuMmio; this is the cart-side capability.
+  // $31 HiROM-fast, $35 ExHiROM-fast). Active FastROM is a runtime MEMSEL
+  // state owned by CpuMmio; this is the cart-side capability.
   [[nodiscard]] bool IsFastRomCapable() const;
 
   // Validate and ingest the bytes as a LoROM image. On success returns

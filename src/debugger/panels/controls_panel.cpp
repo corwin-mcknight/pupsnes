@@ -1,4 +1,6 @@
 #include <cinttypes>
+#include <filesystem>
+#include <string>
 
 #include "debugger/app.h"
 #include "imgui.h"
@@ -82,10 +84,10 @@ void RenderControlsPanel(DebuggerApp& app) {
       ImGui::SameLine();
       ImGui::TextUnformatted("|");
       ImGui::SameLine();
-      const std::string_view rom_path = app.GetLoadedRomPath();
+      const std::string rom_filename = std::filesystem::path(app.GetLoadedRomPath()).filename().string();
       ImGui::TextUnformatted("ROM:");
       ImGui::SameLine();
-      ImGui::TextUnformatted(rom_path.data(), rom_path.data() + rom_path.size());
+      ImGui::TextUnformatted(rom_filename.c_str());
 
       ImGui::SameLine();
       ImGui::TextUnformatted("|");

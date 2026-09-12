@@ -344,11 +344,10 @@ void Ppu::OnFrameEndSignal(TimeMasterT master_time) {
 
 MmioReadResult Ppu::ReadRegister(uint32_t offset, TimeMasterT current_time) {
   // Lazy-replay contract: any write with cycle <= current_time must be
-  // visible to this read. The scheduler's same-clock catch-up drains the
-  // pending log during Tick, but Tick overshoots budget by up to 5 cycles
-  // (a dot is atomic), leaving the PPU slightly ahead of the bus. When the
-  // PPU is ahead, Scheduler::CatchUpDevice is a no-op — so we drain here
-  // directly to guarantee the read observes every qualifying write.
+  // visible to this read. CatchUpTo stops exactly at the requested time,
+  // retaining any partial dot. Its rendering loop drains only through each
+  // completed dot's start time, so writes later in that dot can remain
+  // queued. Drain through the read timestamp before sampling decoded state.
   DrainPendingWritesUpTo(current_time);
 
   const uint16_t reg = static_cast<uint16_t>(offset & 0xFFFFU);
@@ -454,7 +453,7 @@ void Ppu::WriteRegister(uint32_t offset, uint8_t data, TimeMasterT current_time)
   // Mirror the written byte into the shadow immediately so the debugger can
   // observe last-written-value without waiting for log replay. Decoded state
   // (`forced_blank_`, latches, etc.) only updates when the pending-write log
-  // replays — that happens inside Tick during catch-up.
+  // replays during CatchUpTo or a register read.
   shadow_[static_cast<std::size_t>(reg - sppu::regs::kBase)] = data;
   (void)EnqueueWrite(reg, data, current_time);
 }
@@ -474,7 +473,7 @@ FrameBufferView Ppu::BuildFrontView() const {
 
 bool Ppu::EnqueueWrite(uint16_t offset, uint8_t data, TimeMasterT cycle) {
   if (pending_writes_count_ >= kPendingWriteLogSize) {
-    // Soft-limit flush: the log filled without any intervening read/Tick
+    // Soft-limit flush: the log filled without any intervening read/catch-up
     // draining it. Apply everything synchronously up to the new entry's
     // cycle so no write is lost. Because enqueues are monotonic in cycle,
     // all queued entries have cycle <= this one and the drain clears the

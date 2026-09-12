@@ -31,7 +31,7 @@ Builds enable common warning flags by default. The `ci` preset also enables warn
 
 The project lints against the [Google C++ Style Guide](https://google.github.io/styleguide/cppguide.html) using three tools:
 
-- **clang-format** — formatting (`BasedOnStyle: Google`, 4-space indent, 120 col). Config: `.clang-format`.
+- **clang-format** — formatting (`BasedOnStyle: Google`, 2-space indent, 120 col). Config: `.clang-format`.
 - **clang-tidy** — semantic/style checks including `google-*` and `readability-identifier-naming` (CamelCase types/functions, `lower_case` vars, `k`-prefixed constants, `_`-suffixed members). Config: `.clang-tidy`.
 - **cpplint** — Google's textual linter for header/include/comment conventions. Config: `CPPLINT.cfg`.
 
