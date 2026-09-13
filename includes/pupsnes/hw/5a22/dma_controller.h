@@ -86,15 +86,15 @@ class DmaController : public Device {
   [[nodiscard]] TimeMasterT GetHdmaFrameBaseTime() const { return hdma_frame_base_time_; }
 
  private:
-  // HDMA timing constants. Per fullsnes: HDMA init fires at V=0 H=6; per-line
-  // transfer fires at V=0..V_END H=274. Each dot before H=323 is 4 master
-  // cycles, so init = 6*4 = 24 mcyc into the frame, per-line line 0 = 274*4 =
-  // 1096 mcyc. We hardcode V_END=224 (no overscan) for v1.
+  // HDMA init uses the existing V=0 H=6 approximation. Per-line triggering
+  // starts at master cycle 1104 (ares/sfc/cpu/timing.cpp), followed by setup
+  // overhead before channel writes. HBlank status starts earlier at H=274;
+  // using that edge for transfers can overwrite the last visible pixels.
+  // We hardcode V_END=224 (no overscan) for v1; CPU/DMA alignment is pending.
   static constexpr uint32_t kHdmaInitMasterCycles = 6U * 4U;       // V=0 H=6
-  static constexpr uint32_t kHdmaPerLineMasterCycles = 274U * 4U;  // V=N H=274
+  static constexpr uint32_t kHdmaPerLineMasterCycles = 1104U;
   static constexpr uint32_t kHdmaLastVisibleV = 224U;              // V=224 last per-line fire
   static constexpr uint32_t kHdmaNormalLineCycles = 1364U;
-  static constexpr uint32_t kHdmaFrameCycles = 262U * kHdmaNormalLineCycles;
 
   enum class HdmaPhase : uint8_t {
     kInit,
@@ -137,6 +137,9 @@ class DmaController : public Device {
   uint32_t hdma_next_v_ = 0;
   uint8_t hdma_active_mask_ = 0;
   TimeMasterT hdma_frame_base_time_ = 0;
+  // Field of the frame being scheduled, independent of lazy PPU catch-up.
+  // Its duration comes from the PPU timing helpers, including short frames.
+  bool hdma_frame_field_ = false;
 };
 
 }  // namespace pupsnes

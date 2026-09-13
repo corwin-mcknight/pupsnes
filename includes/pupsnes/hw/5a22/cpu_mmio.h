@@ -10,7 +10,7 @@ namespace pupsnes {
 class SystemBus;
 
 // 5A22 CPU registers and controller ports on banks $00-$3F / $80-$BF.
-// Owns MEMSEL, NMI/IRQ controls, programmable I/O, and DMA enable registers;
+// Owns MEMSEL, NMI/IRQ controls, unsigned arithmetic, programmable I/O, and DMA enable registers;
 // delegates controller data to Joypad and transfers to DmaController, which
 // also owns the $43xx channel registers. Unimplemented register reads leave
 // the bus undriven and their writes are ignored.
@@ -42,6 +42,16 @@ class CpuMmio : public Device {
   static constexpr uint32_t kWrioOffset = 0x4201U;
   static constexpr uint32_t kRdioOffset = 0x4213U;
   static constexpr uint8_t kWrioHvLatchMask = 0x80U;
+
+  static constexpr uint32_t kWrMpyAOffset = 0x4202U;
+  static constexpr uint32_t kWrMpyBOffset = 0x4203U;
+  static constexpr uint32_t kWrDivLOffset = 0x4204U;
+  static constexpr uint32_t kWrDivHOffset = 0x4205U;
+  static constexpr uint32_t kWrDivBOffset = 0x4206U;
+  static constexpr uint32_t kRdDivLOffset = 0x4214U;
+  static constexpr uint32_t kRdDivHOffset = 0x4215U;
+  static constexpr uint32_t kRdMpyLOffset = 0x4216U;
+  static constexpr uint32_t kRdMpyHOffset = 0x4217U;
 
   // HTIMEL/H ($4207-$4208), VTIMEL/H ($4209-$420A) — 9-bit H/V-IRQ targets.
   // Write-only on hardware; the shadow is exposed for the debugger and tests.
@@ -139,7 +149,23 @@ class CpuMmio : public Device {
   // Live $420C shadow, consumed by DmaController and exposed to the debugger.
   [[nodiscard]] uint8_t GetHdmaEn() const { return hdmaen_; }
 
+  // The serial arithmetic unit advances once per CPU bus/internal cycle,
+  // independent of that cycle's master-clock duration. Reads sample before
+  // the edge; writes latch after it. Intermediate results remain readable.
+  void ClockMathCycle() {
+    if (math_cycles_remaining_ != 0U) StepMath();
+  }
+
  private:
+  void StepMath();
+  uint8_t multiplicand_ = 0xFFU;
+  uint16_t dividend_ = 0xFFFFU;
+  uint16_t quotient_ = 0;
+  uint16_t product_remainder_ = 0;
+  uint32_t math_shift_ = 0;
+  uint8_t math_cycles_remaining_ = 0;
+  bool math_dividing_ = false;
+
   // (Re)compute when the next H/V-IRQ match cycle lands given the current
   // (nmitimen, htime, vtime) and master time, and schedule a kHIrqMatch
   // signal for it. Called whenever any of those inputs changes, and from

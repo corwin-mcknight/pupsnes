@@ -67,6 +67,7 @@ void DmaController::Reset() {
   hdma_next_v_ = 0;
   hdma_active_mask_ = 0;
   hdma_frame_base_time_ = 0;
+  hdma_frame_field_ = false;
   ScheduleNextHdmaInit(0U);
 }
 
@@ -116,7 +117,7 @@ void DmaController::OnHdmaSignal(TimeMasterT master_time) {
         snes_->GetEmuEventSink(), master_time, [&] { return snes_->ppu->ProjectHvAt(master_time); },
         EmuEventKind::kHdmaFrameInit, hdma_active_mask_);
 
-    // Schedule first per-line at V=0 H=274.
+    // Schedule the first per-line trigger at V=0, master cycle 1104.
     hdma_phase_ = HdmaPhase::kRunLine;
     hdma_next_v_ = 0;
     snes_->scheduler->ScheduleSignal(hdma_frame_base_time_ + kHdmaPerLineMasterCycles, SignalKind::kHdmaFire,
@@ -136,11 +137,11 @@ void DmaController::OnHdmaSignal(TimeMasterT master_time) {
   for (uint8_t ch = 0; ch < 8U; ++ch) {
     if ((effective_mask & (1U << ch)) == 0U) continue;
     if (channels_[ch].hdma_finished) continue;
+    if (active_count == 0U) t += 8U;  // HDMA setup precedes all channel writes.
     ++active_count;
     t = HdmaRunChannelLine(ch, t);
   }
   if (active_count > 0U) {
-    t += 8U;  // per-line overhead
     events::EmitWithHv(
         snes_->GetEmuEventSink(), master_time, [&] { return snes_->ppu->ProjectHvAt(master_time); },
         EmuEventKind::kHdmaLineRun, hdma_next_v_, effective_mask, active_count);
@@ -156,7 +157,14 @@ void DmaController::OnHdmaSignal(TimeMasterT master_time) {
   // Schedule the next fire. If we just ran V=224 (the last visible line),
   // chain to next frame's init. Otherwise schedule next scanline at +1364.
   if (hdma_next_v_ >= kHdmaLastVisibleV) {
-    ScheduleNextHdmaInit(hdma_frame_base_time_ + kHdmaFrameCycles);
+    // A fixed 262*1364 period drifts four cycles behind the PPU every other
+    // NTSC frame, eventually moving HDMA writes into the visible picture.
+    // Use the same line timing as the PPU, anchored to this scheduled frame
+    // rather than the PPU's possibly later lazy-replay cursor.
+    const TimeMasterT next_frame =
+        Ppu::MasterCycleAt(0U, sppu::regs::kLinesPerFrameNtsc, hdma_frame_base_time_, hdma_frame_field_);
+    hdma_frame_field_ = !hdma_frame_field_;
+    ScheduleNextHdmaInit(next_frame);
   } else {
     ++hdma_next_v_;
     const TimeMasterT next_time = hdma_frame_base_time_ +

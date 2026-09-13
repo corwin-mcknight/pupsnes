@@ -464,7 +464,7 @@ TEST_CASE("DMA upload of palette + tilemap + char data renders a Mode 1 tile", "
 
 // -----------------------------------------------------------------------------
 // HDMA tests start here. HDMA fires through the scheduler at master-time-fixed
-// points within each frame (V=0 H=6 init; V=0..224 H=274 per-line transfer).
+// points within each frame (V=0 H=6 init; V=0..224 H=276 per-line transfer).
 // -----------------------------------------------------------------------------
 
 namespace {
@@ -575,15 +575,15 @@ TEST_CASE("HDMA direct mode advances A2A and decrements NTRL per line", "[unit][
   REQUIRE(snes.GetDma().GetChannelState(0).a2a == 0x00U);
   REQUIRE(snes.GetDma().GetChannelState(0).ntrl == 0x00U);
 
-  // Fire V=0 H=274 (master_time = 1096). Should load header (1), transfer 0xAA
+  // Fire V=0 H=276 (master_time = 1104). Should load header (1), transfer 0xAA
   // from $7E:0001 to $2100, advance A2A to 2, decrement NTRL to 0.
-  const TimeMasterT v0_line = 1096U;
+  const TimeMasterT v0_line = 1104U;
   snes.MachineSync(v0_line + 16U);
   snes.GetScheduler().FireEventsThrough(v0_line + 16U);
   REQUIRE(snes.GetDma().GetChannelState(0).a2a == 0x02U);
   REQUIRE(snes.GetDma().GetChannelState(0).ntrl == 0x00U);
 
-  // Fire V=1 H=274 (master_time = 1096 + 1364 = 2460). Reloads header (1),
+  // Fire V=1 H=276 (master_time = 1104 + 1364 = 2460). Reloads header (1),
   // transfers 0xBB from $7E:0003, advances A2A to 4.
   const TimeMasterT v1_line = v0_line + 1364U;
   snes.MachineSync(v1_line + 16U);
@@ -591,7 +591,7 @@ TEST_CASE("HDMA direct mode advances A2A and decrements NTRL per line", "[unit][
   REQUIRE(snes.GetDma().GetChannelState(0).a2a == 0x04U);
   REQUIRE(snes.GetDma().GetChannelState(0).ntrl == 0x00U);
 
-  // Fire V=2 H=274. Header byte at $7E:0004 = 0x00 → channel finished.
+  // Fire V=2 H=276. Header byte at $7E:0004 = 0x00 → channel finished.
   const TimeMasterT v2_line = v1_line + 1364U;
   snes.MachineSync(v2_line + 16U);
   snes.GetScheduler().FireEventsThrough(v2_line + 16U);
@@ -621,7 +621,7 @@ TEST_CASE("HDMA direct mode writes reach the destination port (INIDISP brightnes
 
   // Drive through V=1 to let two lines of HDMA fire. The MachineSync below
   // advances the PPU to 3000 first, then events fire and enqueue lazy-replay
-  // writes at cycles ~1108 and ~2472. A subsequent ppu.CatchUpTo past 3000
+  // writes at cycles ~1124 and ~2488. A subsequent ppu.CatchUpTo past 3000
   // runs one more dot and drains those queued writes.
   snes.MachineSync(3000U);
   snes.GetScheduler().FireEventsThrough(3000U);
@@ -772,7 +772,7 @@ TEST_CASE("HDMA per-line advances master_time by per-channel byte cost", "[unit]
   snes.MachineSync(1200U);
   snes.GetScheduler().FireEventsThrough(1200U);
 
-  REQUIRE(snes.GetMasterTime() >= 1096U + 24U);
+  REQUIRE(snes.GetMasterTime() >= 1104U + 24U);
   // Sanity: per-line stall happened on top of the init stall.
   REQUIRE(snes.GetMasterTime() > after_init);
 }
@@ -799,9 +799,9 @@ TEST_CASE("HDMA re-arms on the next frame after the prior frame's stream ended",
   BusWrite(snes, 0x420CU, 0x01U, now++);
 
   // --- Frame 0 ---
-  // Drive past V=2 H=274 so frame 0's terminator-load fires and the channel
+  // Drive past V=2 H=276 so frame 0's terminator-load fires and the channel
   // marks itself finished. Capture the brightness reached this frame.
-  const TimeMasterT mid_frame_0 = 1096U + 2U * 1364U + 200U;
+  const TimeMasterT mid_frame_0 = 1104U + 2U * 1364U + 200U;
   RunToTime(snes, mid_frame_0);
   ppu.CatchUpTo(mid_frame_0);
   REQUIRE(snes.GetDma().GetChannelState(0).hdma_finished == true);
@@ -816,9 +816,9 @@ TEST_CASE("HDMA re-arms on the next frame after the prior frame's stream ended",
 
   // --- Frame 1 ---
   // The next HDMA init fires at 262*1364 + 24 = 357392. Drive past it AND
-  // past V=0 H=274 of frame 1 so the channel reloads the same source table
+  // past V=0 H=276 of frame 1 so the channel reloads the same source table
   // and writes 0x07 again.
-  const TimeMasterT into_frame_1 = 262U * 1364U + 1096U + 200U;
+  const TimeMasterT into_frame_1 = 262U * 1364U + 1104U + 200U;
   RunToTime(snes, into_frame_1);
   ppu.CatchUpTo(into_frame_1);
 
@@ -836,8 +836,8 @@ TEST_CASE("HDMA chains across frame boundary: next init scheduled after V=224", 
   BusWrite(snes, 0x420CU, 0x01U, now++);
 
   // Drive through all 225 per-line fires for one frame: init at 24, V=0..224
-  // at 1096 + V*1364. The last per-line is at 1096 + 224*1364 = 306632.
-  const TimeMasterT past_last_line = 1096U + 224U * 1364U + 50U;
+  // at 1104 + V*1364. The last per-line is at 1104 + 224*1364 = 306632.
+  const TimeMasterT past_last_line = 1104U + 224U * 1364U + 50U;
   snes.MachineSync(past_last_line);
   snes.GetScheduler().FireEventsThrough(past_last_line);
 
@@ -897,7 +897,7 @@ TEST_CASE("HDMA repeat-each-line transfers a fresh byte every scanline", "[unit]
   BusWrite(snes, 0x420CU, 0x01U, now++);
 
   // After 3 line fires the last byte (0x03) should be the most recent INIDISP write.
-  const TimeMasterT three_lines = 1096U + 2U * 1364U + 200U;  // V=0,1,2 H=274 + slack
+  const TimeMasterT three_lines = 1104U + 2U * 1364U + 200U;  // V=0,1,2 H=276 + slack
   snes.MachineSync(three_lines);
   snes.GetScheduler().FireEventsThrough(three_lines);
   ppu.CatchUpTo(three_lines + 50U);
@@ -931,7 +931,7 @@ TEST_CASE("HDMA channel terminates on count-byte 0 and no further transfers fire
   BusWrite(snes, 0x420CU, 0x01U, now++);
 
   // Drive past V=2 to let line 1 hit the terminator.
-  const TimeMasterT past_terminator = 1096U + 2U * 1364U + 200U;
+  const TimeMasterT past_terminator = 1104U + 2U * 1364U + 200U;
   snes.MachineSync(past_terminator);
   snes.GetScheduler().FireEventsThrough(past_terminator);
   ppu.CatchUpTo(past_terminator + 50U);
@@ -961,4 +961,53 @@ TEST_CASE("HDMA init skips channels with HDMAEN bit clear", "[unit][dma][hdma]")
   // Channel 1: HDMA inactive, so a2a stays at its default (0).
   REQUIRE(snes.GetDma().GetChannelState(1).a2a == 0x00U);
   REQUIRE(snes.GetDma().GetChannelState(1).a2a_high == 0x00U);
+}
+
+TEST_CASE("HDMA frame scheduling follows the PPU short NTSC field", "[unit][dma][hdma]") {
+  SNES snes;
+  snes.Reset();
+  TimeMasterT frame_base = 0;
+  // Checking multiple field pairs catches both the first missing four-cycle
+  // correction and any subsequent accumulation or incorrect field toggle.
+  for (uint32_t frame = 0; frame < 6; ++frame) {
+    CAPTURE(frame);
+    RunToTime(snes, frame_base + 24U);
+    REQUIRE(snes.GetDma().GetHdmaFrameBaseTime() == frame_base);
+    REQUIRE(snes.GetPpu().GetDotV() == 0U);
+    REQUIRE(snes.GetPpu().GetDotH() == 6U);
+    const TimeMasterT last_transfer = frame_base + 224U * 1364U + 1104U;
+    RunToTime(snes, last_transfer);
+    const TimeMasterT next_base = frame_base + 262U * 1364U - ((frame & 1U) != 0U ? 4U : 0U);
+    REQUIRE(EarliestSignal(snes, SignalKind::kHdmaFire) == next_base + 24U);
+    frame_base = next_base;
+  }
+}
+
+TEST_CASE("Repeating HDMA writes leave the last visible pixels of the preceding line intact",
+          "[unit][dma][hdma][ppu]") {
+  SNES snes;
+  snes.Reset();
+  TimeMasterT now = 1;
+  BusWrite(snes, 0x2121, 0, now++);
+  BusWrite(snes, 0x2122, 0xFF, now++);
+  BusWrite(snes, 0x2122, 0x7F, now++);  // White backdrop.
+  BusWrite(snes, 0x2100, 0x0F, now++);
+  BusWrite(snes, 0x7E0000, 0x82, now++);  // Two consecutive transfer lines.
+  BusWrite(snes, 0x7E0001, 0x0F, now++);  // V=0 HBlank keeps line 1 bright.
+  BusWrite(snes, 0x7E0002, 0x80, now++);  // V=1 HBlank blanks line 2.
+  BusWrite(snes, 0x7E0003, 0, now++);
+  BusWrite(snes, 0x4300, 0, now++);
+  BusWrite(snes, 0x4301, 0, now++);
+  BusWrite(snes, 0x4302, 0, now++);
+  BusWrite(snes, 0x4303, 0, now++);
+  BusWrite(snes, 0x4304, 0x7E, now++);
+  BusWrite(snes, 0x420C, 1, now++);
+  RunToTime(snes, 3U * 1364U);
+  const uint16_t* pixels = snes.GetPpu().GetBackBuffer();
+  const uint32_t first_row = sppu::regs::kFrameBufferWidth + sppu::regs::kVisibleHStart;
+  for (uint32_t x = 0; x < 256; ++x) {
+    CAPTURE(x);
+    REQUIRE(pixels[first_row + x] == 0x7FFF);
+    REQUIRE(pixels[first_row + sppu::regs::kFrameBufferWidth + x] == 0);
+  }
 }

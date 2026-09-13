@@ -49,7 +49,7 @@ Those historical gameplay checks do not establish current compatibility for ever
 What to expect right now:
 
 - 🔊 **Stereo audio at 100% speed** — volume, mute, device, latency, and interpolation controls are available in both frontends. Pausing, debugger stepping, and other speeds are silent.
-- 🌀 **No Mode 7** — affine/rotation effects don't render (e.g. *F-Zero*, *Super Mario Kart*, the LTTP world-map screen).
+- 🌀 **Mode 7 rendering** — rotation, scaling, scrolling, wrapping, EXTBG priorities, and BG1 direct color are implemented. A test ROM covers HDMA scale changes; commercial-game scenes still need broader validation.
 - 🎮 **Player 1 only** — no second controller or peripherals.
 - 💾 **No save states or rewind** yet (battery SRAM *does* persist to `.srm`). In the debugger, **SNES → Cartridge → Persist SRAM** controls save loading and automatic writes; it defaults on and is remembered across launches. Saves live beside the ROM. Turning persistence off leaves save files untouched; enabling it mid-session saves the current SRAM, with existing saves loaded when opening a ROM. **File → Clear SRAM** clears the cartridge's save memory, resets and pauses the SNES, and immediately updates the save file if persistence is enabled.
 - 📦 **LoROM / HiROM / ExHiROM only** — no SA-1 / SuperFX / DSP enhancement-chip games.
@@ -63,17 +63,19 @@ A finer-grained checklist for the curious.
 - ✅ Emulation (E=1) and native (E=0) modes; 8/16-bit accumulator & index (M/X) handling
 - ✅ Every addressing mode (direct page, stack-relative, long, indexed, indirect, block-move…)
 - ✅ Decimal (BCD) `ADC`/`SBC`, 8- and 16-bit, with correct overflow behavior
+- ✅ 5A22 unsigned multiply/divide registers, including partial results and CPU-cycle completion timing
 - ✅ Interrupts & vectors: NMI, IRQ, BRK, COP, RESET (ABORT scaffolded), with proper entry/exit
 - ✅ `MVN`/`MVP` block moves, `WAI`/`STP`, all read-modify-write forms
 - ✅ Per-access bus timing (FastROM / slow ROM / WRAM / MMIO), DRAM refresh, branch & page-cross penalties
 
 **PPU — video**
 - ✅ Background **Mode 0**, ✅ **Mode 1** (incl. BG3 priority elevation)
-- ❌ Modes **2, 3, 4, 5, 6**, ❌ **Mode 7** (affine rotation/scaling)
+- ✅ **Mode 7** affine rotation/scaling, flips, overflow modes, EXTBG, and BG1 direct color
+- ❌ Modes **2, 3, 4, 5, 6**
 - ✅ Sprites/OBJ: all 8 size pairs, flips, priority, palette groups, 32-sprite/line cap
 - ✅ Color math (add / subtract / half), ✅ fixed color (COLDATA), ✅ main & sub screen, ✅ INIDISP brightness, ✅ overscan
 - ✅ VRAM / OAM / CGRAM port protocols (VMAIN translate & increment, RDVRAM prefetch quirk, write-twice/read-twice latches)
-- ❌ Windows (W1/W2 + logic), ❌ mosaic, ❌ hi-res / interlace output (Mode 5/6), ❌ direct color, ❌ offset-per-tile
+- ❌ Windows (W1/W2 + logic), ❌ mosaic, ❌ hi-res / interlace output (Mode 5/6), ❌ direct color in Modes 3/4, ❌ offset-per-tile
 
 **DMA / HDMA**
 - ✅ General-purpose DMA: 8 channels, transfer modes 0–7, fixed/increment/decrement addressing, both directions
@@ -154,7 +156,7 @@ PupSNES is built around a signal-horizon scheduler, with each chip an independen
 
 In rough priority order:
 
-1. **PPU completeness** — Mode 7, remaining background modes, windows, mosaic, hi-res / interlace.
+1. **PPU completeness** — remaining background modes, windows, mosaic, hi-res / interlace, and Mode 7 game validation.
 2. **Save states & rewind** — capture and restore the whole machine, including sound and instructions in progress.
 3. **More cartridges** — additional mappers and enhancement chips (SA-1, SuperFX, DSP-n…).
 4. **Enhancements beyond accuracy** — opt-in extras (e.g. a widescreen PPU), gated so they never compromise the accurate core.

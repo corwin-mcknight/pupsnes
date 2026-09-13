@@ -116,3 +116,7 @@ To inspect or share the generated signal without an audio device:
 ```
 
 Choose an unused output filename. See [Audio](audio.md) for playback settings and the WAV capture options.
+
+## Mode 7 graphics fixture
+
+`ppu_mode7.sfc` draws a four-color sheared checkerboard with three HDMA scale bands. Its dedicated `[mode7]` integration test compares every visible pixel after CPU execution at two scheduler slice sizes. See [Mode 7](mode7.md) for the rendering scope and screenshot command.

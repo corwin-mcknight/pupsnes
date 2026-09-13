@@ -12,7 +12,7 @@
 //
 // Reference: fullsnes, Bruce Clark 65C816 docs (`docs/external/fullsnes.html`).
 // Scope matches the PPU scaffold plan: v1 implements INIDISP, OAM/VRAM/CGRAM
-// port machinery, SETINI overscan, Mode 7 multiplication, and the PPU status
+// port machinery, SETINI overscan, Mode 7 rendering and multiplication, and the PPU status
 // and H/V latch registers. Remaining ports are shadow + open-bus for now.
 
 namespace pupsnes::sppu::regs {
@@ -63,7 +63,7 @@ inline constexpr uint16_t kBg34Nba = 0x210C;
 
 // $210D..$2114 BGxHOFS / BGxVOFS — BG scroll, 10-bit, write-twice via shared
 // "BG_old" latch. $210D / $210E also drive M7HOFS/M7VOFS through M7_old;
-// those two Mode 7 scroll side effects are not modeled yet.
+// the Mode 7 and ordinary BG scroll latches are independent.
 inline constexpr uint16_t kBg1Hofs = 0x210D;
 inline constexpr uint16_t kBg1Vofs = 0x210E;
 inline constexpr uint16_t kBg2Hofs = 0x210F;
@@ -117,7 +117,7 @@ inline constexpr uint8_t kTmBg4Mask = 0x08;
 inline constexpr uint8_t kTmObjMask = 0x10;
 
 // $2130 CGWSEL — Color math control A.
-//   bit 0   = Direct Color mode (256-color BG). Not modeled (out of scope).
+//   bit 0   = Direct Color mode (implemented for Mode 7 BG1).
 //   bit 1   = Sub-screen BG/OBJ Enable. 0=sub-screen is COLDATA only,
 //             1=sub-screen also renders BG/OBJ from TS, falling back to
 //             COLDATA where transparent.
@@ -188,13 +188,21 @@ inline constexpr uint16_t kVmAddH = 0x2117;
 inline constexpr uint16_t kVmDataL = 0x2118;
 inline constexpr uint16_t kVmDataH = 0x2119;
 
-// $211B/$211C M7A/M7B — Mode 7 matrix parameters and PPU1 multiply
-// operands. Both ports use the shared M7_old byte latch to assemble their
+// $211A M7SEL: flips in bits 0/1, overflow in bits 6/7 (0/1=wrap,
+// 2=transparent, 3=tile zero). $211B-$2120 hold the Mode 7 matrix and center.
+// These and $210D/$210E use the shared M7_old byte latch to assemble their
 // 16-bit matrix value: new_value = (data << 8) | M7_old, then M7_old = data.
 // The general-purpose multiplier treats M7A as signed 16-bit and the byte
 // written to M7B (the new M7B high byte) as signed 8-bit.
+inline constexpr uint16_t kM7Sel = 0x211A;
+inline constexpr uint8_t kM7SelHflipMask = 0x01;
+inline constexpr uint8_t kM7SelVflipMask = 0x02;
 inline constexpr uint16_t kM7A = 0x211B;
 inline constexpr uint16_t kM7B = 0x211C;
+inline constexpr uint16_t kM7C = 0x211D;
+inline constexpr uint16_t kM7D = 0x211E;
+inline constexpr uint16_t kM7X = 0x211F;
+inline constexpr uint16_t kM7Y = 0x2120;
 
 // CGRAM ports.
 inline constexpr uint16_t kCgAdd = 0x2121;
@@ -203,6 +211,7 @@ inline constexpr uint16_t kCgData = 0x2122;
 // $2133 SETINI — Screen mode select.
 inline constexpr uint16_t kSetini = 0x2133;
 inline constexpr uint8_t kSetiniOverscanMask = 0x04;  // bit 2 (0=224 lines, 1=239)
+inline constexpr uint8_t kSetiniExtbgMask = 0x40;
 
 // $2134-$2136 MPYL/MPYM/MPYH — low-to-high bytes of the signed 24-bit
 // M7A * signed(M7B high byte) result. All eight bits of each port are driven.

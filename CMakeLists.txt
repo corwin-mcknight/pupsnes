@@ -372,6 +372,7 @@ if(BUILD_TESTING)
     ${CMAKE_CURRENT_SOURCE_DIR}/testroms/all_instr_loop/all_instr_loop.s
     ${CMAKE_CURRENT_SOURCE_DIR}/testroms/fastrom_smoke/fastrom_smoke.s
     ${CMAKE_CURRENT_SOURCE_DIR}/testroms/ppu_blue_cgram/ppu_blue_cgram.s
+    ${CMAKE_CURRENT_SOURCE_DIR}/testroms/ppu_mode7/ppu_mode7.s
     ${CMAKE_CURRENT_SOURCE_DIR}/testroms/apu_upload/apu_upload.s
     ${CMAKE_CURRENT_SOURCE_DIR}/testroms/apu_transfers/apu_transfers.s
     ${CMAKE_CURRENT_SOURCE_DIR}/testroms/apu_arithmetic/apu_arithmetic.s

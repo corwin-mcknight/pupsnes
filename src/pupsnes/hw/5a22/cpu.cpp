@@ -139,6 +139,7 @@ void CPU::Reset() {
   halt_state_ = HaltState::kNone;
   wai_wake_cycles_remaining_ = 0;
   wai_wake_partial_cycles_ = 0;
+  halt_math_partial_cycles_ = 0;
   nmi_curr_ = false;
   nmi_gated_prev_ = false;
   nmi_pending_ = false;
@@ -324,6 +325,7 @@ TickResult CPU::BusReadSlow(SnesAddrT addr, TimeMasterDeltaT cycle_time) {
   // Async bus scheduling is gone in the new model; WasScheduled() should not
   // fire, but if it does we treat it as a completed access (no blocking).
   fetch_data_ = result.data;
+  snes_->cpu_mmio->ClockMathCycle();
   return TickResult{0, TickStopReason::kReachedTarget};
 }
 
@@ -342,12 +344,14 @@ TickResult CPU::BusWriteSlow(SnesAddrT addr, uint8_t data, TimeMasterDeltaT cycl
   uint8_t data;
   if (system_bus_raw_ != nullptr && system_bus_raw_->TryFastRead(addr, local_time_ + cycle_time, data)) {
     fetch_data_ = data;
+    snes_->cpu_mmio->ClockMathCycle();
     return TickResult{0, TickStopReason::kReachedTarget};
   }
   return BusReadSlow(addr, cycle_time);
 }
 
 [[gnu::always_inline]] inline TickResult CPU::BusWrite(SnesAddrT addr, uint8_t data, TimeMasterDeltaT cycle_time) {
+  snes_->cpu_mmio->ClockMathCycle();
   if (system_bus_raw_ != nullptr && system_bus_raw_->TryFastWrite(addr, local_time_ + cycle_time, data)) {
     return TickResult{0, TickStopReason::kReachedTarget};
   }
@@ -725,6 +729,7 @@ void CPU::ExecuteInternalOp(MicroInternalOp op, [[maybe_unused]] uint8_t params)
     case MicroInternalOp::kHaltCpu: {
       const bool is_stp = (params & 0x01U) != 0U;
       halt_state_ = is_stp ? HaltState::kStp : HaltState::kWai;
+      halt_math_partial_cycles_ = 0;
       wai_wake_cycles_remaining_ = 0;
       wai_wake_partial_cycles_ = 0;
       return;
@@ -1112,7 +1117,7 @@ TickResult CPU::PerformBusAction(MicroBusAction action, [[maybe_unused]] uint8_t
     return result;
   };
   switch (action) {
-    case MicroBusAction::kNone: return TickResult{0, TickStopReason::kReachedTarget};
+    case MicroBusAction::kNone: snes_->cpu_mmio->ClockMathCycle(); return TickResult{0, TickStopReason::kReachedTarget};
     case MicroBusAction::kFetchPc: {
       TickResult blocked = read(PcAddr(regs_));
       if (blocked.reason != TickStopReason::kReachedTarget) return blocked;
@@ -1280,6 +1285,15 @@ TickResult CPU::TickToTarget(TimeMasterT target_master_time) {
 
   const TimeMasterT start = snes_->GetMasterTime();
 
+  // The 5A22 arithmetic unit keeps receiving internal clocks while the
+  // instruction sequencer waits. Preserve the phase across scheduler slices.
+  const auto clock_halted_math = [&](TimeMasterDeltaT elapsed) {
+    const auto total = halt_math_partial_cycles_ + elapsed;
+    const auto edges = std::min<TimeMasterDeltaT>(total / kInternalCpuCycleMaster, 16U);
+    for (TimeMasterDeltaT edge = 0; edge < edges; ++edge) snes_->cpu_mmio->ClockMathCycle();
+    halt_math_partial_cycles_ = total % kInternalCpuCycleMaster;
+  };
+
   // Bring the DRAM refresh cursor up if a halt (STP/WAI) skipped master time
   // forward since the last main-loop iteration. Real hardware continues to
   // refresh during WAI — the bus stalls but the refresh clock ticks — so
@@ -1295,6 +1309,7 @@ TickResult CPU::TickToTarget(TimeMasterT target_master_time) {
   // STP: consume cycles to target, never wake, never sample. Only Reset()
   // clears kStp.
   if (halt_state_ == HaltState::kStp) {
+    clock_halted_math(target_master_time - start);
     snes_->SetMasterTime(target_master_time);
     local_time_ = target_master_time;
     return {target_master_time - start, TickStopReason::kReachedTarget};
@@ -1321,6 +1336,7 @@ TickResult CPU::TickToTarget(TimeMasterT target_master_time) {
         local_time_ = snes_->GetMasterTime();
         wai_wake_partial_cycles_ += step;
         if (wai_wake_partial_cycles_ == kInternalCpuCycleMaster) {
+          snes_->cpu_mmio->ClockMathCycle();
           wai_wake_partial_cycles_ = 0;
           --wai_wake_cycles_remaining_;
         }
@@ -1335,6 +1351,7 @@ TickResult CPU::TickToTarget(TimeMasterT target_master_time) {
       }
     } else {
       // No wake yet — consume remaining budget as idle internal cycles.
+      clock_halted_math(target_master_time - snes_->GetMasterTime());
       snes_->SetMasterTime(target_master_time);
       local_time_ = target_master_time;
       return {target_master_time - start, TickStopReason::kReachedTarget};
@@ -1342,6 +1359,14 @@ TickResult CPU::TickToTarget(TimeMasterT target_master_time) {
   }
 
   while (snes_->GetMasterTime() < target_master_time) {
+    // A retired WAI/STP may have halted within this call. Consume its idle
+    // clocks before estimating another opcode fetch, just as at entry.
+    if (halt_state_ != HaltState::kNone && ShouldFetchInstruction()) {
+      clock_halted_math(target_master_time - snes_->GetMasterTime());
+      snes_->SetMasterTime(target_master_time);
+      local_time_ = target_master_time;
+      return {snes_->GetMasterTime() - start, TickStopReason::kReachedTarget};
+    }
     // Instruction-boundary interrupt sampling. Runs once per instruction,
     // before EstimateNextStepCostOrZero sees the next op, so the estimator
     // picks up the synthetic-entry's first micro-op cost (internal cycle)
@@ -1386,6 +1411,13 @@ TickResult CPU::TickToTarget(TimeMasterT target_master_time) {
       snes_->SetMasterTime(snes_->GetMasterTime() + take);
       local_time_ = snes_->GetMasterTime();
       refresh_cycles_remaining_ -= take;
+      // DRAM refresh supplies five arithmetic clocks, one per eight master
+      // cycles. Count completed slots so scheduler slices cannot add edges.
+      const auto refresh_before = kDramRefreshDurationCycles - refresh_cycles_remaining_ - take;
+      const auto refresh_after = kDramRefreshDurationCycles - refresh_cycles_remaining_;
+      for (auto edge = refresh_before / 8U; edge < refresh_after / 8U; ++edge) {
+        snes_->cpu_mmio->ClockMathCycle();
+      }
       retired_refresh_cycles_ += take;
       continue;
     }
@@ -1418,14 +1450,6 @@ TickResult CPU::TickToTarget(TimeMasterT target_master_time) {
     local_time_ = snes_->GetMasterTime();
     partial_op_cycles_ = 0;
 
-    // A micro-op that just retired may have set halt_state_ (WAI/STP). Exit the
-    // dispatch loop immediately; the next TickToTarget call enters via the
-    // halt-state prologue above.
-    if (halt_state_ != HaltState::kNone && ShouldFetchInstruction()) {
-      snes_->SetMasterTime(target_master_time);
-      local_time_ = target_master_time;
-      return {snes_->GetMasterTime() - start, TickStopReason::kReachedTarget};
-    }
     StepResult step = ShouldFetchInstruction() ? FetchOpcode(0) : ExecuteMicroOp(0);
     if (step.stopped) {
       return {snes_->GetMasterTime() - start,

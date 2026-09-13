@@ -1,12 +1,17 @@
 #include <catch2/catch_test_macros.hpp>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <vector>
 
 #include "pupsnes/core/scheduler.h"
 #include "pupsnes/core/snes.h"
 #include "pupsnes/hw/sppu/ppu.h"
 #include "pupsnes/hw/sppu/ppu_regs.h"
 #include "pupsnes/memory/systembus.h"
+#include "pupsnes/tools/trace_runner.h"
 
 // PPU register / port behavior tests. Every test goes through the SystemBus
 // so it exercises the real lazy-replay path: writes enqueue without catch-up,
@@ -2451,10 +2456,6 @@ TEST_CASE("CGADSUB layer mask gates math per-layer", "[unit][ppu]") {
 // Tagged [smwbug] so the diagnostic dump can also be invoked in isolation.
 // ---------------------------------------------------------------------------
 
-#include <filesystem>
-#include <fstream>
-#include <iterator>
-
 #include "pupsnes/hw/5a22/cpu.h"
 #include "pupsnes/hw/rom/rom_format.h"
 
@@ -2653,4 +2654,376 @@ TEST_CASE("OBJ list latched per scanline — mid-line OAM write does not unrende
   // and these pixels would fall through to the black backdrop.)
   REQUIRE(view.pixels[20U * view.stride + 15U] == 0x001FU);
   REQUIRE(view.pixels[20U * view.stride + 17U] == 0x001FU);
+}
+
+namespace {
+
+struct Mode7Fixture {
+  SNES snes;
+  TimeMasterT now = 1;
+
+  Mode7Fixture() {
+    snes.GetPpu().Reset();
+    Write(sppu::regs::kVmain, 0x80);
+    Write(sppu::regs::kBgmode, 7);
+    Write(sppu::regs::kTm, 1);
+    Parameter(sppu::regs::kM7A, 0x100);
+    Parameter(sppu::regs::kM7B, 0);
+    Parameter(sppu::regs::kM7C, 0);
+    Parameter(sppu::regs::kM7D, 0x100);
+    Parameter(sppu::regs::kM7X, 0);
+    Parameter(sppu::regs::kM7Y, 0);
+    Parameter(sppu::regs::kBg1Hofs, 0);
+    Parameter(sppu::regs::kBg1Vofs, 0);
+    for (uint16_t i = 0; i < 256; ++i) WriteCgramWord(snes, static_cast<uint8_t>(i), i, now);
+    // Each texel in tile zero has a distinct color; tilemap defaults to zero.
+    for (uint16_t i = 0; i < 64; ++i) VramByte(i, true, static_cast<uint8_t>(i + 1U));
+    Write(sppu::regs::kInidisp, 0x0F);
+  }
+
+  void Write(uint16_t reg, uint8_t value) { BusWrite(snes, reg, value, now++); }
+  void Parameter(uint16_t reg, uint16_t value) {
+    Write(reg, static_cast<uint8_t>(value));
+    Write(reg, static_cast<uint8_t>(value >> 8U));
+  }
+  void VramByte(uint16_t word, bool high, uint8_t value) {
+    SetVramAddress(snes, word, now);
+    Write(high ? sppu::regs::kVmDataH : sppu::regs::kVmDataL, value);
+  }
+  void Render() {
+    REQUIRE(now < 1452U);
+    snes.GetPpu().CatchUpTo(kFrameEndNtsc);
+  }
+  uint16_t Pixel(uint32_t x, uint32_t y = 0) const {
+    const auto view = snes.GetPpu().BuildFrontView();
+    return view.pixels[y * view.stride + x];
+  }
+};
+
+}  // namespace
+
+TEST_CASE("Mode 7 reads packed high-byte characters and fixed low-byte tilemap", "[unit][ppu][mode7]") {
+  Mode7Fixture f;
+  // These ordinary BG settings, including 16x16 tiles, have no Mode 7 effect.
+  f.Write(sppu::regs::kBgmode, 0xFF);
+  f.Write(sppu::regs::kBg1Sc, 0xFC);
+  f.Write(sppu::regs::kBg12Nba, 0xFF);
+  f.VramByte(1, false, 255);  // Map column one selects the last character.
+  f.VramByte(255U * 64U + 8U, true, 255);
+  f.Render();
+  REQUIRE(f.Pixel(0) == 9);  // V=1, not zero, on the first visible scanline.
+  REQUIRE(f.Pixel(7) == 16);
+  REQUIRE(f.Pixel(8) == 255);
+  REQUIRE(f.Pixel(9) == 0);  // Zero texel is transparent.
+  REQUIRE(f.Pixel(16) == 9);
+  REQUIRE(f.Pixel(0, 6) == 57);
+  REQUIRE(f.Pixel(0, 7) == 1);
+}
+
+TEST_CASE("Mode 7 applies signed scale rotation shear centers scroll and flips", "[unit][ppu][mode7]") {
+  struct Transform {
+    uint16_t a, b, c, d, cx, cy, h, v;
+    uint8_t select;
+    uint16_t expected;
+  };
+  // Expected texels at screen (3,2), i.e. hardware X=3,Y=3.
+  constexpr Transform kCases[] = {
+      {256, 0, 0, 256, 0, 0, 0, 0, 0, 28},        // identity -> (3,3)
+      {512, 0, 0, 128, 0, 0, 0, 0, 0, 15},        // scale -> (6,1)
+      {0, 256, 0xFF00, 0, 16, 16, 0, 0, 0, 44},   // quarter turn -> (3,29)
+      {256, 128, 64, 256, 0, 0, 0, 0, 0, 29},     // shear -> (4,3)
+      {256, 0, 0, 256, 0, 0, 5, 7, 0, 17},        // scroll -> (8,10)
+      {256, 0, 0, 256, 0, 0, 0, 0, 1, 29},        // horizontal flip -> (252,3)
+      {256, 0, 0, 256, 0, 0, 0, 0, 2, 36},        // vertical flip -> (3,252)
+      {256, 0, 0, 256, 0, 0, 0, 0, 3, 37},        // both flips -> (252,252)
+      {0xFF00, 0, 0, 0xFF00, 0, 0, 0, 0, 0, 46},  // negative scale -> (-3,-3)
+      {0, 0, 0, 0, 0xFFFF, 0xFFFE, 0, 0, 0, 56},  // signed centers -> (-1,-2)
+  };
+  for (const auto& t : kCases) {
+    CAPTURE(t.a, t.b, t.c, t.d, t.select);
+    Mode7Fixture f;
+    f.Parameter(sppu::regs::kM7A, t.a);
+    f.Parameter(sppu::regs::kM7B, t.b);
+    f.Parameter(sppu::regs::kM7C, t.c);
+    f.Parameter(sppu::regs::kM7D, t.d);
+    f.Parameter(sppu::regs::kM7X, t.cx);
+    f.Parameter(sppu::regs::kM7Y, t.cy);
+    f.Parameter(sppu::regs::kBg1Hofs, t.h);
+    f.Parameter(sppu::regs::kBg1Vofs, t.v);
+    f.Write(sppu::regs::kM7Sel, t.select);
+    f.Render();
+    REQUIRE(f.Pixel(3, 2) == t.expected);
+  }
+}
+
+TEST_CASE("Mode 7 truncates each origin product before summation", "[unit][ppu][mode7]") {
+  Mode7Fixture f;
+  SECTION("Positive fractional terms do not carry between products") {
+    f.Parameter(sppu::regs::kM7A, 63);
+    f.Parameter(sppu::regs::kM7B, 63);
+    f.Parameter(sppu::regs::kBg1Hofs, 1);
+    f.Parameter(sppu::regs::kBg1Vofs, 3);
+    f.Render();
+    REQUIRE(f.Pixel(0) == 33);  // (0,4); summing before truncation gives (1,4).
+  }
+  SECTION("Negative products round down") {
+    f.Parameter(sppu::regs::kM7A, 0xFFFF);
+    f.Parameter(sppu::regs::kBg1Hofs, 1);
+    f.Render();
+    REQUIRE(f.Pixel(0) == 16);  // (-1,1).
+  }
+}
+
+TEST_CASE("Mode 7 clips scroll deltas and sign extends only thirteen bits", "[unit][ppu][mode7]") {
+  Mode7Fixture f;
+  f.Write(sppu::regs::kM7Sel, 0x80);  // Outside is transparent.
+  SECTION("Positive delta discards bits ten through twelve") {
+    f.Parameter(sppu::regs::kBg1Hofs, 0xEC01);  // low 13 bits = +3073, clipped to +1.
+    f.Parameter(sppu::regs::kBg1Vofs, 0xE801);  // +2049 clips to +1.
+    f.Render();
+    REQUIRE(f.Pixel(0) == 18);  // (1,2).
+  }
+  SECTION("Negative delta retains its sign and low ten bits") {
+    f.Parameter(sppu::regs::kBg1Hofs, 0xF7FF);  // -2049 clips to -1.
+    f.Render();
+    REQUIRE(f.Pixel(0) == 0);
+    REQUIRE(f.Pixel(1) == 9);
+  }
+  SECTION("Delta sign is taken after center subtraction") {
+    f.Parameter(sppu::regs::kM7X, 4095);
+    f.Parameter(sppu::regs::kBg1Hofs, 0xF000);  // -4096 - 4095 = -8191, clipped to -1023.
+    f.Render();
+    REQUIRE(f.Pixel(0) == 0);  // resulting X=3072, outside the map.
+  }
+}
+
+TEST_CASE("Mode 7 repeat modes wrap clip or fill with character zero", "[unit][ppu][mode7]") {
+  for (uint8_t repeat = 0; repeat < 4; ++repeat) {
+    for (bool negative : {false, true}) {
+      CAPTURE(repeat, negative);
+      Mode7Fixture f;
+      f.Write(sppu::regs::kM7Sel, static_cast<uint8_t>(repeat << 6U));
+      f.Parameter(sppu::regs::kBg1Hofs, negative ? 0xFFFF : 1023);
+      // The wrapped sample picks tile 255, while overflow fill picks tile 0.
+      f.VramByte(negative ? 127U : 0U, false, 255);
+      f.VramByte(static_cast<uint16_t>(255U * 64U + 8U + (negative ? 7U : 0U)), true, 200);
+      f.Render();
+      const uint32_t x = negative ? 0U : 1U;
+      const uint16_t expected = repeat < 2U ? 200U : (repeat == 2U ? 0U : (negative ? 16U : 9U));
+      REQUIRE(f.Pixel(x) == expected);
+    }
+  }
+}
+
+TEST_CASE("Mode 7 reaches the bottom right map word and last character byte", "[unit][ppu][mode7]") {
+  Mode7Fixture f;
+  f.Parameter(sppu::regs::kBg1Hofs, 1023);
+  f.Parameter(sppu::regs::kBg1Vofs, 1022);
+  f.VramByte(0x3FFF, false, 255);
+  f.VramByte(0x3FFF, true, 231);
+  f.Render();
+  REQUIRE(f.Pixel(0) == 231);
+}
+
+TEST_CASE("All Mode 7 parameter ports share a latch independently of BG scroll", "[unit][ppu][mode7]") {
+  for (uint16_t port : {sppu::regs::kM7C, sppu::regs::kM7D, sppu::regs::kM7X, sppu::regs::kM7Y, sppu::regs::kBg1Hofs,
+                        sppu::regs::kBg1Vofs}) {
+    CAPTURE(port);
+    Mode7Fixture f;
+    f.Parameter(sppu::regs::kM7B, 0x0100);  // signed multiplier = 1.
+    f.Write(port, 0x34);
+    f.Write(sppu::regs::kBg2Hofs, 0xAB);  // Ordinary BG latch must not change M7_old.
+    f.Write(sppu::regs::kM7Sel, 0xCD);    // Single-byte control must not change it either.
+    f.Write(sppu::regs::kM7A, 0x12);
+    REQUIRE(BusRead(f.snes, sppu::regs::kMpyL, f.now++).data == 0x34);
+    REQUIRE(BusRead(f.snes, sppu::regs::kMpyM, f.now++).data == 0x12);
+    REQUIRE(BusRead(f.snes, sppu::regs::kMpyH, f.now++).data == 0);
+  }
+  Mode7Fixture f;
+  f.Parameter(sppu::regs::kM7A, 0);  // zero horizontal scale makes center directly observable.
+  f.Write(sppu::regs::kBg1Hofs, 3);
+  f.Write(sppu::regs::kM7X, 0);  // center becomes 3 through the scroll port's latch.
+  f.Render();
+  REQUIRE(f.Pixel(0) == 12);
+}
+
+TEST_CASE("Mode 7 EXTBG and OBJ priorities resolve independently on both screens", "[unit][ppu][mode7]") {
+  for (bool extbg : {false, true}) {
+    for (uint8_t bg_mask : {uint8_t{1}, uint8_t{2}, uint8_t{3}}) {
+      for (uint8_t priority = 0; priority < 4; ++priority) {
+        for (uint8_t texel : {uint8_t{1}, uint8_t{129}, uint8_t{128}, uint8_t{0}}) {
+          for (bool sub : {false, true}) {
+            CAPTURE(extbg, bg_mask, priority, texel, sub);
+            Mode7Fixture f;
+            f.VramByte(8, true, texel);
+            WriteCgramWord(f.snes, 1, 3, f.now);
+            WriteCgramWord(f.snes, 129, 7, f.now);
+            WriteCgramWord(f.snes, 128, 11, f.now);
+            WriteCgramWord(f.snes, 0xC1, 19, f.now);
+            f.Write(sppu::regs::kObsel, 2);  // OBJ characters at word $4000, outside Mode 7 data.
+            uint8_t tile[64];
+            std::memset(tile, 1, sizeof(tile));
+            WriteTile4bpp(f.snes, 0x4000, 0, tile, f.now);
+            WriteOamLowEntry(f.snes, 0, 0, 0, 0, static_cast<uint8_t>((static_cast<uint32_t>(priority) << 4U) | 8U),
+                             f.now);
+            f.Write(sppu::regs::kSetini, extbg ? 0x40 : 0);
+            f.Write(sppu::regs::kTm, sub ? 0 : static_cast<uint8_t>(bg_mask | 0x10U));
+            if (sub) {
+              f.Write(sppu::regs::kTs, static_cast<uint8_t>(bg_mask | 0x10U));
+              f.Write(sppu::regs::kCgwsel, 2);
+              f.Write(sppu::regs::kCgadsub, 0x20);  // black main backdrop + sub-screen winner.
+            }
+            f.Render();
+            // Explicit highest-first ladders, separate from the renderer's ranks.
+            uint16_t expected = 19;
+            const bool bg1 = (bg_mask & 1U) != 0U && texel != 0U;
+            const bool bg2 = extbg && (bg_mask & 2U) != 0U && (texel & 0x7FU) != 0U;
+            if (priority < 2U && bg2 && (texel & 0x80U) != 0U) {
+              expected = 3;
+            } else if (priority == 0U && bg1) {
+              expected = texel == 1U ? 3U : (texel == 129U ? 7U : 11U);
+            }
+            REQUIRE(f.Pixel(0) == expected);
+          }
+        }
+      }
+    }
+  }
+}
+
+TEST_CASE("Mode 7 direct color applies only to BG1 and still participates in math", "[unit][ppu][mode7]") {
+  Mode7Fixture f;
+  f.Write(sppu::regs::kCgwsel, 1);
+  f.VramByte(8, true, 0xFF);
+  f.VramByte(9, true, 0);
+  SECTION("BG1 direct color") {
+    f.Render();
+    REQUIRE(f.Pixel(0) == 0x639C);  // BB000 GGG00 RRR00, no palette bits.
+    REQUIRE(f.Pixel(1) == 0);       // zero remains transparent.
+  }
+  SECTION("EXTBG BG2 stays paletted") {
+    f.Write(sppu::regs::kSetini, 0x40);
+    f.Write(sppu::regs::kTm, 2);
+    f.Render();
+    REQUIRE(f.Pixel(0) == 127);
+  }
+  SECTION("Fixed color subtraction and half math") {
+    f.Write(sppu::regs::kCgadsub, 0xC1);
+    f.Write(sppu::regs::kColdata, 0xE4);  // subtract four from every channel, then halve.
+    f.Render();
+    REQUIRE(f.Pixel(0) == 0x298C);  // (12,12,10).
+  }
+}
+
+TEST_CASE("Mode 7 main and sub layers retain distinct color math eligibility", "[unit][ppu][mode7]") {
+  Mode7Fixture f;
+  f.Write(sppu::regs::kSetini, 0x40);
+  f.VramByte(8, true, 129);
+  WriteCgramWord(f.snes, 129, 3, f.now);
+  WriteCgramWord(f.snes, 1, 5U << 5U, f.now);
+  f.Write(sppu::regs::kTm, 1);
+  f.Write(sppu::regs::kTs, 2);
+  f.Write(sppu::regs::kCgwsel, 2);
+  SECTION("BG1 math enabled") {
+    f.Write(sppu::regs::kCgadsub, 1);
+    f.Render();
+    REQUIRE(f.Pixel(0) == (3U | (5U << 5U)));
+  }
+  SECTION("Only BG2 math enabled") {
+    f.Write(sppu::regs::kCgadsub, 2);
+    f.Render();
+    REQUIRE(f.Pixel(0) == 3);
+  }
+}
+
+TEST_CASE("Mode 7 replays mid-line parameter and VRAM writes at their dot boundary", "[unit][ppu][mode7]") {
+  Mode7Fixture f;
+  // Preload the shared latch without changing horizontal translation.
+  f.Write(sppu::regs::kM7C, 4);
+  f.Parameter(sppu::regs::kM7C, 0);
+  f.Write(sppu::regs::kM7Y, 4);      // Only the latch matters; identity cancels the center.
+  f.snes.GetPpu().CatchUpTo(1476U);  // pixels 0..5 complete.
+  f.now = 1477;
+  f.Write(sppu::regs::kBg1Hofs, 0);  // one write forms horizontal scroll 4.
+  f.snes.GetPpu().CatchUpTo(1500U);  // through pixel 11.
+  f.now = 1501;
+  // Change tile zero's row-1 texel 0; translated x=16 first reaches it at pixel 12,
+  // but the port write arrives later, before the next occurrence at pixel 20.
+  f.VramByte(8, true, 200);
+  f.snes.GetPpu().CatchUpTo(kFrameEndNtsc);
+  REQUIRE(f.Pixel(5) == 14);
+  REQUIRE(f.Pixel(6) == 15);  // write was inside this dot.
+  REQUIRE(f.Pixel(7) == 12);
+  REQUIRE(f.Pixel(12) == 9);
+  REQUIRE(f.Pixel(20) == 200);
+}
+
+TEST_CASE("Mode 7 EXTBG renders low priority BG2 and treats index 128 as transparent", "[unit][ppu][mode7]") {
+  Mode7Fixture f;
+  f.Write(sppu::regs::kSetini, 0x40);
+  f.Write(sppu::regs::kTm, 2);
+  f.VramByte(8, true, 1);
+  f.VramByte(9, true, 128);
+  f.VramByte(10, true, 129);
+  f.Render();
+  REQUIRE(f.Pixel(0) == 1);
+  REQUIRE(f.Pixel(1) == 0);
+  REQUIRE(f.Pixel(2) == 1);
+}
+
+TEST_CASE("Mode 7 ROM renders HDMA scale bands across scheduler slice sizes", "[integration][ppu][mode7]") {
+  std::ifstream input(std::filesystem::path(PUPSNES_TEST_ROM_DIR) / "ppu_mode7.sfc", std::ios::binary);
+  REQUIRE(input.good());
+  const std::vector<uint8_t> rom{std::istreambuf_iterator<char>(input), {}};
+  constexpr TimeMasterT kTarget = 8U * 262U * 1364U;
+  for (TimeMasterT slice : {TimeMasterT{379}, kTarget}) {
+    CAPTURE(slice);
+    SNES snes;
+    REQUIRE(snes.LoadRom(rom).ok);
+    snes.Reset();
+    while (snes.GetMasterTime() < kTarget) {
+      const TimeMasterT remaining = kTarget - snes.GetMasterTime();
+      const auto error = pupsnes::tools::DriveMachineToMasterTime(
+          snes, snes.GetMasterTime() + (slice < remaining ? slice : remaining));
+      INFO(error.value_or(""));
+      REQUIRE_FALSE(error.has_value());
+    }
+    const auto view = snes.GetPpu().BuildFrontView();
+    constexpr uint16_t kColors[] = {0x001F, 0x03E0, 0x7C00, 0x7FFF};
+    for (uint32_t y = 0; y < view.height; ++y) {
+      const uint32_t scale = y < 64U ? 64U : (y < 128U ? 128U : 256U);
+      for (uint32_t x = 0; x < view.width; ++x) {
+        CAPTURE(x, y);
+        const uint32_t u = (scale * x + 128U * (y + 1U)) / 256U;
+        const uint32_t v = scale * (y + 1U) / 256U;
+        const uint32_t quadrant = ((u / 4U) & 1U) + 2U * ((v / 4U) & 1U);
+        REQUIRE(view.pixels[y * view.stride + x] == kColors[quadrant]);
+      }
+    }
+  }
+}
+
+TEST_CASE("Mode 7 HDMA leaves a static frame unchanged after ten seconds", "[integration][ppu][mode7][hdma]") {
+  std::ifstream input(std::filesystem::path(PUPSNES_TEST_ROM_DIR) / "ppu_mode7.sfc", std::ios::binary);
+  REQUIRE(input.good());
+  const std::vector<uint8_t> rom{std::istreambuf_iterator<char>(input), {}};
+  SNES snes;
+  REQUIRE(snes.LoadRom(rom).ok);
+  snes.Reset();
+  REQUIRE_FALSE(pupsnes::tools::DriveMachineToMasterTime(snes, 8U * 262U * 1364U).has_value());
+  const auto first = snes.GetPpu().BuildFrontView();
+  std::vector<uint16_t> expected;
+  for (uint32_t y = 0; y < first.height; ++y) {
+    expected.insert(expected.end(), first.pixels + y * first.stride, first.pixels + y * first.stride + first.width);
+  }
+  REQUIRE_FALSE(pupsnes::tools::DriveMachineToMasterTime(snes, 600U * 262U * 1364U).has_value());
+  const auto later = snes.GetPpu().BuildFrontView();
+  REQUIRE(later.width == first.width);
+  REQUIRE(later.height == first.height);
+  for (uint32_t y = 0; y < later.height; ++y) {
+    for (uint32_t x = 0; x < later.width; ++x) {
+      CAPTURE(x, y);
+      REQUIRE(later.pixels[y * later.stride + x] == expected[y * later.width + x]);
+    }
+  }
 }

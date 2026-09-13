@@ -335,6 +335,8 @@ class Ppu : public Device {
   [[nodiscard]] MmioReadResult ReadOpct(uint16_t counter, bool& read_high);
   // Refresh the 24-bit signed M7A * signed(M7B high byte) result.
   void UpdateM7Product();
+  // All matrix, center, and Mode 7 scroll ports share the M7_old byte latch.
+  void WriteM7Parameter(uint16_t& parameter, uint8_t data);
 
   // OAM helpers. Handles the byte-address wrap for the 32-byte high table
   // mirroring above $220; writes and reads all go through these.
@@ -416,6 +418,8 @@ class Ppu : public Device {
   // Ranking preserves the current mode's priority ladder and OBJ palette
   // eligibility. All inputs belong to this dot, after pending writes drain.
   [[nodiscard]] ResolvedScreens ResolveScreenPixels(uint32_t screen_x, uint32_t screen_y, const ObjPixel& obj_px) const;
+  [[nodiscard]] uint8_t FetchMode7Pixel(uint32_t screen_x, uint32_t screen_y) const;
+  [[nodiscard]] ResolvedScreens ResolveMode7Screens(uint32_t screen_x, uint32_t screen_y, const ObjPixel& obj_px) const;
 
   // Apply $2131 CGADSUB math to the resolved main pixel. A sub-screen
   // backdrop selects the COLDATA fixed colour. Returns BGR555.
@@ -521,11 +525,20 @@ class Ppu : public Device {
   bool opvct_read_high_ = false;
   bool hv_latch_flag_ = false;
 
-  // Mode 7 matrix/multiplier state. M7A and M7B share the M7_old byte latch
-  // for their write-twice protocol. The readable product is retained as its
-  // low 24 two's-complement bits and updates immediately after either write.
+  // Mode 7 matrix/multiplier state. All parameters share the M7_old byte latch
+  // for their write-twice protocol. Centers and scroll use only signed low
+  // 13 bits; the matrix uses signed 16-bit 8.8 values. The product retains its
+  // low 24 two's-complement bits and updates after each M7A or M7B write.
   uint16_t m7a_ = 0;
   uint16_t m7b_ = 0;
+  uint16_t m7c_ = 0;
+  uint16_t m7d_ = 0;
+  uint16_t m7x_ = 0;
+  uint16_t m7y_ = 0;
+  uint16_t m7hofs_ = 0;
+  uint16_t m7vofs_ = 0;
+  uint8_t m7sel_ = 0;
+  bool m7_extbg_ = false;
   uint8_t m7_old_ = 0;
   uint32_t m7_product_ = 0;
   // Cycles already consumed toward the current dot from prior CatchUpTo calls.

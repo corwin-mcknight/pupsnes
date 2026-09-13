@@ -161,6 +161,14 @@ void Ppu::Reset() {
 
   m7a_ = 0xFFFFU;
   m7b_ = 0xFFFFU;
+  m7c_ = 0xFFFFU;
+  m7d_ = 0xFFFFU;
+  m7x_ = 0xFFFFU;
+  m7y_ = 0xFFFFU;
+  m7hofs_ = 0;
+  m7vofs_ = 0;
+  m7sel_ = 0;
+  m7_extbg_ = false;
   m7_old_ = 0xFFU;
   m7_product_ = 0x000001U;
 
@@ -650,12 +658,101 @@ constexpr uint8_t SatSub5(uint8_t a, uint8_t b) { return static_cast<uint8_t>(a 
 
 }  // namespace
 
+uint8_t Ppu::FetchMode7Pixel(uint32_t screen_x, uint32_t screen_y) const {
+  // Mode 7 uses the hardware scanline counter: the first visible line is 1.
+  const int32_t x = static_cast<int32_t>((m7sel_ & sppu::regs::kM7SelHflipMask) != 0U ? 255U - screen_x : screen_x);
+  const int32_t line = static_cast<int32_t>(screen_y + sppu::regs::kVisibleVStartNtsc);
+  const int32_t y = (m7sel_ & sppu::regs::kM7SelVflipMask) != 0U ? 255 - line : line;
+  const auto signed16 = [](uint16_t value) -> int32_t {
+    return (value & 0x8000U) != 0U ? static_cast<int32_t>(value) - 65536 : value;
+  };
+  const auto signed13 = [](uint16_t value) -> int32_t {
+    return static_cast<int32_t>(value & 0x0FFFU) - static_cast<int32_t>(value & 0x1000U);
+  };
+  const int32_t a = signed16(m7a_), b = signed16(m7b_);
+  const int32_t c = signed16(m7c_), d = signed16(m7d_);
+  const int32_t cx = signed13(m7x_), cy = signed13(m7y_);
+  // Hardware keeps the subtraction's sign bit and low ten bits. Each
+  // origin product separately drops six fractional bits before summation.
+  // See ares/sfc/ppu-performance/mode7.cpp; use multiplication for signed
+  // centers to avoid shifting negative operands.
+  const auto clip = [](int32_t value) -> int32_t {
+    const uint32_t bits = static_cast<uint32_t>(value);
+    return static_cast<int32_t>(bits & 1023U) - ((bits & 0x2000U) != 0U ? 1024 : 0);
+  };
+  const auto truncate = [](int32_t value) -> int32_t {
+    return value - static_cast<int32_t>(static_cast<uint32_t>(value) & 63U);
+  };
+  const int32_t hx = clip(signed13(m7hofs_) - cx);
+  const int32_t vy = clip(signed13(m7vofs_) - cy);
+  const int32_t origin_x = truncate(a * hx) + truncate(b * vy) + truncate(b * y) + cx * 256;
+  const int32_t origin_y = truncate(c * hx) + truncate(d * vy) + truncate(d * y) + cy * 256;
+  // C++20 signed right shift rounds down, as required for negative texels.
+  // NOLINTNEXTLINE(bugprone-signed-bitwise)
+  const int32_t pixel_x = (origin_x + a * x) >> 8;
+  // NOLINTNEXTLINE(bugprone-signed-bitwise)
+  const int32_t pixel_y = (origin_y + c * x) >> 8;
+  const bool outside = pixel_x < 0 || pixel_x >= 1024 || pixel_y < 0 || pixel_y >= 1024;
+  const uint32_t repeat = static_cast<uint32_t>(m7sel_) >> 6U;
+  if (outside && repeat == 2U) return 0;
+
+  const uint32_t u = static_cast<uint32_t>(pixel_x) & 1023U;
+  const uint32_t v = static_cast<uint32_t>(pixel_y) & 1023U;
+  // The fixed 128x128 tilemap occupies low VRAM bytes; 256 packed 8x8
+  // character patterns occupy high bytes of the same 16K words.
+  const uint32_t map_word = (v >> 3U) * 128U + (u >> 3U);
+  const uint8_t tile = outside && repeat == 3U ? 0U : (*vram_)[map_word * 2U];
+  const uint32_t char_word = static_cast<uint32_t>(tile) * 64U + (v & 7U) * 8U + (u & 7U);
+  return (*vram_)[char_word * 2U + 1U];
+}
+
+Ppu::ResolvedScreens Ppu::ResolveMode7Screens(uint32_t screen_x, uint32_t screen_y, const ObjPixel& obj_px) const {
+  const uint8_t main_mask = main_screen_layers_;
+  const uint8_t sub_mask =
+      (cgwsel_ & sppu::regs::kCgwselSubScreenEnableMask) != 0U && (cgadsub_ & 0x3FU) != 0U ? sub_screen_layers_ : 0U;
+  const uint8_t bg_mask = m7_extbg_ ? 3U : 1U;
+  const uint8_t pixel =
+      ((static_cast<uint32_t>(main_mask) | sub_mask) & bg_mask) != 0U ? FetchMode7Pixel(screen_x, screen_y) : 0U;
+  const auto resolve = [&](uint8_t mask) -> ResolvedPixel {
+    uint8_t rank = 0;
+    uint8_t index = 0;
+    uint8_t layer = 5;
+    if (!obj_px.transparent && (mask & sppu::regs::kTmObjMask) != 0U) {
+      constexpr std::array<uint8_t, 4> kObjRanks = {1U, 3U, 4U, 5U};
+      constexpr std::array<uint8_t, 4> kExtObjRanks = {2U, 4U, 6U, 7U};
+      rank = m7_extbg_ ? kExtObjRanks[obj_px.priority] : kObjRanks[obj_px.priority];
+      index = obj_px.cgram_index;
+      layer = 4;
+    }
+    const uint8_t bg1_rank = m7_extbg_ ? 3U : 2U;
+    if ((mask & 1U) != 0U && pixel != 0U && bg1_rank > rank) {
+      rank = bg1_rank;
+      index = pixel;
+      layer = 0;
+    }
+    const uint8_t bg2_rank = (pixel & 0x80U) != 0U ? 5U : 1U;
+    if (m7_extbg_ && (mask & 2U) != 0U && (pixel & 0x7FU) != 0U && bg2_rank > rank) {
+      index = pixel & 0x7FU;
+      layer = 1;
+    }
+    uint16_t color = (*cgram_)[index];
+    if (layer == 0U && (cgwsel_ & sppu::regs::kCgwselDirectColorMask) != 0U) {
+      // BBGGGRRR -> BB000 GGG00 RRR00. EXTBG BG2 always uses CGRAM.
+      color = static_cast<uint16_t>(((index & 0x07U) << 2U) | ((index & 0x38U) << 4U) | ((index & 0xC0U) << 7U));
+    }
+    return {color, layer, layer == 4U && (index & 0x40U) != 0U};
+  };
+  return {resolve(main_mask), resolve(sub_mask)};
+}
+
 Ppu::ResolvedScreens Ppu::ResolveScreenPixels(uint32_t screen_x, uint32_t screen_y, const ObjPixel& obj_px) const {
   const PriorityPlan* plan = nullptr;
   if (bg_mode_ == 0U) {
     plan = &kPlanMode0;
   } else if (bg_mode_ == 1U) {
     plan = bg3_priority_ ? &kPlanMode1Bg3High : &kPlanMode1Normal;
+  } else if (bg_mode_ == 7U) {
+    return ResolveMode7Screens(screen_x, screen_y, obj_px);
   } else {
     return {{(*cgram_)[0], 5U, false}, {(*cgram_)[0], 5U, false}};
   }
@@ -874,16 +971,19 @@ void Ppu::ReplayWrite(uint16_t offset, uint8_t data, TimeMasterT cycle) {
       break;
     }
 
+    case sppu::regs::kM7Sel: m7sel_ = data; break;
     case sppu::regs::kM7A:
-      m7a_ = static_cast<uint16_t>((static_cast<uint16_t>(data) << 8U) | m7_old_);
-      m7_old_ = data;
+      WriteM7Parameter(m7a_, data);
       UpdateM7Product();
       break;
     case sppu::regs::kM7B:
-      m7b_ = static_cast<uint16_t>((static_cast<uint16_t>(data) << 8U) | m7_old_);
-      m7_old_ = data;
+      WriteM7Parameter(m7b_, data);
       UpdateM7Product();
       break;
+    case sppu::regs::kM7C: WriteM7Parameter(m7c_, data); break;
+    case sppu::regs::kM7D: WriteM7Parameter(m7d_, data); break;
+    case sppu::regs::kM7X: WriteM7Parameter(m7x_, data); break;
+    case sppu::regs::kM7Y: WriteM7Parameter(m7y_, data); break;
 
     case sppu::regs::kCgAdd:
       cgadd_ = data;
@@ -906,7 +1006,10 @@ void Ppu::ReplayWrite(uint16_t offset, uint8_t data, TimeMasterT cycle) {
       }
       break;
 
-    case sppu::regs::kSetini: overscan_ = (data & sppu::regs::kSetiniOverscanMask) != 0U; break;
+    case sppu::regs::kSetini:
+      overscan_ = (data & sppu::regs::kSetiniOverscanMask) != 0U;
+      m7_extbg_ = (data & sppu::regs::kSetiniExtbgMask) != 0U;
+      break;
 
     case sppu::regs::kObsel: {
       obj_size_select_ = static_cast<uint8_t>((data & sppu::regs::kObselSizeMask) >> sppu::regs::kObselSizeShift);
@@ -961,12 +1064,14 @@ void Ppu::ReplayWrite(uint16_t offset, uint8_t data, TimeMasterT cycle) {
     case sppu::regs::kBg2Hofs:
     case sppu::regs::kBg3Hofs:
     case sppu::regs::kBg4Hofs:
+      if (offset == sppu::regs::kBg1Hofs) WriteM7Parameter(m7hofs_, data);
       WriteBgScroll(static_cast<uint8_t>((offset - sppu::regs::kBg1Hofs) >> 1U), data, /*is_hofs=*/true);
       break;
     case sppu::regs::kBg1Vofs:
     case sppu::regs::kBg2Vofs:
     case sppu::regs::kBg3Vofs:
     case sppu::regs::kBg4Vofs:
+      if (offset == sppu::regs::kBg1Vofs) WriteM7Parameter(m7vofs_, data);
       WriteBgScroll(static_cast<uint8_t>((offset - sppu::regs::kBg1Vofs) >> 1U), data, /*is_hofs=*/false);
       break;
 
@@ -1067,6 +1172,11 @@ MmioReadResult Ppu::ReadOpct(uint16_t counter, bool& read_high) {
   }
   read_high = false;
   return {static_cast<uint8_t>((counter >> 8) & 0x01U), sppu::regs::kOpctHighDrivenMask};
+}
+
+void Ppu::WriteM7Parameter(uint16_t& parameter, uint8_t data) {
+  parameter = static_cast<uint16_t>((static_cast<uint32_t>(data) << 8U) | m7_old_);
+  m7_old_ = data;
 }
 
 void Ppu::UpdateM7Product() {

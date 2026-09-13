@@ -57,6 +57,13 @@ void CpuMmio::Reset() {
   memsel_ = 0;
   nmitimen_ = 0;
   wrio_ = 0xFFU;
+  multiplicand_ = 0xFFU;
+  dividend_ = 0xFFFFU;
+  quotient_ = 0;
+  product_remainder_ = 0;
+  math_shift_ = 0;
+  math_cycles_remaining_ = 0;
+  math_dividing_ = false;
   htime_ = 0;
   vtime_ = 0;
   timeup_latch_ = false;
@@ -81,6 +88,10 @@ MmioReadResult CpuMmio::ReadRegister(uint32_t offset, TimeMasterT current_time) 
   const uint32_t reg = offset & 0xFFFFU;
   switch (reg) {
     case kMemSelOffset: return {memsel_, 0xFFU};
+    case kRdDivLOffset: return {static_cast<uint8_t>(quotient_), 0xFFU};
+    case kRdDivHOffset: return {static_cast<uint8_t>(quotient_ >> 8U), 0xFFU};
+    case kRdMpyLOffset: return {static_cast<uint8_t>(product_remainder_), 0xFFU};
+    case kRdMpyHOffset: return {static_cast<uint8_t>(product_remainder_ >> 8U), 0xFFU};
 
     case kRdioOffset:
       // No external programmable-I/O devices are modeled, so High-Z lines
@@ -159,6 +170,31 @@ MmioReadResult CpuMmio::ReadRegister(uint32_t offset, TimeMasterT current_time) 
 
 void CpuMmio::WriteRegister(uint32_t offset, uint8_t data, TimeMasterT current_time) {
   const uint32_t reg = offset & 0xFFFFU;
+  switch (reg) {
+    case kWrMpyAOffset: multiplicand_ = data; return;
+    case kWrDivLOffset: dividend_ = static_cast<uint16_t>((dividend_ & 0xFF00U) | data); return;
+    case kWrDivHOffset:
+      dividend_ = static_cast<uint16_t>((dividend_ & 0x00FFU) | (static_cast<uint32_t>(data) << 8U));
+      return;
+    case kWrMpyBOffset:
+      // Even a busy trigger clears the product, but does not restart the
+      // current operation or replace its shift register.
+      product_remainder_ = 0;
+      if (math_cycles_remaining_ != 0U) return;
+      quotient_ = static_cast<uint16_t>((static_cast<uint32_t>(data) << 8U) | multiplicand_);
+      math_shift_ = data;
+      math_cycles_remaining_ = 8;
+      math_dividing_ = false;
+      return;
+    case kWrDivBOffset:
+      product_remainder_ = dividend_;
+      if (math_cycles_remaining_ != 0U) return;
+      math_shift_ = static_cast<uint32_t>(data) << 16U;
+      math_cycles_remaining_ = 16;
+      math_dividing_ = true;
+      return;
+    default: break;
+  }
   if (reg == kMemSelOffset) {
     const bool was_fast = (memsel_ & 0x01U) != 0U;
     memsel_ = data;
@@ -254,6 +290,13 @@ void CpuMmio::WriteRegister(uint32_t offset, uint8_t data, TimeMasterT current_t
 
 std::optional<uint8_t> CpuMmio::HandleDebugRead(uint32_t offset) const {
   switch (offset & 0xFFFFU) {
+    case kWrMpyAOffset: return multiplicand_;
+    case kWrDivLOffset: return static_cast<uint8_t>(dividend_);
+    case kWrDivHOffset: return static_cast<uint8_t>(dividend_ >> 8U);
+    case kRdDivLOffset: return static_cast<uint8_t>(quotient_);
+    case kRdDivHOffset: return static_cast<uint8_t>(quotient_ >> 8U);
+    case kRdMpyLOffset: return static_cast<uint8_t>(product_remainder_);
+    case kRdMpyHOffset: return static_cast<uint8_t>(product_remainder_ >> 8U);
     case kMemSelOffset: return memsel_;
     case kNmiTimenOffset:
       // $4200 is write-only on real hardware; expose the shadow for the debugger.
@@ -278,13 +321,32 @@ std::optional<uint8_t> CpuMmio::HandleDebugRead(uint32_t offset) const {
 bool CpuMmio::HandleDebugWrite(uint32_t offset, uint8_t data) {
   const uint32_t reg = offset & 0xFFFFU;
   if (reg == kMemSelOffset || reg == kNmiTimenOffset || reg == kWrioOffset || reg == kHTimeLOffset ||
-      reg == kHTimeHOffset || reg == kVTimeLOffset || reg == kVTimeHOffset) {
+      reg == kHTimeHOffset || reg == kVTimeLOffset || reg == kVTimeHOffset ||
+      (reg >= kWrMpyAOffset && reg <= kWrDivBOffset)) {
     // Debug writes are out-of-band. This path uses time zero; NMI transitions,
     // H/V latching, and IRQ scheduling inside WriteRegister consume that time.
     // Other devices provide their own HandleDebugWrite overrides.
     WriteRegister(reg, data, 0);
   }
   return true;
+}
+
+void CpuMmio::StepMath() {
+  --math_cycles_remaining_;
+  if (math_dividing_) {
+    quotient_ = static_cast<uint16_t>(static_cast<uint32_t>(quotient_) << 1U);
+    math_shift_ >>= 1U;
+    if (product_remainder_ >= math_shift_) {
+      product_remainder_ = static_cast<uint16_t>(product_remainder_ - math_shift_);
+      quotient_ = static_cast<uint16_t>(quotient_ | 1U);
+    }
+  } else {
+    if ((quotient_ & 1U) != 0U) {
+      product_remainder_ = static_cast<uint16_t>(product_remainder_ + math_shift_);
+    }
+    quotient_ >>= 1U;
+    math_shift_ <<= 1U;
+  }
 }
 
 void CpuMmio::HandleIrqMatch(TimeMasterT t) {

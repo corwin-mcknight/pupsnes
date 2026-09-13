@@ -253,6 +253,7 @@ class CPU : public MasterClockDriver {
   // Master cycles already served within the current six-master-cycle wake
   // step. Retained across target boundaries just like normal micro-op progress.
   TimeMasterDeltaT wai_wake_partial_cycles_ = 0;
+  TimeMasterDeltaT halt_math_partial_cycles_ = 0;
 
   // --- Interrupt state ---
   // Raw /NMI line level from the PPU, sampled at instruction boundaries.

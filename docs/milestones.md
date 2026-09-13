@@ -1,6 +1,6 @@
 # Milestones
 
-Updated September 10, 2026.
+Updated September 12, 2026.
 
 PupSNES has working backgrounds, sprites, controller input, battery-backed saves, and **stereo sound synthesis and playback**. The next major feature work is graphics completeness, followed by save states and support for more cartridges.
 
@@ -8,7 +8,7 @@ This roadmap describes where the project stands and what each milestone will mak
 
 ## Where we are
 
-The CPU implements all 256 instructions, and the core supports cartridge loading, memory, interrupts, and DMA/HDMA transfers. Mode 0 and Mode 1 graphics work, along with sprites and color blending. LoROM, HiROM, and ExHiROM cartridges are supported, and the debugger provides live inspection, execution traces, and screenshots.
+The CPU implements all 256 instructions, and the core supports cartridge loading, memory, interrupts, and DMA/HDMA transfers. Mode 0, Mode 1, and Mode 7 backgrounds are implemented, along with sprites and color blending. LoROM, HiROM, and ExHiROM cartridges are supported, and the debugger provides live inspection, execution traces, and screenshots.
 
 Super Castlevania IV and The Legend of Zelda: A Link to the Past reached playable gameplay with the former APU handshake stub, though neither was tested through to completion. The stub has been replaced by a complete SPC700 instruction set, timers, and the S-DSP voice and effects pipeline. Both frontends can play the resulting audio, and a command-line tool can capture it to WAV. Commercial-game sound still needs broader validation; several graphics effects are missing, and controller support is limited to player one.
 
@@ -39,15 +39,17 @@ This milestone established a working machine capable of running software. That b
 
 **Baseline complete.** All 256 instructions are implemented, including the CPU’s addressing modes, arithmetic, stack operations, branches, and interrupts. Games can run substantial programs using both native and emulation modes.
 
+The 5A22 hardware multiply/divide registers also work, with CPU-cycle timing and readable intermediate results. These are separate from the instruction set and Mode 7 multiplication; implementing them corrected F-Zero’s distorted opening camera descent and immediate loss of control.
+
 The remaining work concerns accuracy in unusual cases and interactions with the rest of the console. Diagnostic ROMs and game failures will continue to reveal timing details that need refinement; complete instruction coverage does not mean CPU accuracy work is finished.
 
 ## Milestone 3: Graphics
 
-**Partially complete.** Mode 0 and Mode 1 backgrounds, sprites, priorities, color blending, brightness, and overscan are implemented. The PPU also handles its video-memory ports, beam-position latches, and Mode 7 multiplication registers.
+**Partially complete.** Mode 0, Mode 1, and Mode 7 backgrounds, sprites, priorities, color blending, brightness, and overscan are implemented. The PPU also handles its video-memory ports, beam-position latches, and Mode 7 multiplication registers.
 
-The biggest missing feature is **Mode 7 rendering**, which provides the rotating and scaling backgrounds used by games such as F-Zero and Super Mario Kart, as well as the world map in A Link to the Past. The multiplication registers are ready, but the graphics themselves are not yet drawn.
+**Mode 7 rendering is implemented**, including rotation and scaling, scroll and center registers, screen flips, wrapping and overflow behavior, EXTBG priorities, and BG1 direct color. A small test ROM exercises changing scale across scanlines through HDMA. This provides the graphics path used by rotating and scaling scenes; validation in commercial games remains to be done.
 
-Other remaining features include windows and masking, mosaic effects, background Modes 2–6, direct color, offset-per-tile effects, and high-resolution and interlaced output.
+Other remaining features include windows and masking, mosaic effects, background Modes 2–6 and their direct-color support, offset-per-tile effects, and high-resolution and interlaced output.
 
 **The goal:** games using these features display their scenes and effects correctly, while existing Mode 0/1 games retain their current behavior. Small graphics test ROMs and comparisons of known scenes will help establish progress.
 
@@ -89,4 +91,4 @@ Progress here means more diagnostic tests passing, fewer visual and audio errors
 
 The current order is **graphics completeness, save states and rewind, then broader cartridge support**. Controller improvements, audio compatibility, and fixes for known game problems can progress alongside those larger efforts.
 
-**Mode 7 rendering** is the clearest next feature: it would make rotating and scaling backgrounds visible in more games. Audio now has an end-to-end path from uploaded sound programs to speakers and WAV files; further work there should build on concrete music, effect, and timing problems found in games.
+**Mode 7 is ready for game testing.** The next graphics features are windows and masking, mosaic, and the remaining background modes. Audio now has an end-to-end path from uploaded sound programs to speakers and WAV files; further work there should build on concrete music, effect, and timing problems found in games.
