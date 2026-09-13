@@ -94,9 +94,12 @@ class Cartridge : public Device {
   [[nodiscard]] std::span<const uint8_t> SramView() const { return sram_; }
 
   // Replace SRAM contents with `data`. Bytes beyond `SramSize()` are ignored;
-  // a short `data` leaves the tail zeroed. Clears the dirty flag — this is the
+  // a short `data` fills the tail with 0xFF. Clears the dirty flag — this is the
   // load path, not a write the game performed.
   void LoadSram(std::span<const uint8_t> data);
+
+  // Restore the empty-cartridge contents in place and mark them for persistence.
+  void ClearSram();
 
   // True when at least one byte of SRAM has been written since the last
   // ClearSramDirty(). The host uses this to decide whether to flush a save.

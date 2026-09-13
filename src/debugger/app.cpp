@@ -37,6 +37,8 @@ DebuggerApp* DebuggerApp::current_app_ = nullptr;
 
 namespace {
 
+constexpr std::chrono::seconds kSramFlushInterval{2};
+
 // Keyboard → P1 button map. Indices line up with DebuggerApp::p1_key_was_down_
 // for edge detection. Layout matches a Snes9x-style default: arrows for the
 // D-pad, ASZX for the face-button diamond (A=Y, S=X, Z=B, X=A), Q/W for L/R,
@@ -108,6 +110,7 @@ int DebuggerApp::Run(const std::optional<std::string>& initial_rom_path) {
   StopAudio();
   snes_.SetAudioSampleCallback({});
   audio_output_.Shutdown();
+  (void)FlushSramToDisk();
   SaveAppConfig();
   return fatal_error_.has_value() ? 1 : 0;
 }
@@ -142,6 +145,9 @@ bool DebuggerApp::LoadRomFromPath(const std::string& path) {
   hasher.Update(rom.data(), rom.size());
   const Sha1Digest rom_sha1 = hasher.Finalize();
 
+  // Keep the current cartridge alive if its save cannot be written.
+  if (!FlushSramToDisk()) return false;
+
   try {
     const BuildResult load_result = snes_.LoadRom(rom);
     if (!load_result.ok) {
@@ -168,6 +174,8 @@ bool DebuggerApp::LoadRomFromPath(const std::string& path) {
     std::error_code abs_ec;
     const fs::path absolute = fs::weakly_canonical(fs::path(path), abs_ec);
     const std::string resolved = abs_ec ? path : absolute.string();
+    sram_last_error_ = sram_persistence_.Load(snes_.GetCartridge(), resolved, ui_state_.persist_sram);
+    if (!sram_last_error_.empty()) PushHostError(sram_last_error_);
     ui_state_.last_rom_path = resolved;
     const fs::path parent = fs::path(resolved).parent_path();
     if (!parent.empty()) {
@@ -176,6 +184,7 @@ bool DebuggerApp::LoadRomFromPath(const std::string& path) {
     SaveAppConfig();
     JumpToAddress(GetCurrentPc());
     last_tick_time_ = std::chrono::steady_clock::now();
+    last_sram_flush_time_ = last_tick_time_;
     return true;
   } catch (const std::exception& ex) {
     error_log_.Push({
@@ -186,6 +195,27 @@ bool DebuggerApp::LoadRomFromPath(const std::string& path) {
     });
     return false;
   }
+}
+
+void DebuggerApp::SetPersistSram(bool enabled) {
+  ui_state_.persist_sram = enabled;
+  SaveAppConfig();
+}
+
+void DebuggerApp::ClearSram() {
+  if (!loaded_rom_ || snes_.GetCartridge().SramSize() == 0U) return;
+  snes_.GetCartridge().ClearSram();
+  // Discard the running game's cached save data before it can restore SRAM.
+  ResetMachine();
+  (void)FlushSramToDisk();
+}
+
+bool DebuggerApp::FlushSramToDisk() {
+  if (!loaded_rom_) return true;
+  const std::string error = sram_persistence_.Flush(snes_.GetCartridge(), ui_state_.persist_sram);
+  if (!error.empty() && error != sram_last_error_) PushHostError(error);
+  sram_last_error_ = error;
+  return error.empty();
 }
 
 void DebuggerApp::ResetMachine() {
@@ -410,13 +440,17 @@ void DebuggerApp::ShutdownWindow() {
 }
 
 void DebuggerApp::TickEmulation() {
+  const auto now = std::chrono::steady_clock::now();
+  // Run even while paused, including after stepping or editing SRAM.
+  if (now - last_sram_flush_time_ >= kSramFlushInterval) {
+    (void)FlushSramToDisk();
+    last_sram_flush_time_ = now;
+  }
   UpdateAudioPlayback();
   if (!loaded_rom_ || fatal_error_.has_value()) {
     last_tick_time_ = std::chrono::steady_clock::now();
     return;
   }
-
-  const auto now = std::chrono::steady_clock::now();
 
   if (run_control_.GetState() == RunState::kPaused) {
     last_tick_time_ = now;
@@ -479,6 +513,15 @@ void DebuggerApp::RenderMenuBar() {
           ui_state_.load_rom_error = "Failed to load: " + ui_state_.last_rom_path;
           ui_state_.open_load_rom_dialog = true;
         }
+      }
+      ImGui::Separator();
+      const bool has_sram = loaded_rom_ && snes_.GetCartridge().SramSize() > 0U;
+      if (ImGui::MenuItem("Clear SRAM", nullptr, false, has_sram)) {
+        ClearSram();
+      }
+      if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Clear cartridge saves and reset the SNES.\n"
+                          "Updates the .srm file immediately when Persist SRAM is enabled.");
       }
       ImGui::Separator();
       if (ImGui::MenuItem("Exit")) {
@@ -648,7 +691,8 @@ struct StringField {
   std::string UiState::* member;
 };
 
-constexpr std::array<BoolField, 16> kBoolFields{{
+constexpr std::array<BoolField, 17> kBoolFields{{
+    {"persist_sram", &UiState::persist_sram},
     {"show_registers_panel", &UiState::show_registers_panel},
     {"show_disasm_panel", &UiState::show_disasm_panel},
     {"show_memory_panel", &UiState::show_memory_panel},

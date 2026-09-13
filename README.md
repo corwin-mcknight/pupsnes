@@ -51,7 +51,7 @@ What to expect right now:
 - 🔊 **Stereo audio at 100% speed** — volume, mute, device, latency, and interpolation controls are available in both frontends. Pausing, debugger stepping, and other speeds are silent.
 - 🌀 **No Mode 7** — affine/rotation effects don't render (e.g. *F-Zero*, *Super Mario Kart*, the LTTP world-map screen).
 - 🎮 **Player 1 only** — no second controller or peripherals.
-- 💾 **No save states or rewind** yet (battery SRAM *does* persist to `.srm`).
+- 💾 **No save states or rewind** yet (battery SRAM *does* persist to `.srm`). In the debugger, **SNES → Cartridge → Persist SRAM** controls save loading and automatic writes; it defaults on and is remembered across launches. Saves live beside the ROM. Turning persistence off leaves save files untouched; enabling it mid-session saves the current SRAM, with existing saves loaded when opening a ROM. **File → Clear SRAM** clears the cartridge's save memory, resets and pauses the SNES, and immediately updates the save file if persistence is enabled.
 - 📦 **LoROM / HiROM / ExHiROM only** — no SA-1 / SuperFX / DSP enhancement-chip games.
 
 ## Feature support

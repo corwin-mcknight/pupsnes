@@ -40,6 +40,7 @@ set(PUPSNES_DEBUGGER_CORE_SOURCES
   src/debugger/microop_trace.cpp
   src/debugger/run_control.cpp
   src/debugger/sha1.cpp
+  src/debugger/sram_persistence.cpp
 )
 
 set(PUPSNES_TRACE_RUNNER_SOURCES
@@ -109,6 +110,7 @@ set(PUPSNES_TEST_SOURCES
   src/tests/rom_validation_tests.cpp
   src/tests/scheduler_tests.cpp
   src/tests/sram_tests.cpp
+  src/tests/sram_persistence_tests.cpp
   src/tests/test_rom_builder_tests.cpp
   src/tests/token_tests.cpp
   src/tests/mem_tests.cpp

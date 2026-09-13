@@ -23,6 +23,7 @@ struct GLFWwindow;
 #include "pupsnes/debugger/microop_trace.h"
 #include "pupsnes/debugger/run_control.h"
 #include "pupsnes/debugger/sha1.h"
+#include "pupsnes/debugger/sram_persistence.h"
 #include "pupsnes/debugger/trace.h"
 #include "time_format.h"
 
@@ -94,6 +95,7 @@ struct UiState {
   bool show_log_panel = true;
   bool show_controller_panel = true;
   bool show_snes_panel = false;
+  bool persist_sram = true;
   // Emulated SNES time per real time. 1.0 = 100% real-hardware speed. Always
   // applied (the CPU is budgeted dt * kMasterClockHz * multiplier cycles per
   // host frame). When < 0.25, the PPU preview shows the in-progress frame
@@ -133,6 +135,8 @@ class DebuggerApp {
 
   bool LoadRomFromPath(const std::string& path);
   void ResetMachine();
+  void SetPersistSram(bool enabled);
+  void ClearSram();
   void OpenAudioSettings() { audio_panel_.show = true; }
   bool WriteMemory(SnesAddrT address, uint8_t value);
   void JumpToAddress(SnesAddrT address);
@@ -152,6 +156,7 @@ class DebuggerApp {
   void TickEmulation();
   void UpdateAudioPlayback();
   void StopAudio();
+  bool FlushSramToDisk();
   void Render();
   void RenderMenuBar();
   void RenderFatalModal();
@@ -175,6 +180,9 @@ class DebuggerApp {
   std::chrono::steady_clock::time_point last_tick_time_{};
   bool loaded_rom_ = false;
   std::string loaded_rom_path_;
+  SramPersistence sram_persistence_;
+  std::chrono::steady_clock::time_point last_sram_flush_time_{};
+  std::string sram_last_error_;
   std::optional<std::string> fatal_error_;
   SNES snes_;
   frontend::AudioOutput audio_output_;

@@ -273,6 +273,11 @@ void Cartridge::LoadSram(std::span<const uint8_t> data) {
   sram_dirty_ = false;
 }
 
+void Cartridge::ClearSram() {
+  std::fill(sram_.begin(), sram_.end(), 0xFFU);
+  sram_dirty_ = !sram_.empty();
+}
+
 MmioReadResult Cartridge::ReadRegister(uint32_t offset, TimeMasterT /*current_time*/) {
   if ((offset & kSramOffsetTag) != 0U) {
     if (sram_.empty()) {

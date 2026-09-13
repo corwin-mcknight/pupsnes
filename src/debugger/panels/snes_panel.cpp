@@ -178,6 +178,13 @@ void RenderSnesPanel(DebuggerApp& app) {
 
   if (ImGui::CollapsingHeader("Cartridge", ImGuiTreeNodeFlags_DefaultOpen)) {
     RenderCartridgeSection(snes.GetCartridge(), app.GetLoadedRomPath());
+    bool persist_sram = app.GetUiState().persist_sram;
+    if (ImGui::Checkbox("Persist SRAM", &persist_sram)) app.SetPersistSram(persist_sram);
+    if (ImGui::IsItemHovered()) {
+      ImGui::SetTooltip(
+          "Load .srm saves beside the ROM when opening it, and save changes automatically.\n"
+          "Turning this off leaves files untouched. Turning it on saves the current session.");
+    }
   }
   if (ImGui::CollapsingHeader("System", ImGuiTreeNodeFlags_DefaultOpen)) {
     RenderSystemSection();
