@@ -1,11 +1,11 @@
 #include "pupsnes/hw/apu/apu.h"
 
 #include <format>
+#include <memory>
 #include <stdexcept>
 
 #include "pupsnes/core/snes.h"
-#include "pupsnes/hw/apu/accurate_sdsp.h"
-#include "pupsnes/hw/apu/simple_sdsp.h"
+#include "pupsnes/hw/apu/spc_file.h"
 
 namespace pupsnes {
 namespace {
@@ -23,13 +23,9 @@ constexpr std::array<uint8_t, 64> kIplRom = {
 
 Apu::Apu(SNES& snes) : Device(snes), cpu_(*this) { Reset(); }
 
-void Apu::Reset(SdspMode mode) {
-  if (!dsp_ || dsp_->Mode() != mode) {
-    switch (mode) {
-      case SdspMode::kSimple: dsp_ = std::make_unique<SimpleSdsp>(ram_.data(), ram_.size()); break;
-      case SdspMode::kAccurate: dsp_ = std::make_unique<AccurateSdsp>(ram_.data(), ram_.size()); break;
-      default: throw std::invalid_argument("Invalid S-DSP mode");
-    }
+void Apu::Reset(SdspMode mode, SdspBackend backend) {
+  if (!dsp_ || dsp_->Mode() != mode || dsp_->Backend() != backend) {
+    dsp_ = MakeSdsp(backend, mode, ram_.data(), ram_.size());
   }
   // Deterministic cold-start policy; physical ARAM power-on contents vary.
   local_time_ = 0;
@@ -46,6 +42,44 @@ void Apu::Reset(SdspMode mode) {
   dsp_address_ = 0;
   fault_.reset();
   cpu_.Reset();
+}
+
+void Apu::LoadSpc(const SpcFile& file, SdspMode mode, SdspBackend backend) {
+  Reset(mode, backend);
+  ram_ = file.ram;
+  cpu_.Reset(file.cpu);
+  ipl_enabled_ = (ram_[0xF1] & 0x80U) != 0;
+  dsp_address_ = ram_[0xF2];
+  // Snapshot restore must not replay CONTROL writes (which clear ports and
+  // counters). SPC stores one port image, used to seed both directions.
+  for (std::size_t index = 0; index < input_ports_.size(); ++index) {
+    input_ports_[index] = output_ports_[index] = ram_[0xF4 + index];
+  }
+  auxiliary_ports_ = {ram_[0xF8], ram_[0xF9]};
+  for (std::size_t index = 0; index < timers_.size(); ++index) {
+    timers_[index].enabled = (ram_[0xF1] & (1U << index)) != 0;
+    timers_[index].target = ram_[0xFA + index];
+    timers_[index].output = ram_[0xFD + index] & 0x0FU;
+    // SPC omits the prescaler phase. Match snes_spc's portable-load seed:
+    // the first timer edge occurs on the first emulated cycle.
+    timers_[index].divider = index == 2 ? 15 : 127;
+  }
+  // TEST is not a reliable saved register in historical SPC dumps. As in
+  // standard players, startup uses normal clock/RAM behavior. Subsequent
+  // unsupported TEST writes still fault normally.
+  dsp_->LoadRegisters(file.dsp);
+  // Portable SPC dumps can contain unrelated/old audio in the echo region.
+  // Clear writable echo on startup, as standalone SPC players do. Preserve
+  // read-only echo: games may use that memory as sample or program data.
+  // This changes only startup ARAM, not the DSP's normal echo behavior.
+  if ((file.dsp[0x6C] & 0x20U) == 0) {
+    const uint32_t start = static_cast<uint32_t>(file.dsp[0x6D]) * 0x100U;
+    const uint32_t delay = static_cast<uint32_t>(file.dsp[0x7D] & 0x0FU) * 0x800U;
+    const uint32_t length = delay == 0 ? 4 : delay;
+    for (uint32_t offset = 0; offset < length; ++offset) {
+      ram_[static_cast<uint16_t>(start + offset)] = 0;
+    }
+  }
 }
 
 void Apu::StepHardware() {

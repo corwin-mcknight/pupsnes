@@ -64,7 +64,7 @@ class Ppu : public Device {
 
   // Bus wiring — claim the entire page $21 as kSameClockMmio in banks $00-$3F
   // and $80-$BF. Ports $2140-$217F forward to the APU with their original
-  // access timestamp; $2180-$21FF remain open-bus / dropped writes.
+  // access timestamp; $2180-$2183 forward to WRAM. The rest is open bus.
   void MapSystemBus(SystemBus& bus);
 
   // Drop all PPU state back to power-on defaults. Does not re-map the bus;
@@ -357,7 +357,9 @@ class Ppu : public Device {
     bool priority;
   };
   [[nodiscard]] BgPixel FetchBgPixel(uint8_t bg, uint8_t bpp, uint32_t screen_x, uint32_t screen_y) const;
-
+  [[nodiscard]] uint32_t MosaicSourceX(uint8_t bg, uint32_t screen_x) const;
+  [[nodiscard]] uint32_t MosaicSourceY(uint8_t bg, uint32_t screen_y) const;
+  void AdvanceMosaicVerticalCounter();
   // One BG's cached 8-pixel column. Planes are decoded into eight 4-bit
   // color indices for the current row of the current (sub-)tile. Cleared at scanline
   // boundaries; invalidated mid-line via `bg_row_dirty_[bg]` when a register
@@ -417,14 +419,19 @@ class Ppu : public Device {
   // Resolve both screens together, fetching each needed BG pixel once.
   // Ranking preserves the current mode's priority ladder and OBJ palette
   // eligibility. All inputs belong to this dot, after pending writes drain.
-  [[nodiscard]] ResolvedScreens ResolveScreenPixels(uint32_t screen_x, uint32_t screen_y, const ObjPixel& obj_px) const;
+  [[nodiscard]] ResolvedScreens ResolveScreenPixels(uint32_t screen_x, uint32_t screen_y, const ObjPixel& obj_px,
+                                                    uint8_t main_mask, uint8_t sub_mask) const;
   [[nodiscard]] uint8_t FetchMode7Pixel(uint32_t screen_x, uint32_t screen_y) const;
-  [[nodiscard]] ResolvedScreens ResolveMode7Screens(uint32_t screen_x, uint32_t screen_y, const ObjPixel& obj_px) const;
+  [[nodiscard]] ResolvedScreens ResolveMode7Screens(uint32_t screen_x, uint32_t screen_y, const ObjPixel& obj_px,
+                                                    uint8_t main_mask, uint8_t sub_mask) const;
 
   // Apply $2131 CGADSUB math to the resolved main pixel. A sub-screen
   // backdrop selects the COLDATA fixed colour. Returns BGR555.
   [[nodiscard]] uint16_t ApplyColorMath(uint16_t main_bgr, uint8_t main_layer, bool main_obj_high,
-                                        const ResolvedPixel& sub) const;
+                                        const ResolvedPixel& sub, bool color_window) const;
+
+  void RebuildWindowLogic();
+  [[nodiscard]] uint8_t WindowMaskAt(uint32_t screen_x) const;
 
   // --- Register shadow + decoded fields ---
   std::array<uint8_t, sppu::regs::kShadowSize> shadow_{};
@@ -451,6 +458,23 @@ class Ppu : public Device {
   uint8_t bg_scroll_prev_ = 0;
   uint8_t main_screen_layers_ = 0;  // TM ($212C)
   uint8_t sub_screen_layers_ = 0;   // TS ($212D)
+
+  // Decoded MOSAIC ($2106). Horizontal sampling uses `mosaic_size_`
+  // immediately. The vertical counter retains its current block's size until
+  // that block ends, as on hardware, then adopts the live register size.
+  uint8_t mosaic_size_ = 1;
+  uint8_t mosaic_vertical_size_ = 1;
+  uint8_t mosaic_vertical_index_ = 0;
+  uint8_t mosaic_enabled_ = 0;
+
+  // Six window targets: BG1..4, OBJ, color. Compile their boolean logic
+  // for the four possible window-membership pairs when selection changes.
+  std::array<uint8_t, 3> window_select_{};
+  std::array<uint8_t, 4> window_bounds_{};
+  std::array<uint8_t, 2> window_logic_{};
+  std::array<uint8_t, 4> window_region_masks_{};
+  uint8_t main_window_layers_ = 0;
+  uint8_t sub_window_layers_ = 0;
 
   // Decoded color math state.
   //   cgwsel_ / cgadsub_  — raw shadow of $2130 / $2131.
@@ -502,7 +526,7 @@ class Ppu : public Device {
   uint16_t oam_byte_addr_ = 0;
   uint16_t oam_byte_addr_reload_ = 0;
   bool oam_priority_rotation_ = false;
-  uint8_t oam_write_latch_ = 0;  // Low-byte latch for write-twice in low OAM.
+  uint8_t oam_write_latch_ = 0;  // Set by even writes in either table; committed by low-OAM odd writes.
 
   // Dot/scanline position + field toggle.
   uint32_t h_ = 0;

@@ -122,6 +122,7 @@ class DmaController : public Device {
   // header reload, optional one-unit transfer, NTRL decrement, do_transfer
   // recompute.
   TimeMasterT HdmaRunChannelLine(uint8_t ch, TimeMasterT t);
+  void TransferByte(uint32_t a_addr, uint32_t b_addr, bool b_to_a, TimeMasterT t);
 
   std::array<ChannelState, 8> channels_{};
   std::array<TriggerRecord, kTriggerRingCapacity> trigger_ring_{};

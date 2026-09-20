@@ -254,7 +254,7 @@ TEST_CASE("OAM low-range write is write-twice, high-range is byte-wise", "[unit]
   BusWrite(snes, sppu::regs::kOamData, 0x22, /*now=*/3);  // commits oam[6]=0x11, oam[7]=0x22
 
   // Point at OAM high-table word 0 (byte 0x200). Each OAMDATA write commits
-  // a single byte, no latch.
+  // a single byte immediately.
   BusWrite(snes, sppu::regs::kOamAddL, 0x00, /*now=*/4);
   BusWrite(snes, sppu::regs::kOamAddH, 0x01, /*now=*/5);  // bit 0 of H = word bit 8
   BusWrite(snes, sppu::regs::kOamData, 0xAA, /*now=*/6);  // commits oam[0x200]=0xAA directly
@@ -274,6 +274,37 @@ TEST_CASE("OAM low-range write is write-twice, high-range is byte-wise", "[unit]
   BusFollowResult high0 = BusRead(snes, sppu::regs::kRdOam, /*now=*/14);
   REQUIRE(high0.data == 0xAA);
   (void)ppu;
+}
+
+TEST_CASE("OAM high-table even writes set the shared word buffer", "[unit][ppu][oam]") {
+  // snes_oam_test/3-high tests #5, #8, and #10: a high-table even
+  // write supplies the buffered low byte of a later low-table word write.
+  for (uint8_t word_low : std::array<uint8_t, 3>{0x01, 0x1F, 0xFF}) {
+    CAPTURE(word_low);
+    SNES snes;
+    snes.GetPpu().Reset();
+    TimeMasterT now = 0;
+    BusWrite(snes, sppu::regs::kOamAddL, word_low, now++);
+    BusWrite(snes, sppu::regs::kOamAddH, 1, now++);
+    BusWrite(snes, sppu::regs::kOamData, 0x12, now++);
+
+    SECTION("First high-table write sets buffer") {}
+    SECTION("Odd high-table write preserves buffer") { BusWrite(snes, sppu::regs::kOamData, 0x56, now++); }
+    SECTION("OAM reads preserve buffer") {
+      (void)BusRead(snes, sppu::regs::kRdOam, now++);
+      (void)BusRead(snes, sppu::regs::kRdOam, now++);
+    }
+
+    // Address writes reset the byte phase without clearing the buffer.
+    // Read the even byte so the next write commits the buffered word.
+    BusWrite(snes, sppu::regs::kOamAddL, 0, now++);
+    BusWrite(snes, sppu::regs::kOamAddH, 0, now++);
+    (void)BusRead(snes, sppu::regs::kRdOam, now++);
+    BusWrite(snes, sppu::regs::kOamData, 0x34, now++);
+    BusWrite(snes, sppu::regs::kOamAddL, 0, now++);
+    REQUIRE(BusRead(snes, sppu::regs::kRdOam, now++).data == 0x12);
+    REQUIRE(BusRead(snes, sppu::regs::kRdOam, now++).data == 0x34);
+  }
 }
 
 TEST_CASE("STAT77 version field reads as PPU1 version 1 with open-bus upper bits", "[unit][ppu]") {
@@ -1113,6 +1144,29 @@ void WriteTile2bpp(SNES& snes, uint16_t char_word_base, uint16_t char_index, con
   }
 }
 
+TimeMasterT ConfigureIndexedMosaicBg1(SNES& snes, uint8_t mosaic) {
+  TimeMasterT now = 1;
+  BusWrite(snes, sppu::regs::kInidisp, 0x0FU, now++);
+  BusWrite(snes, sppu::regs::kVmain, 0x80U, now++);
+  for (uint8_t color = 0; color < 16U; ++color) {
+    WriteCgramWord(snes, color, color, now);
+  }
+
+  uint8_t tile[64] = {};
+  for (uint16_t pixel = 0; pixel < 64U; ++pixel) {
+    tile[pixel] = static_cast<uint8_t>((pixel % 15U) + 1U);
+  }
+  WriteTile4bpp(snes, 0x1000U, 0U, tile, now);
+  WriteVramWord(snes, 0x0000U, 0x0000U, now);
+
+  BusWrite(snes, sppu::regs::kBgmode, 0x01U, now++);
+  BusWrite(snes, sppu::regs::kBg1Sc, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kBg12Nba, 0x01U, now++);
+  BusWrite(snes, sppu::regs::kTm, sppu::regs::kTmBg1Mask, now++);
+  BusWrite(snes, sppu::regs::kMosaic, mosaic, now++);
+  return now;
+}
+
 }  // namespace
 
 TEST_CASE("Mode 1 BG1 4bpp tile renders to the framebuffer with palette colors", "[unit][ppu]") {
@@ -1168,6 +1222,64 @@ TEST_CASE("Mode 1 BG1 4bpp tile renders to the framebuffer with palette colors",
   // Row 1+ should be white (color 5).
   REQUIRE(view.pixels[1U * view.stride + 0U] == 0x7FFFU);
   REQUIRE(view.pixels[7U * view.stride + 7U] == 0x7FFFU);
+}
+
+TEST_CASE("MOSAIC repeats the enabled BG's upper-left source pixel", "[unit][ppu]") {
+  SNES snes;
+  Ppu& ppu = snes.GetPpu();
+  ppu.Reset();
+  const TimeMasterT now = ConfigureIndexedMosaicBg1(snes, 0x31U);  // 4×4 blocks, BG1 enabled.
+  REQUIRE(now < 1452U);
+
+  ppu.CatchUpTo(kFrameEndNtsc);
+  const FrameBufferView view = ppu.BuildFrontView();
+
+  // The indexed tile's first row is 1,2,3,...; the 4×4 blocks therefore
+  // sample colors 1 and 5 at x=0 and x=4. The second block-row samples row 4.
+  REQUIRE(view.pixels[0U * view.stride + 0U] == 1U);
+  REQUIRE(view.pixels[3U * view.stride + 3U] == 1U);
+  REQUIRE(view.pixels[0U * view.stride + 4U] == 5U);
+  REQUIRE(view.pixels[3U * view.stride + 7U] == 5U);
+  REQUIRE(view.pixels[4U * view.stride + 0U] == 3U);
+  REQUIRE(view.pixels[7U * view.stride + 3U] == 3U);
+}
+
+TEST_CASE("MOSAIC does not affect a background whose enable bit is clear", "[unit][ppu]") {
+  SNES snes;
+  Ppu& ppu = snes.GetPpu();
+  ppu.Reset();
+  const TimeMasterT now = ConfigureIndexedMosaicBg1(snes, 0x32U);  // 4×4 blocks, BG2 only.
+  REQUIRE(now < 1452U);
+
+  ppu.CatchUpTo(kFrameEndNtsc);
+  const FrameBufferView view = ppu.BuildFrontView();
+
+  REQUIRE(view.pixels[0U * view.stride + 3U] == 4U);
+  REQUIRE(view.pixels[3U * view.stride + 0U] == 10U);
+}
+
+TEST_CASE("MOSAIC defers a mid-frame vertical size change until the current block ends", "[unit][ppu]") {
+  SNES snes;
+  Ppu& ppu = snes.GetPpu();
+  ppu.Reset();
+  const TimeMasterT now = ConfigureIndexedMosaicBg1(snes, 0x31U);  // Start with 4×4 BG1 mosaic.
+  REQUIRE(now < 1452U);
+
+  // V=1 starts at cycle 1364 and its visible region at 1452. This write lands
+  // during that first visible line: horizontal blocks become 2 pixels wide
+  // immediately, but the first vertical block must remain four lines tall.
+  BusWrite(snes, sppu::regs::kMosaic, 0x11U, /*now=*/1600U);
+
+  ppu.CatchUpTo(kFrameEndNtsc);
+  const FrameBufferView view = ppu.BuildFrontView();
+
+  REQUIRE(view.pixels[0U * view.stride + 0U] == 1U);
+  REQUIRE(view.pixels[1U * view.stride + 0U] == 1U);
+  REQUIRE(view.pixels[3U * view.stride + 0U] == 1U);
+  REQUIRE(view.pixels[4U * view.stride + 0U] == 3U);
+  REQUIRE(view.pixels[5U * view.stride + 0U] == 3U);
+  REQUIRE(view.pixels[6U * view.stride + 0U] == 4U);
+  REQUIRE(view.pixels[0U * view.stride + 38U] == 7U);
 }
 
 TEST_CASE("Mode 1 BG1 hflip + vflip mirror the 8x8 tile pattern", "[unit][ppu]") {
@@ -2566,16 +2678,14 @@ TEST_CASE("Mid-line VRAM write to BG1 tile data propagates to subsequent pixels"
   BusWrite(snes, sppu::regs::kBgmode, 0x01U, now++);
   BusWrite(snes, sppu::regs::kTm, sppu::regs::kTmBg1Mask, now++);
 
-  uint16_t expected_red = 0x001FU;
-  uint16_t expected_blue = 0x7C00U;
+  constexpr uint16_t kExpectedRed = 0x001FU;
+  constexpr uint16_t kExpectedBlue = 0x7C00U;
   SECTION("Main screen only") {}
   SECTION("Same background supplies both main and sub screens") {
     BusWrite(snes, sppu::regs::kTs, sppu::regs::kTmBg1Mask, now++);
     BusWrite(snes, sppu::regs::kCgwsel, sppu::regs::kCgwselSubScreenEnableMask, now++);
     BusWrite(snes, sppu::regs::kCgadsub, sppu::regs::kCgadsubBg1Mask | sppu::regs::kCgadsubHalfMask, now++);
-    // Current math saturates the sum at 31 before halving to 15.
-    expected_red = 0x000FU;
-    expected_blue = 0x3C00U;
+    // Half-addition of identical main/sub colors preserves their full intensity.
   }
 
   // Render through screen_x=5 of line V=1. Dot H=27 ends at master cycle
@@ -2591,14 +2701,14 @@ TEST_CASE("Mid-line VRAM write to BG1 tile data propagates to subsequent pixels"
   const FrameBufferView view = ppu.BuildFrontView();
 
   // Pixels rendered before the VRAM write keep the red color.
-  REQUIRE(view.pixels[0U * view.stride + 0U] == expected_red);
-  REQUIRE(view.pixels[0U * view.stride + 5U] == expected_red);
+  REQUIRE(view.pixels[0U * view.stride + 0U] == kExpectedRed);
+  REQUIRE(view.pixels[0U * view.stride + 5U] == kExpectedRed);
   // The write lands inside pixel 6's dot; it first takes effect at pixel 7.
-  REQUIRE(view.pixels[0U * view.stride + 6U] == expected_red);
+  REQUIRE(view.pixels[0U * view.stride + 6U] == kExpectedRed);
   // Pixel rendered after the VRAM write reads the new plane bytes → blue.
   // (Same tile_x as screen_x=5 — both inside tile 0 — so this only passes
   // when the cache notices the VMDATA invalidation.)
-  REQUIRE(view.pixels[0U * view.stride + 7U] == expected_blue);
+  REQUIRE(view.pixels[0U * view.stride + 7U] == kExpectedBlue);
 }
 
 TEST_CASE("OBJ list latched per scanline — mid-line OAM write does not unrender sprite", "[unit][ppu]") {
@@ -2718,6 +2828,18 @@ TEST_CASE("Mode 7 reads packed high-byte characters and fixed low-byte tilemap",
   REQUIRE(f.Pixel(16) == 9);
   REQUIRE(f.Pixel(0, 6) == 57);
   REQUIRE(f.Pixel(0, 7) == 1);
+}
+
+TEST_CASE("Mode 7 MOSAIC samples the upper-left pixel of each block", "[unit][ppu][mode7]") {
+  Mode7Fixture f;
+  f.Write(sppu::regs::kMosaic, 0x31U);  // 4×4 blocks, BG1 enabled.
+  f.Render();
+
+  REQUIRE(f.Pixel(0, 0) == 9U);
+  REQUIRE(f.Pixel(3, 0) == 9U);
+  REQUIRE(f.Pixel(4, 0) == 13U);
+  REQUIRE(f.Pixel(0, 3) == 9U);
+  REQUIRE(f.Pixel(0, 4) == 41U);
 }
 
 TEST_CASE("Mode 7 applies signed scale rotation shear centers scroll and flips", "[unit][ppu][mode7]") {
@@ -3026,4 +3148,402 @@ TEST_CASE("Mode 7 HDMA leaves a static frame unchanged after ten seconds", "[int
       REQUIRE(later.pixels[y * later.stride + x] == expected[y * later.width + x]);
     }
   }
+}
+
+TEST_CASE("Mosaic ROM repeats each 4x4 source block across the framebuffer", "[integration][ppu][mosaic]") {
+  std::ifstream input(std::filesystem::path(PUPSNES_TEST_ROM_DIR) / "ppu_mosaic.sfc", std::ios::binary);
+  REQUIRE(input.good());
+  const std::vector<uint8_t> rom{std::istreambuf_iterator<char>(input), {}};
+
+  SNES snes;
+  REQUIRE(snes.LoadRom(rom).ok);
+  snes.Reset();
+  REQUIRE_FALSE(pupsnes::tools::DriveMachineToMasterTime(snes, 8U * 262U * 1364U).has_value());
+
+  const auto view = snes.GetPpu().BuildFrontView();
+  constexpr uint16_t kColors[] = {0x001FU, 0x03E0U, 0x7C00U, 0x7FFFU};
+  for (uint32_t y = 0; y < view.height; ++y) {
+    for (uint32_t x = 0; x < view.width; ++x) {
+      const uint32_t block_x = (x & 7U) >> 2U;
+      const uint32_t block_y = (y & 7U) >> 2U;
+      CAPTURE(x, y);
+      REQUIRE(view.pixels[y * view.stride + x] == kColors[block_x + block_y * 2U]);
+    }
+  }
+}
+
+namespace {
+
+// These tests observe bus-programmed pixels, not the renderer's private helpers.
+// Window truth tables and channel arithmetic are specified independently.
+struct WindowFixture {
+  SNES snes;
+  TimeMasterT now = 1;
+  static constexpr uint32_t kY = 64;
+  static constexpr TimeMasterT kLine = (kY + 1U) * 1364U;
+
+  WindowFixture() {
+    snes.GetPpu().Reset();
+    Write(sppu::regs::kVmain, 0x80);
+    Write(sppu::regs::kBg12Nba, 0x21);
+    Write(sppu::regs::kBg34Nba, 0x43);
+    WriteCgramWord(snes, 0, 1, now);
+    for (uint16_t bg = 0; bg < 4; ++bg) {
+      WriteCgramWord(snes, static_cast<uint8_t>(bg * 32U + 1U), 10U + bg, now);
+      // Solid index 1, usable as either a 2bpp or 4bpp tile.
+      for (uint16_t row = 0; row < 8; ++row) {
+        WriteVramWord(snes, static_cast<uint16_t>((bg + 1U) * 0x1000U + row), 0x00FF, now);
+      }
+    }
+    WriteCgramWord(snes, 0x81, 15, now);
+    for (uint16_t row = 0; row < 8; ++row) WriteVramWord(snes, 16U + row, 0x00FF, now);
+    WriteOamLowEntry(snes, 0, 64, kY, 1, 0, now);
+    Write(sppu::regs::kWh0, 66);
+    Write(sppu::regs::kWh1, 69);
+    Write(sppu::regs::kWh2, 68);
+    Write(sppu::regs::kWh3, 71);
+    Write(sppu::regs::kInidisp, 15);
+  }
+  void Write(uint16_t reg, uint8_t value) { BusWrite(snes, reg, value, now++); }
+  void Select(uint8_t target, uint8_t select, uint8_t logic) {
+    Write(static_cast<uint16_t>(sppu::regs::kW12Sel + target / 2U),
+          static_cast<uint8_t>(select << ((target & 1U) * 4U)));
+    Write(target < 4U ? sppu::regs::kWBgLog : sppu::regs::kWObjLog,
+          static_cast<uint8_t>(logic << ((target & 3U) * 2U)));
+  }
+  void Render() { snes.GetPpu().CatchUpTo(kLine + 1112U); }
+  uint16_t Pixel(uint32_t x) const {
+    return snes.GetPpu().GetBackBuffer()[(kY + 1U) * sppu::regs::kFrameBufferWidth + sppu::regs::kVisibleHStart + x];
+  }
+};
+
+bool ExpectedWindow(uint8_t select, uint8_t logic, uint32_t x, uint8_t left1 = 66, uint8_t right1 = 69,
+                    uint8_t left2 = 68, uint8_t right2 = 71) {
+  const bool first = (x >= left1 && x <= right1) != ((select & 1U) != 0U);
+  const bool second = (x >= left2 && x <= right2) != ((select & 4U) != 0U);
+  const unsigned enabled = ((select & 2U) != 0U ? 1U : 0U) + ((select & 8U) != 0U ? 2U : 0U);
+  if (enabled == 0U) return false;
+  if (enabled == 1U) return first;
+  if (enabled == 2U) return second;
+  // Truth-table bits indexed by (first * 2 + second): OR, AND, XOR, XNOR.
+  constexpr uint32_t kTables[] = {0b1110, 0b1000, 0b0110, 0b1001};
+  return ((kTables[logic] >> (static_cast<unsigned>(first) * 2U + static_cast<unsigned>(second))) & 1U) != 0U;
+}
+
+}  // namespace
+
+TEST_CASE("Window selection and all logic operators apply independently to all six targets", "[unit][ppu][windows]") {
+  for (uint8_t target = 0; target < 6; ++target) {
+    for (uint8_t select = 0; select < 16; ++select) {
+      for (uint8_t logic = 0; logic < 4; ++logic) {
+        CAPTURE(target, select, logic);
+        WindowFixture f;
+        f.Select(target, select, logic);
+        if (target < 5U) {
+          f.Write(sppu::regs::kTm, static_cast<uint8_t>(1U << target));
+          f.Write(sppu::regs::kTmw, static_cast<uint8_t>(1U << target));
+        } else {
+          f.Write(sppu::regs::kColdata, 0x27);  // red 7
+          f.Write(sppu::regs::kCgadsub, 0x20);  // backdrop math
+          f.Write(sppu::regs::kCgwsel, 0x10);   // math inside color window
+        }
+        f.Render();
+        for (uint32_t x = 64; x < 72; ++x) {
+          CAPTURE(x);
+          const bool masked = ExpectedWindow(select, logic, x);
+          const uint16_t layer = target == 4U ? 15U : 10U + target;
+          const uint16_t expected = target == 5U ? (masked ? 8U : 1U) : (masked ? 1U : layer);
+          REQUIRE(f.Pixel(x) == expected);
+        }
+      }
+    }
+  }
+}
+
+TEST_CASE("Window bounds include endpoints and inverted empty intervals", "[unit][ppu][windows]") {
+  for (const auto bounds : {std::array<uint8_t, 2>{0, 255}, {0, 0}, {255, 255}, {90, 40}}) {
+    for (uint8_t select : std::array<uint8_t, 4>{2, 3, 8, 12}) {
+      CAPTURE(bounds[0], bounds[1], select);
+      WindowFixture f;
+      f.Select(0, select, 3);  // logic must not matter with only one window enabled
+      f.Write(sppu::regs::kTm, 1);
+      f.Write(sppu::regs::kTmw, 1);
+      f.Write(sppu::regs::kWh0, bounds[0]);
+      f.Write(sppu::regs::kWh1, bounds[1]);
+      f.Write(sppu::regs::kWh2, bounds[0]);
+      f.Write(sppu::regs::kWh3, bounds[1]);
+      f.Render();
+      for (uint32_t x = 0; x < 256; ++x) {
+        CAPTURE(x);
+        REQUIRE(f.Pixel(x) == (ExpectedWindow(select, 3, x, bounds[0], bounds[1], bounds[0], bounds[1]) ? 1U : 10U));
+      }
+    }
+  }
+}
+
+TEST_CASE("Main and sub screen window enables are independent for BG and OBJ", "[unit][ppu][windows]") {
+  for (uint8_t target = 0; target < 5; ++target) {
+    for (uint8_t gates = 0; gates < 4; ++gates) {
+      CAPTURE(target, gates);
+      WindowFixture f;
+      const uint8_t mask = static_cast<uint8_t>(1U << target);
+      f.Select(target, 2, 0);
+      f.Write(sppu::regs::kTm, mask);
+      f.Write(sppu::regs::kTs, mask);
+      f.Write(sppu::regs::kTmw, (gates & 1U) != 0U ? mask : 0U);
+      f.Write(sppu::regs::kTsw, (gates & 2U) != 0U ? mask : 0U);
+      f.Write(sppu::regs::kCgwsel, 2);
+      f.Write(sppu::regs::kCgadsub, 0x3F);
+      f.Write(sppu::regs::kColdata, 0x23);
+      f.Render();
+      const uint16_t layer = target == 4U ? 15U : 10U + target;
+      const bool main_masked = (gates & 1U) != 0U;
+      // OBJ palette 0 is ineligible for math even when CGADSUB.4 is set.
+      const uint16_t expected =
+          target == 4U && !main_masked ? layer : (main_masked ? 1U : layer) + ((gates & 2U) != 0U ? 3U : layer);
+      REQUIRE(f.Pixel(67) == expected);
+      REQUIRE(f.Pixel(65) == (target == 4U ? layer : 2U * layer));
+    }
+  }
+}
+
+TEST_CASE("Layer windows reveal the next priority layer and preserve its math eligibility", "[unit][ppu][windows]") {
+  WindowFixture f;
+  f.Write(sppu::regs::kBgmode, 1);
+  // BG2 index 2 makes its color distinguishable from BG1 in Mode 1.
+  for (uint16_t row = 0; row < 8; ++row) WriteVramWord(f.snes, 0x2000U + row, 0xFF00, f.now);
+  WriteCgramWord(f.snes, 2, 20, f.now);
+  f.Write(sppu::regs::kTm, 3);
+  f.Write(sppu::regs::kTmw, 1);
+  f.Select(0, 2, 0);
+  f.Write(sppu::regs::kColdata, 0x23);
+  f.Write(sppu::regs::kCgadsub, 2);  // only BG2 math
+  f.Render();
+  REQUIRE(f.Pixel(65) == 10);
+  REQUIRE(f.Pixel(67) == 23);
+}
+
+TEST_CASE("Color window clipping and math regions compose with half eligibility", "[unit][ppu][windows][color-math]") {
+  for (uint8_t clip = 0; clip < 4; ++clip) {
+    for (uint8_t math = 0; math < 4; ++math) {
+      for (bool enable : {false, true}) {
+        CAPTURE(clip, math, enable);
+        WindowFixture f;
+        WriteCgramWord(f.snes, 0, 12, f.now);
+        f.Select(5, 2, 0);
+        // TMW/TSW don't gate the color window, including their unused high bits.
+        f.Write(sppu::regs::kTmw, 0xE0);
+        f.Write(sppu::regs::kTsw, 0xE0);
+        f.Write(sppu::regs::kCgwsel,
+                static_cast<uint8_t>((static_cast<uint32_t>(clip) << 6U) | (static_cast<uint32_t>(math) << 4U)));
+        f.Write(sppu::regs::kCgadsub, enable ? 0x60 : 0x40);
+        f.Write(sppu::regs::kColdata, 0x28);
+        f.Render();
+        for (uint32_t x : {65U, 67U}) {
+          const bool inside = x == 67U;
+          const bool visible[] = {true, inside, !inside, false};
+          unsigned expected = visible[clip] ? 12U : 0U;
+          if (enable && visible[math]) {
+            expected += 8U;
+            if (visible[clip]) expected /= 2U;
+          }
+          REQUIRE(f.Pixel(x) == expected);
+        }
+      }
+    }
+  }
+}
+
+TEST_CASE("Half math distinguishes fixed color from a transparent or windowed sub screen",
+          "[unit][ppu][windows][color-math]") {
+  for (uint8_t source = 0; source < 3; ++source) {
+    CAPTURE(source);
+    WindowFixture f;
+    WriteCgramWord(f.snes, 0, 20, f.now);
+    f.Write(sppu::regs::kColdata, 0x28);
+    f.Write(sppu::regs::kCgadsub, 0x60);
+    f.Write(sppu::regs::kCgwsel, source == 0U ? 0U : 2U);
+    f.Write(sppu::regs::kTs, source == 2U ? 1U : 0U);
+    f.Write(sppu::regs::kTsw, 1);
+    f.Select(0, 2, 0);
+    f.Render();
+    REQUIRE(f.Pixel(67) == (source == 0U ? 14U : 28U));
+    REQUIRE(f.Pixel(65) == (source == 0U ? 14U : source == 1U ? 28U : 15U));
+  }
+}
+
+TEST_CASE("Color math exhaustively blends five-bit channels without losing carries", "[unit][ppu][color-math]") {
+  for (uint8_t mode = 0; mode < 4; ++mode) {
+    for (uint8_t a = 0; a < 32; ++a) {
+      SNES snes;
+      snes.GetPpu().Reset();
+      TimeMasterT now = 1;
+      WriteCgramWord(snes, 0, static_cast<uint16_t>(a | ((31U - a) << 5U) | ((a ^ 21U) << 10U)), now);
+      BusWrite(snes, sppu::regs::kCgadsub, static_cast<uint8_t>(0x20U | (static_cast<uint32_t>(mode) << 6U)), now++);
+      BusWrite(snes, sppu::regs::kInidisp, 15, now++);
+      for (uint8_t b = 0; b < 32; ++b) {
+        CAPTURE(mode, a, b);
+        // Update fixed color before the sampled dot; three distinct channels
+        // detect cross-channel carry/borrow as well as scalar arithmetic errors.
+        now = 1452U + static_cast<TimeMasterT>(b) * 32U;
+        BusWrite(snes, sppu::regs::kColdata, static_cast<uint8_t>(0x20U | b), now++);
+        BusWrite(snes, sppu::regs::kColdata, static_cast<uint8_t>(0x40U | (31U - b)), now++);
+        BusWrite(snes, sppu::regs::kColdata, static_cast<uint8_t>(0x80U | (b ^ 10U)), now++);
+        snes.GetPpu().CatchUpTo(now + 5U);
+        const auto expected_channel = [mode](int lhs, int rhs) {
+          int result = (mode & 2U) != 0U ? lhs - rhs : lhs + rhs;
+          if (result < 0) result = 0;
+          if ((mode & 1U) != 0U) result /= 2;
+          if (result > 31) result = 31;
+          return static_cast<uint32_t>(result);
+        };
+        const uint16_t expected =
+            static_cast<uint16_t>(expected_channel(a, b) | (expected_channel(31 - a, 31 - b) << 5U) |
+                                  (expected_channel(static_cast<int>(a ^ 21U), static_cast<int>(b ^ 10U)) << 10U));
+        const uint32_t index = sppu::regs::kFrameBufferWidth + sppu::regs::kVisibleHStart + b * 8U + 1U;
+        REQUIRE(snes.GetPpu().GetBackBuffer()[index] == expected);
+      }
+    }
+  }
+}
+
+TEST_CASE("Mode 7 and EXTBG apply independent main and sub layer windows", "[unit][ppu][mode7][windows]") {
+  for (bool extbg : {false, true}) {
+    Mode7Fixture f;
+    f.Write(sppu::regs::kSetini, extbg ? 0x40 : 0);
+    f.Write(sppu::regs::kTm, 1);
+    f.Write(sppu::regs::kTs, extbg ? 2 : 1);
+    f.Write(sppu::regs::kCgwsel, 2);
+    f.Write(sppu::regs::kCgadsub, 0x61);  // BG1 and backdrop, half
+    f.Write(sppu::regs::kColdata, 0x24);
+    f.Write(sppu::regs::kW12Sel, 0x82);  // BG1 window1, BG2 window2
+    f.Write(sppu::regs::kWh0, 2);
+    f.Write(sppu::regs::kWh1, 3);
+    f.Write(sppu::regs::kWh2, 4);
+    f.Write(sppu::regs::kWh3, 5);
+    f.Write(sppu::regs::kTmw, 1);
+    f.Write(sppu::regs::kTsw, extbg ? 2 : 1);
+    f.Render();
+    REQUIRE(f.Pixel(0) == 9);                    // identical opaque main/sub, half
+    REQUIRE(f.Pixel(2) == (extbg ? 5U : 4U));    // backdrop main; opaque sub only with EXTBG
+    REQUIRE(f.Pixel(4) == (extbg ? 17U : 13U));  // transparent sub disables half
+  }
+}
+
+TEST_CASE("Timed window register writes preserve prior pixels and scheduler slice invariance", "[unit][ppu][windows]") {
+  const auto run = [](TimeMasterT slice) {
+    WindowFixture f;
+    f.Write(sppu::regs::kTm, 1);
+    f.Write(sppu::regs::kTmw, 1);
+    f.Select(0, 2, 0);
+    f.Write(sppu::regs::kWh0, 0);
+    f.Write(sppu::regs::kWh1, 255);
+    // At dot start x=67 expose BG1. Mid-dot x=69 re-enable masking; it
+    // takes effect at x=70 under the existing dot-start replay contract.
+    BusWrite(f.snes, sppu::regs::kTmw, 0, WindowFixture::kLine + (22U + 67U) * 4U);
+    BusWrite(f.snes, sppu::regs::kTmw, 1, WindowFixture::kLine + (22U + 69U) * 4U + 2U);
+    BusWrite(f.snes, sppu::regs::kWh0, 100, WindowFixture::kLine + (22U + 75U) * 4U);
+    BusWrite(f.snes, sppu::regs::kWh1, 76, WindowFixture::kLine + (22U + 77U) * 4U);
+    BusWrite(f.snes, sppu::regs::kW12Sel, 3, WindowFixture::kLine + (22U + 79U) * 4U);
+    BusWrite(f.snes, sppu::regs::kWBgLog, 3, WindowFixture::kLine + (22U + 81U) * 4U);
+    BusWrite(f.snes, sppu::regs::kW12Sel, 10, WindowFixture::kLine + (22U + 83U) * 4U);
+    BusWrite(f.snes, sppu::regs::kWBgLog, 0, WindowFixture::kLine + (22U + 85U) * 4U);
+    for (TimeMasterT t = slice; t < WindowFixture::kLine + 1112U; t += slice) f.snes.GetPpu().CatchUpTo(t);
+    f.Render();
+    std::vector<uint16_t> pixels;
+    for (uint32_t x = 0; x < 256; ++x) {
+      const bool visible = (x >= 67U && x <= 69U) || (x >= 75U && x <= 78U) || x >= 85U;
+      REQUIRE(f.Pixel(x) == (visible ? 10U : 1U));
+      pixels.push_back(f.Pixel(x));
+    }
+    return pixels;
+  };
+  const auto baseline = run(100000);
+  REQUIRE(run(1) == baseline);
+  REQUIRE(run(113) == baseline);
+}
+
+TEST_CASE("Reset clears window selection, logic, bounds, and per-screen masks", "[unit][ppu][windows]") {
+  WindowFixture f;
+  f.Select(0, 15, 3);
+  f.Select(5, 15, 3);
+  f.Write(sppu::regs::kTmw, 31);
+  f.Write(sppu::regs::kTsw, 31);
+  f.Render();
+  f.snes.Reset();
+  f.now = 1;
+  WriteCgramWord(f.snes, 0, 12, f.now);
+  f.Write(sppu::regs::kInidisp, 15);
+  f.Write(sppu::regs::kColdata, 0x24);
+  f.Write(sppu::regs::kCgadsub, 0x20);
+  f.Write(sppu::regs::kCgwsel, 0x10);  // no selected color window => no inside region
+  f.Render();
+  REQUIRE(f.Pixel(67) == 12);
+  for (uint16_t reg = sppu::regs::kW12Sel; reg <= sppu::regs::kTsw; ++reg) {
+    REQUIRE(f.snes.GetPpu().GetShadow(reg) == 0);
+  }
+}
+
+TEST_CASE("Clipping keeps the original BG and OBJ palette math eligibility", "[unit][ppu][windows][color-math]") {
+  for (uint8_t source = 0; source < 3; ++source) {
+    CAPTURE(source);
+    WindowFixture f;
+    if (source == 2U) {
+      WriteCgramWord(f.snes, 0xC1, 20, f.now);
+      WriteOamLowEntry(f.snes, 0, 64, WindowFixture::kY, 1, 8, f.now);
+    }
+    f.Write(sppu::regs::kTm, source == 0U ? 1U : 16U);
+    f.Write(sppu::regs::kCgadsub, source == 0U ? 0x41U : 0x50U);
+    f.Write(sppu::regs::kCgwsel, 0xC0);  // clip everywhere, math everywhere
+    f.Write(sppu::regs::kColdata, 0x28);
+    f.Render();
+    REQUIRE(f.Pixel(67) == (source == 1U ? 0U : 8U));
+  }
+}
+
+TEST_CASE("HDMA window bounds affect the following scanline including its last pixel", "[unit][ppu][windows][hdma]") {
+  SNES snes;
+  snes.Reset();
+  TimeMasterT now = 1;
+  WriteCgramWord(snes, 0, 12, now);
+  BusWrite(snes, sppu::regs::kInidisp, 15, now++);
+  BusWrite(snes, sppu::regs::kWObjSel, 0x20, now++);
+  BusWrite(snes, sppu::regs::kCgwsel, 0x40, now++);  // show only inside color window
+  const uint8_t table[] = {0x83, 10, 19, 0, 255, 40, 30, 0};
+  for (uint32_t i = 0; i < sizeof(table); ++i) BusWrite(snes, 0x7E0000U + i, table[i], now++);
+  BusWrite(snes, 0x4300, 1, now++);  // mode 1: WH0 then WH1
+  BusWrite(snes, 0x4301, 0x26, now++);
+  BusWrite(snes, 0x4302, 0, now++);
+  BusWrite(snes, 0x4303, 0, now++);
+  BusWrite(snes, 0x4304, 0x7E, now++);
+  BusWrite(snes, 0x420C, 1, now++);
+  constexpr TimeMasterT kEnd = 5U * 1364U;
+  while (snes.GetScheduler().NextEventMasterTime() <= kEnd) {
+    const auto next = snes.GetScheduler().NextEventMasterTime();
+    snes.MachineSync(next);
+    snes.GetScheduler().FireEventsThrough(next);
+  }
+  snes.MachineSync(kEnd);
+  for (uint32_t row = 0; row < 4; ++row) {
+    for (uint32_t x = 0; x < 256; ++x) {
+      CAPTURE(row, x);
+      const bool visible = row == 1U || (row == 0U && x >= 10U && x <= 19U);
+      const auto index = (row + 1U) * sppu::regs::kFrameBufferWidth + sppu::regs::kVisibleHStart + x;
+      REQUIRE(snes.GetPpu().GetBackBuffer()[index] == (visible ? 12U : 0U));
+    }
+  }
+}
+
+TEST_CASE("OBJ window masking does not postpone the scanline OAM snapshot", "[unit][ppu][windows]") {
+  WindowFixture f;
+  f.Write(sppu::regs::kTm, 16);
+  f.Write(sppu::regs::kTmw, 16);
+  f.Select(4, 2, 0);
+  f.Write(sppu::regs::kWh0, 0);
+  f.Write(sppu::regs::kWh1, 66);
+  f.now = WindowFixture::kLine + (22U + 64U) * 4U;
+  WriteOamLowEntry(f.snes, 0, 64, 100, 1, 0, f.now);
+  f.Render();
+  REQUIRE(f.Pixel(65) == 1);
+  REQUIRE(f.Pixel(67) == 15);
 }

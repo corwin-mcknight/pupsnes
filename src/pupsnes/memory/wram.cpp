@@ -6,6 +6,26 @@ namespace pupsnes {
 
 WRAM::WRAM(SNES& snes) : Device(snes) {}
 
+MmioReadResult WRAM::ReadPort(uint16_t reg) {
+  if (reg != kPortBase) return {0, 0};  // Address registers are write-only.
+  const uint8_t data = bytes_[port_address_];
+  port_address_ = (port_address_ + 1U) & 0x1FFFFU;
+  return {data, 0xFFU};
+}
+
+void WRAM::WritePort(uint16_t reg, uint8_t data) {
+  switch (reg) {
+    case 0x2180:
+      bytes_[port_address_] = data;
+      port_address_ = (port_address_ + 1U) & 0x1FFFFU;
+      break;
+    case 0x2181: port_address_ = (port_address_ & 0x1FF00U) | data; break;
+    case 0x2182: port_address_ = (port_address_ & 0x100FFU) | (static_cast<uint32_t>(data) << 8U); break;
+    case 0x2183: port_address_ = (port_address_ & 0x0FFFFU) | ((static_cast<uint32_t>(data) & 1U) << 16U); break;
+    default: break;
+  }
+}
+
 void WRAM::MapSystemBus(SystemBus& bus) {
   uint8_t* const base = bytes_.data();
   for (uint16_t page = 0x00; page <= 0xFF; ++page) {

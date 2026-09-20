@@ -30,7 +30,7 @@ bool RenderAudioMenu(AudioOutput& audio, AudioPanelState& panel) {
   return changed;
 }
 
-bool RenderAudioPanel(AudioOutput& audio, SNES& snes, AudioPanelState& panel, bool running, float speed_multiplier) {
+bool RenderAudioPanel(AudioOutput& audio, SNES& snes, AudioPanelState& panel, float speed_multiplier) {
   if (!panel.show) return false;
   ImGui::SetNextWindowSize(ImVec2(440.0F, 0.0F), ImGuiCond_FirstUseEver);
   if (!ImGui::Begin("Audio", &panel.show, ImGuiWindowFlags_AlwaysAutoResize)) {
@@ -99,32 +99,47 @@ bool RenderAudioPanel(AudioOutput& audio, SNES& snes, AudioPanelState& panel, bo
   ImGui::TextDisabled("Increase latency if sound breaks up.");
 
   ImGui::Separator();
-  constexpr std::array<const char*, 2> kQualityLabels = {"Linear", "Gaussian (SNES)"};
+  bool backend_changed = false;
+  ImGui::SetNextItemWidth(220.0F);
+  if (ImGui::BeginCombo("DSP implementation", SdspBackendName(snes.GetSdspBackendPending()))) {
+    for (const auto backend : {SdspBackend::kStub, SdspBackend::kThirdParty, SdspBackend::kNative}) {
+      if (ImGui::Selectable(SdspBackendName(backend), backend == snes.GetSdspBackendPending())) {
+        snes.SetSdspBackendPending(backend);
+        backend_changed = true;
+      }
+    }
+    ImGui::EndCombo();
+  }
+  constexpr std::array<const char*, 2> kQualityLabels = {"Simple (linear)", "Gaussian (SNES)"};
   int pending_mode = static_cast<int>(snes.GetSdspModePending());
+  ImGui::BeginDisabled(snes.GetSdspBackendPending() != SdspBackend::kThirdParty);
   ImGui::SetNextItemWidth(220.0F);
   const bool quality_changed = ImGui::Combo("Sound interpolation", &pending_mode, kQualityLabels.data(),
                                             static_cast<int>(kQualityLabels.size()));
   if (quality_changed) snes.SetSdspModePending(static_cast<SdspMode>(pending_mode));
-  if (snes.GetSdspModePending() != snes.GetSdspModeLive()) ImGui::TextDisabled("Reset the game to apply this change.");
+  ImGui::EndDisabled();
+  if (snes.GetSdspModePending() != snes.GetSdspModeLive() ||
+      snes.GetSdspBackendPending() != snes.GetSdspBackendLive()) {
+    ImGui::TextDisabled("Reset the game or restart the track to apply.");
+  }
 
   if (changed) (void)audio.ApplySettings(settings);
-  ImGui::Separator();
   if (!audio.GetError().empty()) {
+    ImGui::Separator();
     ImGui::TextWrapped("Audio output unavailable: %s", audio.GetError().c_str());
     ImGui::TextDisabled("Choose a device or retry. Emulation can continue.");
   } else if (!settings.enabled) {
+    ImGui::Separator();
     ImGui::TextDisabled("Output disabled.");
   } else if (settings.muted || settings.volume == 0.0F) {
+    ImGui::Separator();
     ImGui::TextDisabled("Muted.");
   } else if (!CanPlayAudio(true, speed_multiplier)) {
+    ImGui::Separator();
     ImGui::TextDisabled("Audio is muted at speeds other than 100%%.");
-  } else if (!running) {
-    ImGui::TextDisabled("Audio resumes when the game runs. Stepping is silent.");
-  } else if (audio.IsOpen()) {
-    ImGui::TextDisabled("Audio output active.");
   }
   ImGui::End();
-  return changed || quality_changed;
+  return changed || quality_changed || backend_changed;
 }
 
 }  // namespace pupsnes::frontend

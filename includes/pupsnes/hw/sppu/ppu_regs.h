@@ -43,6 +43,13 @@ inline constexpr uint8_t kBgmodeBg2TileSizeMask = 0x20;
 inline constexpr uint8_t kBgmodeBg3TileSizeMask = 0x40;
 inline constexpr uint8_t kBgmodeBg4TileSizeMask = 0x80;
 
+// $2106 MOSAIC — block size and per-BG enable. Size field N produces
+// (N + 1) × (N + 1) blocks; bits 0..3 enable BG1..BG4 respectively.
+inline constexpr uint16_t kMosaic = 0x2106;
+inline constexpr uint8_t kMosaicSizeMask = 0xF0;
+inline constexpr uint8_t kMosaicSizeShift = 4;
+inline constexpr uint8_t kMosaicBgEnableMask = 0x0F;
+
 // $2107..$210A BGxSC — tilemap base address + multi-screen layout.
 //   bits 7:2 = SC base address (in 1K-word / 2K-byte steps).
 //   bits 1:0 = SC size: 0=32x32, 1=64x32, 2=32x64, 3=64x64.
@@ -105,6 +112,21 @@ inline constexpr uint8_t kObjAttrVflipMask = 0x80;
 // byte holds 2-bit (X-high, size) pairs for four OBJs (4 OBJs × 2 bits = 1 byte).
 inline constexpr uint16_t kOamHighTableBase = 0x200;
 
+// Window selection: each layer uses a nibble (invert1, enable1, invert2,
+// enable2). Bounds are inclusive screen X coordinates. Logic: OR/AND/XOR/XNOR.
+inline constexpr uint16_t kW12Sel = 0x2123;
+inline constexpr uint16_t kW34Sel = 0x2124;
+inline constexpr uint16_t kWObjSel = 0x2125;
+inline constexpr uint16_t kWh0 = 0x2126;
+inline constexpr uint16_t kWh1 = 0x2127;
+inline constexpr uint16_t kWh2 = 0x2128;
+inline constexpr uint16_t kWh3 = 0x2129;
+inline constexpr uint16_t kWBgLog = 0x212A;
+inline constexpr uint16_t kWObjLog = 0x212B;
+inline constexpr uint16_t kTmw = 0x212E;
+inline constexpr uint16_t kTsw = 0x212F;
+inline constexpr uint8_t kColorWindowMask = 0x20;
+
 // $212C TM — main-screen layer enable mask.
 // $212D TS — sub-screen layer enable mask. Same bit layout as TM; the layer
 // resolves via the same priority ladder but only the bits set here count.
@@ -121,11 +143,10 @@ inline constexpr uint8_t kTmObjMask = 0x10;
 //   bit 1   = Sub-screen BG/OBJ Enable. 0=sub-screen is COLDATA only,
 //             1=sub-screen also renders BG/OBJ from TS, falling back to
 //             COLDATA where transparent.
-//   bits 5:4 = Color Math Enable region (0=always, 1=math-window,
-//             2=outside math-window, 3=never). Math windows are out of scope
-//             in v1; bits 1/2 are treated as "always" with a TODO.
-//   bits 7:6 = Force Main-Screen Black region (same encoding). Treated as
-//             "never force" (mode 0) in v1.
+//   bits 5:4 = Math region (0=always, 1=inside color window,
+//             2=outside color window, 3=never).
+//   bits 7:6 = Main color visibility (same encoding); elsewhere it is
+//             clipped to black before math, retaining the winning layer.
 inline constexpr uint16_t kCgwsel = 0x2130;
 inline constexpr uint8_t kCgwselDirectColorMask = 0x01;
 inline constexpr uint8_t kCgwselSubScreenEnableMask = 0x02;
@@ -138,7 +159,7 @@ inline constexpr uint8_t kCgwselForceMainBlackRegionShift = 6;
 //   bits 0..3 = per-BG enable (BG1, BG2, BG3, BG4)
 //   bit  4    = OBJ enable; only OBJ palettes 4..7 participate
 //   bit  5    = backdrop enable
-//   bit  6    = half-color math (1=halve final result per channel)
+//   bit  6    = half-color math (subject to clipping and sub-screen backdrop gates)
 //   bit  7    = 0=add main+sub, 1=subtract main-sub
 inline constexpr uint16_t kCgadsub = 0x2131;
 inline constexpr uint8_t kCgadsubBg1Mask = 0x01;

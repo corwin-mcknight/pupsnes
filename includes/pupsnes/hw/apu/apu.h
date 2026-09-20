@@ -12,6 +12,7 @@
 #include "pupsnes/hw/apu/spc700.h"
 
 namespace pupsnes {
+struct SpcFile;
 
 // S-SMP with all SPC700 opcodes, three timers, and the S-DSP register interface.
 // Non-default TEST modes stop with a diagnostic.
@@ -38,7 +39,12 @@ class Apu final : public Device, public Spc700Bus {
 
   explicit Apu(SNES& snes);
   [[nodiscard]] const char* DeviceName() const override { return "APU (SPC700)"; }
-  void Reset(SdspMode mode = SdspMode::kAccurate);
+  void Reset(SdspMode mode = SdspMode::kAccurate, SdspBackend backend = SdspBackend::kThirdParty);
+  // Starts a portable SPC snapshot at time zero. Advance only this APU with
+  // CatchUpTo for standalone playback; the main CPU/PPU must remain idle.
+  // Writable echo history is cleared to prevent stale snapshot audio at start.
+  void LoadSpc(const SpcFile& file, SdspMode mode = SdspMode::kAccurate,
+               SdspBackend backend = SdspBackend::kThirdParty);
   void CatchUpTo(TimeMasterT target) override;
   [[nodiscard]] MmioReadResult ReadRegister(uint32_t offset, TimeMasterT current_time) override;
   void WriteRegister(uint32_t offset, uint8_t data, TimeMasterT current_time) override;

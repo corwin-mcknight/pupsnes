@@ -520,8 +520,9 @@ void DebuggerApp::RenderMenuBar() {
         ClearSram();
       }
       if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Clear cartridge saves and reset the SNES.\n"
-                          "Updates the .srm file immediately when Persist SRAM is enabled.");
+        ImGui::SetTooltip(
+            "Clear cartridge saves and reset the SNES.\n"
+            "Updates the .srm file immediately when Persist SRAM is enabled.");
       }
       ImGui::Separator();
       if (ImGui::MenuItem("Exit")) {
@@ -768,6 +769,8 @@ void DebuggerApp::LoadAppConfig() {
       if (const auto parsed = frontend::ParseFiniteSetting(value, 0.001F, 10.0F)) ui_state_.speed_multiplier = *parsed;
     } else if (key == "sdsp_mode") {
       if (const auto parsed = frontend::ParseSoundQuality(value)) snes_.SetSdspModePending(*parsed);
+    } else if (key == "sdsp_backend") {
+      if (const auto parsed = frontend::ParseSdspBackend(value)) snes_.SetSdspBackendPending(*parsed);
     }
   }
   (void)audio_output_.ApplySettings(audio_settings);
@@ -788,6 +791,7 @@ void DebuggerApp::SaveAppConfig() {
   }
   stream << "speed_multiplier=" << ui_state_.speed_multiplier << "\n";
   stream << "sdsp_mode=" << static_cast<int>(snes_.GetSdspModePending()) << "\n";
+  stream << "sdsp_backend=" << frontend::SdspBackendSetting(snes_.GetSdspBackendPending()) << "\n";
   frontend::WriteAudioSettings(stream, audio_output_.GetSettings());
 }
 
@@ -844,9 +848,7 @@ void DebuggerApp::Render() {
   ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport());
 
   RenderControlsPanel(*this);
-  const bool audio_running = loaded_rom_ && run_control_.GetState() == RunState::kRunUntilBreak &&
-                             !fatal_error_.has_value() && !snes_.GetCpu().GetFault().has_value();
-  if (frontend::RenderAudioPanel(audio_output_, snes_, audio_panel_, audio_running, ui_state_.speed_multiplier)) {
+  if (frontend::RenderAudioPanel(audio_output_, snes_, audio_panel_, ui_state_.speed_multiplier)) {
     SaveAppConfig();
   }
   RenderRegistersPanel(*this);

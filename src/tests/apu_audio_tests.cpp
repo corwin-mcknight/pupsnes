@@ -40,9 +40,11 @@ struct AudioSnapshot {
   std::array<uint64_t, 8> spc{};
 };
 
-AudioSnapshot Capture(std::span<const uint8_t> rom, SdspMode mode, std::span<const TimeMasterT> slices) {
+AudioSnapshot Capture(std::span<const uint8_t> rom, SdspMode mode, std::span<const TimeMasterT> slices,
+                      pupsnes::SdspBackend backend = pupsnes::SdspBackend::kThirdParty) {
   SNES snes;
   snes.SetSdspModePending(mode);
+  snes.SetSdspBackendPending(backend);
   REQUIRE(snes.LoadRom(rom).ok);
   snes.Reset();
   AudioSnapshot snapshot;
@@ -144,6 +146,23 @@ TEST_CASE("A real IPL upload plays a periodic BRR tone through the SNES audio ca
     REQUIRE(stereo_differs);
     REQUIRE((captured.dsp[0x7C] & 1U) != 0);  // The looping BRR end flag reached ENDX.
     REQUIRE(captured.dsp[0x08] == 0x7F);      // Direct GAIN is visible in ENVX.
+  }
+}
+
+TEST_CASE("Stub and native execute the real IPL upload and command reply with deterministic silence",
+          "[integration][rom][apu][audio][backend]") {
+  const auto rom = AudioRom();
+  for (const auto backend : {pupsnes::SdspBackend::kStub, pupsnes::SdspBackend::kNative}) {
+    CAPTURE(backend);
+    const auto expected = Capture(rom, SdspMode::kAccurate, std::array<TimeMasterT, 1>{kBudget}, backend);
+    REQUIRE_FALSE(expected.pcm.empty());
+    REQUIRE(std::ranges::all_of(expected.pcm, [](Sample sample) { return sample == Sample{}; }));
+    const std::array<TimeMasterT, 5> slices = {1, 19, 4079, 47, 127};
+    const auto actual = Capture(rom, SdspMode::kSimple, slices, backend);
+    REQUIRE(actual.pcm == expected.pcm);
+    REQUIRE(actual.ram == expected.ram);
+    REQUIRE(actual.dsp == expected.dsp);
+    REQUIRE(actual.spc == expected.spc);
   }
 }
 

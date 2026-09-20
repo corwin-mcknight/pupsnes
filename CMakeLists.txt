@@ -17,8 +17,11 @@ set(PUPSNES_LIB_SOURCES
   src/pupsnes/hw/apu/accurate_sdsp.cpp
   src/pupsnes/hw/apu/apu.cpp
   src/pupsnes/hw/apu/spc700.cpp
+  src/pupsnes/hw/apu/spc_file.cpp
   src/pupsnes/hw/apu/simple_sdsp.cpp
   src/pupsnes/hw/apu/sdsp.cpp
+  src/pupsnes/hw/apu/stub_sdsp.cpp
+  src/pupsnes/hw/apu/third_party_sdsp.cpp
   src/pupsnes/hw/input/joypad.cpp
   src/pupsnes/hw/rom/cart_profile.cpp
   src/pupsnes/hw/rom/cart_registry.cpp
@@ -115,6 +118,7 @@ set(PUPSNES_TEST_SOURCES
   src/tests/token_tests.cpp
   src/tests/mem_tests.cpp
   src/tests/systembus_tests.cpp
+  src/tests/wram_port_tests.cpp
   src/tests/breakpoints_tests.cpp
   src/tests/bus_event_log_tests.cpp
   src/tests/emu_event_tests.cpp
@@ -141,11 +145,13 @@ set(PUPSNES_TEST_SOURCES
   src/tests/apu_tests.cpp
   src/tests/apu_timer_tests.cpp
   src/tests/sdsp_tests.cpp
+  src/tests/sdsp_backend_tests.cpp
   src/tests/sdsp_synthesis_tests.cpp
   src/tests/apu_audio_tests.cpp
   src/tests/audio_output_tests.cpp
   src/tests/audio_settings_tests.cpp
   src/tests/spc700_tests.cpp
+  src/tests/spc_file_tests.cpp
   src/tests/spc700_transfer_tests.cpp
   src/tests/spc700_arithmetic_tests.cpp
   src/tests/spc700_logic_tests.cpp
@@ -373,6 +379,7 @@ if(BUILD_TESTING)
     ${CMAKE_CURRENT_SOURCE_DIR}/testroms/fastrom_smoke/fastrom_smoke.s
     ${CMAKE_CURRENT_SOURCE_DIR}/testroms/ppu_blue_cgram/ppu_blue_cgram.s
     ${CMAKE_CURRENT_SOURCE_DIR}/testroms/ppu_mode7/ppu_mode7.s
+    ${CMAKE_CURRENT_SOURCE_DIR}/testroms/ppu_mosaic/ppu_mosaic.s
     ${CMAKE_CURRENT_SOURCE_DIR}/testroms/apu_upload/apu_upload.s
     ${CMAKE_CURRENT_SOURCE_DIR}/testroms/apu_transfers/apu_transfers.s
     ${CMAKE_CURRENT_SOURCE_DIR}/testroms/apu_arithmetic/apu_arithmetic.s

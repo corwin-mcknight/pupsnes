@@ -144,9 +144,15 @@ void RenderPeripheralsSection() {
 
 void RenderApuSection(DebuggerApp& app) {
   const auto& snes = app.GetSnes();
-  ImGui::TextDisabled("Sound interpolation: %s",
-                      snes.GetSdspModeLive() == SdspMode::kAccurate ? "Gaussian (SNES)" : "Linear");
-  if (snes.GetSdspModePending() != snes.GetSdspModeLive()) ImGui::TextDisabled("Sound change pending reset.");
+  ImGui::TextDisabled("DSP implementation: %s", SdspBackendName(snes.GetSdspBackendLive()));
+  if (snes.GetSdspBackendLive() == SdspBackend::kThirdParty) {
+    ImGui::TextDisabled("Sound interpolation: %s",
+                        snes.GetSdspModeLive() == SdspMode::kAccurate ? "Gaussian (SNES)" : "Simple (linear)");
+  }
+  if (snes.GetSdspModePending() != snes.GetSdspModeLive() ||
+      snes.GetSdspBackendPending() != snes.GetSdspBackendLive()) {
+    ImGui::TextDisabled("Sound change pending reset.");
+  }
   if (ImGui::Button("Audio settings...")) app.OpenAudioSettings();
 }
 

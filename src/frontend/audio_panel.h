@@ -43,6 +43,22 @@ inline std::optional<SdspMode> ParseSoundQuality(std::string_view value) {
   return std::nullopt;
 }
 
+inline std::optional<SdspBackend> ParseSdspBackend(std::string_view value) {
+  if (value == "stub") return SdspBackend::kStub;
+  if (value == "third-party") return SdspBackend::kThirdParty;
+  if (value == "native") return SdspBackend::kNative;
+  return std::nullopt;
+}
+
+inline std::string_view SdspBackendSetting(SdspBackend backend) {
+  switch (backend) {
+    case SdspBackend::kStub: return "stub";
+    case SdspBackend::kThirdParty: return "third-party";
+    case SdspBackend::kNative: return "native";
+  }
+  return "third-party";
+}
+
 inline bool ParseAudioSetting(AudioSettings& settings, std::string_view key, std::string_view value) {
   if (key == "audio_enabled" || key == "audio_muted") {
     if (value == "0" || value == "1") {
@@ -84,6 +100,6 @@ struct AudioPanelState {
 // Return true when persistent preferences (including pending sound quality)
 // change. The owning frontend writes its existing config file.
 bool RenderAudioMenu(AudioOutput& audio, AudioPanelState& panel);
-bool RenderAudioPanel(AudioOutput& audio, SNES& snes, AudioPanelState& panel, bool running, float speed_multiplier);
+bool RenderAudioPanel(AudioOutput& audio, SNES& snes, AudioPanelState& panel, float speed_multiplier);
 
 }  // namespace pupsnes::frontend

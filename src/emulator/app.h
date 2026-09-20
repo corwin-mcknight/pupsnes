@@ -9,6 +9,7 @@
 #include "frontend/audio_panel.h"
 #include "pupsnes/core/snes.h"
 #include "pupsnes/core/types.h"
+#include "pupsnes/hw/apu/spc_file.h"
 
 struct GLFWwindow;
 
@@ -54,6 +55,8 @@ class EmulatorApp {
   void ShutdownWindow();
   bool LoadRomFromPath(const std::string& path);
   void ResetMachine();
+  void TogglePlayback();
+  void SeekSpc(uint64_t frame);
   void TickEmulation();
   void UpdateAudioPlayback();
   void StopAudio();
@@ -65,6 +68,7 @@ class EmulatorApp {
   void Render();
   void RenderMenuBar();
   void RenderBackgroundFrame();
+  void RenderSpcPlayer();
   void RenderLoadRomDialog();
   void RenderFatalModal();
   void UploadFrontBufferToTexture();
@@ -81,6 +85,10 @@ class EmulatorApp {
   frontend::AudioOutput audio_output_;
   frontend::AudioPanelState audio_panel_;
   bool loaded_rom_ = false;
+  std::optional<SpcFile> loaded_spc_;
+  std::optional<TimeMasterT> spc_seek_target_;
+  double spc_seek_preview_ = 0.0;
+  bool spc_seek_dragging_ = false;
   std::string loaded_rom_path_;
   // ROM path with extension replaced by ".srm". Empty when no ROM is loaded
   // or the cart declares no SRAM. Cached at load time so that FlushSramToDisk

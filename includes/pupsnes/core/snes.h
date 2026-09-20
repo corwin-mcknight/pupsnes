@@ -13,6 +13,7 @@
 
 namespace pupsnes {
 class Apu;
+struct SpcFile;
 class CPU;
 class Cartridge;
 class CpuMmio;
@@ -77,6 +78,9 @@ class SNES {
   [[nodiscard]] CartridgeRegistry& Registry() { return registry_; }
   [[nodiscard]] const CartridgeRegistry& Registry() const { return registry_; }
   void Reset();
+  // Prepare standalone music without resetting or accessing the main CPU bus.
+  // The caller advances only the APU until a ROM is loaded/reset again.
+  void LoadSpc(const SpcFile& file);
 
   [[nodiscard]] TimeMasterT GetMasterTime() const { return time_now_; }
   void SetMasterTime(TimeMasterT t) { time_now_ = t; }
@@ -149,12 +153,17 @@ class SNES {
   [[nodiscard]] SdspMode GetSdspModePending() const { return sdsp_mode_pending_; }
   [[nodiscard]] SdspMode GetSdspModeLive() const { return sdsp_mode_live_; }
   void SetSdspModePending(SdspMode mode) { sdsp_mode_pending_ = mode; }
+  [[nodiscard]] SdspBackend GetSdspBackendPending() const { return sdsp_backend_pending_; }
+  [[nodiscard]] SdspBackend GetSdspBackendLive() const { return sdsp_backend_live_; }
+  void SetSdspBackendPending(SdspBackend backend) { sdsp_backend_pending_ = backend; }
 
  private:
   CartridgeRegistry registry_;
   EmuEventSink* emu_event_sink_ = nullptr;
   SdspMode sdsp_mode_pending_ = SdspMode::kAccurate;
   SdspMode sdsp_mode_live_ = SdspMode::kAccurate;
+  SdspBackend sdsp_backend_pending_ = SdspBackend::kThirdParty;
+  SdspBackend sdsp_backend_live_ = SdspBackend::kThirdParty;
   bool destroying_ = false;
 };
 }  // namespace pupsnes

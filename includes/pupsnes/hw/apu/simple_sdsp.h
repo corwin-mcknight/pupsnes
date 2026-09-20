@@ -4,14 +4,14 @@
 #include <cstdint>
 #include <string_view>
 
-#include "pupsnes/hw/apu/sdsp.h"
+#include "pupsnes/hw/apu/third_party_sdsp.h"
 
 namespace pupsnes {
 
 // Approximate interpolation with the complete shared DSP pipeline: eight
 // BRR voices, ADSR/GAIN, noise, pitch modulation, echo/FIR, and KON/KOFF timing.
 // Linear interpolation replaces the hardware Gaussian filter.
-class SimpleSdsp final : public Sdsp {
+class SimpleSdsp final : public ThirdPartySdsp {
  public:
   SimpleSdsp(uint8_t* aram, std::size_t aram_size);
   ~SimpleSdsp() override = default;

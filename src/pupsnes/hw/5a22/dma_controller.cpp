@@ -40,6 +40,23 @@ constexpr std::array<ModePattern, 8> kModePatterns = {{
 
 DmaController::DmaController(SNES& snes) : Device(snes) {}
 
+void DmaController::TransferByte(uint32_t a_addr, uint32_t b_addr, bool b_to_a, TimeMasterT t) {
+  // The WRAM chip cannot serve both buses at once. This also applies to
+  // its low-bank mirrors; blocked transfers must not advance WMADD.
+  const bool a_is_wram = (a_addr & 0xFE0000U) == 0x7E0000U || (a_addr & 0x40E000U) == 0;
+  const bool wram_conflict = a_is_wram && b_addr >= 0x2180U && b_addr <= 0x2183U;
+  auto& bus = *snes_->system_bus;
+  uint8_t data = bus.GetDataBusValue();
+  if (!b_to_a || !wram_conflict) {
+    const auto plan = bus.Plan(b_to_a ? b_addr : a_addr, BusAccessType::kRead);
+    data = bus.Follow(plan, t, GetDeviceId()).data;
+  }
+  if (b_to_a || !wram_conflict) {
+    const auto plan = bus.Plan(b_to_a ? a_addr : b_addr, BusAccessType::kWrite, data);
+    (void)bus.Follow(plan, t + 4U, GetDeviceId());
+  }
+}
+
 void DmaController::MapSystemBus(SystemBus& bus) {
   // Page $43 covers $4300-$43FF (8 channels x 16 bytes). Mirrored across the
   // standard MMIO bank set (banks $00-$3F and $80-$BF). Part of the
@@ -241,10 +258,7 @@ TimeMasterT DmaController::HdmaRunChannelLine(uint8_t ch, TimeMasterT t) {
       }
       const uint32_t dst_addr = 0x2100U | static_cast<uint32_t>(static_cast<uint8_t>(s.bbad + pat.offsets[i]));
 
-      auto rplan = snes_->system_bus->Plan(src_addr, BusAccessType::kRead);
-      const uint8_t value = snes_->system_bus->Follow(rplan, t, GetDeviceId()).data;
-      auto wplan = snes_->system_bus->Plan(dst_addr, BusAccessType::kWrite, value);
-      (void)snes_->system_bus->Follow(wplan, t + 4U, GetDeviceId());
+      TransferByte(src_addr, dst_addr, false, t);
       t += 8U;
 
       if (indirect) {
@@ -368,19 +382,7 @@ TimeMasterT DmaController::Trigger(uint8_t channels_mask, TimeMasterT start_time
       const uint32_t a_addr = (static_cast<uint32_t>(s.a1b) << 16U) | static_cast<uint32_t>(s.a1t);
       const uint32_t b_addr = static_cast<uint32_t>(0x2100U | static_cast<uint8_t>(s.bbad + pat.offsets[pat_index]));
 
-      if (b_to_a) {
-        // B-bus -> A-bus: read from $00:21bb, write to A-bus addr.
-        auto rplan = snes_->system_bus->Plan(b_addr, BusAccessType::kRead);
-        const auto rresult = snes_->system_bus->Follow(rplan, t, GetDeviceId());
-        auto wplan = snes_->system_bus->Plan(a_addr, BusAccessType::kWrite, rresult.data);
-        (void)snes_->system_bus->Follow(wplan, t + 4U, GetDeviceId());
-      } else {
-        // A-bus -> B-bus.
-        auto rplan = snes_->system_bus->Plan(a_addr, BusAccessType::kRead);
-        const auto rresult = snes_->system_bus->Follow(rplan, t, GetDeviceId());
-        auto wplan = snes_->system_bus->Plan(b_addr, BusAccessType::kWrite, rresult.data);
-        (void)snes_->system_bus->Follow(wplan, t + 4U, GetDeviceId());
-      }
+      TransferByte(a_addr, b_addr, b_to_a, t);
 
       t += 8U;                                                                  // 8 master cycles per byte.
       s.a1t = static_cast<uint16_t>(static_cast<int32_t>(s.a1t) + step_delta);  // wraps within bank.

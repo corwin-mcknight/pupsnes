@@ -102,10 +102,18 @@ pupsnes::BuildResult pupsnes::SNES::LoadRom(std::span<const uint8_t> rom_data) {
   return LoadRomWithProfile(detection.profile, rom_data);
 }
 
+void pupsnes::SNES::LoadSpc(const SpcFile& file) {
+  sdsp_mode_live_ = sdsp_mode_pending_;
+  sdsp_backend_live_ = sdsp_backend_pending_;
+  apu->LoadSpc(file, sdsp_mode_live_, sdsp_backend_live_);
+  time_now_ = 0;
+}
+
 void pupsnes::SNES::Reset() {
   // Construct the requested DSP backend on reset; pending UI changes do not
   // replace an active backend or discard its register state mid-run.
   sdsp_mode_live_ = sdsp_mode_pending_;
+  sdsp_backend_live_ = sdsp_backend_pending_;
   time_now_ = 0;
   scheduler->Reset();
   for (Device* device : devices_) {
@@ -114,8 +122,9 @@ void pupsnes::SNES::Reset() {
     }
   }
   cpu_mmio->Reset();
+  wram->ResetPort();
   dma->Reset();
-  apu->Reset(sdsp_mode_live_);
+  apu->Reset(sdsp_mode_live_, sdsp_backend_live_);
   joypad->Reset();
   // Reset the PPU before the CPU: the CPU's reset vector fetch may pass
   // through page $21 (cartridge DBs), and the PPU needs its shadow / decoded

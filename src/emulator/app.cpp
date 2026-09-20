@@ -14,6 +14,7 @@
 #include <cstdlib>
 #include <exception>
 #include <filesystem>
+#include <format>
 #include <fstream>
 #include <iterator>
 #include <string>
@@ -26,6 +27,7 @@
 #include "imgui_impl_opengl3.h"
 #include "pupsnes/core/scheduler.h"
 #include "pupsnes/hw/5a22/cpu.h"
+#include "pupsnes/hw/apu/apu.h"
 #include "pupsnes/hw/input/joypad.h"
 #include "pupsnes/hw/rom/cartridge.h"
 #include "pupsnes/hw/rom/rom_format.h"
@@ -102,7 +104,15 @@ int EmulatorApp::Run(const std::optional<std::string>& initial_rom_path) {
 
   InitFileShortcuts();
   LoadConfig();
-  snes_.SetAudioSampleCallback([this](int16_t left, int16_t right) { audio_output_.PushSample(left, right); });
+  snes_.SetAudioSampleCallback([this](int16_t left, int16_t right) {
+    if (spc_seek_target_) return;
+    if (loaded_spc_) {
+      const auto frame = snes_.GetApu().GetDspSampleCount() - 1;
+      left = loaded_spc_->FadeSample(left, frame);
+      right = loaded_spc_->FadeSample(right, frame);
+    }
+    audio_output_.PushSample(left, right);
+  });
 
   if (initial_rom_path.has_value()) {
     (void)LoadRomFromPath(*initial_rom_path);
@@ -130,34 +140,48 @@ bool EmulatorApp::LoadRomFromPath(const std::string& path) {
 
   std::ifstream stream(path, std::ios::binary);
   if (!stream.good()) {
-    ui_state_.load_rom_error = "Unable to open ROM: " + path;
+    ui_state_.load_rom_error = "Unable to open file: " + path;
     return false;
   }
 
   std::vector<uint8_t> rom((std::istreambuf_iterator<char>(stream)), std::istreambuf_iterator<char>());
-  StripSmcCopierHeader(rom);
 
   // Flush the outgoing cart's SRAM before we tear it down. Skipped when no
   // ROM is loaded yet — FlushSramToDisk is a no-op in that case.
   FlushSramToDisk();
 
   try {
-    const BuildResult load_result = snes_.LoadRom(rom);
-    if (!load_result.ok) {
-      ui_state_.load_rom_error = path + ": " + load_result.message;
-      return false;
+    std::string extension = fs::path(path).extension().string();
+    for (char& c : extension) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    std::optional<SpcFile> spc;
+    if (extension == ".spc") {
+      spc = SpcFile::Parse(rom);
+    } else {
+      StripSmcCopierHeader(rom);
+      const BuildResult load_result = snes_.LoadRom(rom);
+      if (!load_result.ok) {
+        ui_state_.load_rom_error = path + ": " + load_result.message;
+        return false;
+      }
     }
-    snes_.Reset();
+    if (spc) {
+      snes_.LoadSpc(*spc);
+    } else {
+      snes_.Reset();
+    }
+    spc_seek_target_.reset();
+    spc_seek_dragging_ = false;
+    loaded_spc_ = std::move(spc);
     fatal_error_.reset();
     loaded_rom_ = true;
     loaded_rom_path_ = path;
-    loaded_rom_save_path_ = DeriveSavePath(path);
+    loaded_rom_save_path_ = loaded_spc_ ? std::string{} : DeriveSavePath(path);
 
     // Load the .srm next to the ROM if it exists and the cart actually has
     // SRAM. A missing file is normal (new game, first run) — leave SRAM as
     // the 0xFF-initialised default.
     Cartridge& cart = snes_.GetCartridge();
-    if (cart.SramSize() > 0U) {
+    if (!loaded_spc_ && cart.SramSize() > 0U) {
       std::ifstream save_stream(loaded_rom_save_path_, std::ios::binary);
       if (save_stream.good()) {
         std::vector<uint8_t> save_data((std::istreambuf_iterator<char>(save_stream)), std::istreambuf_iterator<char>());
@@ -166,6 +190,8 @@ bool EmulatorApp::LoadRomFromPath(const std::string& path) {
     }
 
     ui_state_.paused = false;
+    if (loaded_spc_) ui_state_.speed_multiplier = 1.0F;
+    perf_last_time_ = 0.0;
     std::error_code abs_ec;
     const fs::path absolute = fs::weakly_canonical(fs::path(path), abs_ec);
     ui_state_.last_rom_path = abs_ec ? path : absolute.string();
@@ -209,13 +235,46 @@ void EmulatorApp::ResetMachine() {
     return;
   }
   StopAudio();
-  snes_.Reset();
+  spc_seek_target_.reset();
+  spc_seek_dragging_ = false;
+  if (loaded_spc_) {
+    snes_.LoadSpc(*loaded_spc_);
+  } else {
+    snes_.Reset();
+  }
+  perf_last_time_ = 0.0;
   fatal_error_.reset();
   last_tick_time_ = std::chrono::steady_clock::now();
 }
 
+void EmulatorApp::TogglePlayback() {
+  if (loaded_spc_ && loaded_spc_->Finished(snes_.GetApu().GetDspSampleCount())) {
+    ResetMachine();
+    ui_state_.paused = false;
+  } else {
+    ui_state_.paused = !ui_state_.paused;
+  }
+  last_tick_time_ = std::chrono::steady_clock::now();
+}
+
+void EmulatorApp::SeekSpc(uint64_t frame) {
+  if (!loaded_spc_) return;
+  if (const auto end = loaded_spc_->EndFrame()) frame = std::min(frame, *end);
+  StopAudio();
+  const auto target = (frame * 32 * Apu::kClockDenominator + Apu::kClockNumerator - 1) / Apu::kClockNumerator;
+  if (target < snes_.GetMasterTime()) {
+    // Reconstruct all CPU, timer, and DSP state by replaying the snapshot.
+    // Keep the live interpolation mode; seeking is not a settings reset.
+    snes_.GetApu().LoadSpc(*loaded_spc_, snes_.GetSdspModeLive(), snes_.GetSdspBackendLive());
+    snes_.SetMasterTime(0);
+  }
+  spc_seek_target_ = target;
+  perf_last_time_ = 0.0;
+  last_tick_time_ = std::chrono::steady_clock::now();
+}
+
 void EmulatorApp::PollControllerInput() {
-  if (!loaded_rom_) {
+  if (!loaded_rom_ || loaded_spc_) {
     return;
   }
   const ImGuiIO& io = ImGui::GetIO();
@@ -235,6 +294,29 @@ void EmulatorApp::TickEmulation() {
   }
 
   const auto now = std::chrono::steady_clock::now();
+  if (spc_seek_target_) {
+    // Replay in short slices so long seeks do not block input or rendering.
+    const auto deadline = now + std::chrono::milliseconds(5);
+    try {
+      do {
+        const auto target = std::min(*spc_seek_target_, snes_.GetMasterTime() + kMasterClockHz / 100);
+        snes_.GetApu().CatchUpTo(target);
+        snes_.SetMasterTime(target);
+      } while (snes_.GetMasterTime() < *spc_seek_target_ && std::chrono::steady_clock::now() < deadline);
+      if (snes_.GetMasterTime() == *spc_seek_target_) spc_seek_target_.reset();
+    } catch (const std::exception& ex) {
+      spc_seek_target_.reset();
+      fatal_error_ = ex.what();
+    }
+    last_tick_time_ = std::chrono::steady_clock::now();
+    perf_last_time_ = 0.0;
+    UpdateAudioPlayback();
+    return;
+  }
+  if (spc_seek_dragging_) {
+    last_tick_time_ = now;
+    return;
+  }
   if (ui_state_.paused) {
     last_tick_time_ = now;
     return;
@@ -262,7 +344,16 @@ void EmulatorApp::TickEmulation() {
   int stuck_iterations = 0;
 
   try {
-    while (snes_.GetMasterTime() < cap_master) {
+    if (loaded_spc_) {
+      auto target = cap_master;
+      if (const auto end = loaded_spc_->EndFrame()) {
+        const auto end_time = (*end * 32 * Apu::kClockDenominator + Apu::kClockNumerator - 1) / Apu::kClockNumerator;
+        target = std::min(target, end_time);
+      }
+      snes_.GetApu().CatchUpTo(target);
+      snes_.SetMasterTime(target);
+    }
+    while (!loaded_spc_ && snes_.GetMasterTime() < cap_master) {
       TimeMasterT next_event = snes_.GetScheduler().NextEventMasterTime();
       TimeMasterT target = next_event;
       if (cap_master < target) {
@@ -297,8 +388,8 @@ void EmulatorApp::TickEmulation() {
 
 void EmulatorApp::UpdateAudioPlayback() {
   // A halted main CPU can leave the APU and DSP running normally.
-  const bool running =
-      loaded_rom_ && !ui_state_.paused && !fatal_error_.has_value() && !snes_.GetCpu().GetFault().has_value();
+  const bool running = loaded_rom_ && !ui_state_.paused && !fatal_error_.has_value() && !spc_seek_target_ &&
+                       !spc_seek_dragging_ && (loaded_spc_ || !snes_.GetCpu().GetFault().has_value());
   audio_output_.SetPlaybackActive(frontend::CanPlayAudio(running, ui_state_.speed_multiplier));
 }
 
@@ -408,19 +499,128 @@ void EmulatorApp::RenderBackgroundFrame() {
   dl->AddImage(static_cast<ImTextureID>(static_cast<intptr_t>(ppu_tex_id_)), dst_min, dst_max);
 }
 
+void EmulatorApp::RenderSpcPlayer() {
+  if (!loaded_spc_) return;
+  const auto* viewport = ImGui::GetMainViewport();
+  const ImVec2 center(viewport->WorkPos.x + viewport->WorkSize.x * 0.5F,
+                      viewport->WorkPos.y + viewport->WorkSize.y * 0.5F);
+  ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5F, 0.5F));
+  ImGui::SetNextWindowSize(ImVec2(420.0F, 0.0F), ImGuiCond_Always);
+  constexpr auto kFlags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+                          ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_AlwaysAutoResize;
+  if (ImGui::Begin("SPC Music", nullptr, kFlags)) {
+    const std::string title =
+        loaded_spc_->title.empty() ? std::filesystem::path(loaded_rom_path_).stem().string() : loaded_spc_->title;
+    const auto& album = loaded_spc_->album.empty() ? loaded_spc_->game : loaded_spc_->album;
+    if (!album.empty()) {
+      ImGui::SetWindowFontScale(1.5F);
+      ImGui::TextWrapped("%s", album.c_str());
+      ImGui::SetWindowFontScale(1.0F);
+      ImGui::Spacing();
+    }
+    ImGui::TextWrapped("%s", title.c_str());
+    const auto frames = snes_.GetApu().GetDspSampleCount();
+    const auto seconds = frames / 32000;
+    const bool finished = loaded_spc_->Finished(frames);
+    const auto status = std::format("{}:{:02}  |  {}", seconds / 60, seconds % 60,
+                                    spc_seek_target_   ? "Seeking..."
+                                    : finished         ? "Finished"
+                                    : ui_state_.paused ? "Paused"
+                                                       : "Playing");
+    ImGui::TextUnformatted(status.c_str());
+    ImGui::Spacing();
+    if (const auto end = loaded_spc_->EndFrame()) {
+      const auto total_seconds = (*end + 31999) / 32000;
+      if (!spc_seek_dragging_) {
+        spc_seek_preview_ = spc_seek_target_ ? static_cast<double>(*spc_seek_target_) / kMasterClockHz
+                                             : static_cast<double>(frames) / 32000.0;
+      }
+      const auto elapsed_seconds = finished && !spc_seek_dragging_ && !spc_seek_target_
+                                       ? total_seconds
+                                       : static_cast<uint64_t>(spc_seek_preview_);
+      const auto progress_label = std::format("{}:{:02} / {}:{:02}", elapsed_seconds / 60, elapsed_seconds % 60,
+                                              total_seconds / 60, total_seconds % 60);
+      const double minimum = 0.0;
+      const double maximum = static_cast<double>(*end) / 32000.0;
+      ImGui::SetNextItemWidth(-1.0F);
+      // An empty numeric format lets the time label be drawn over the slider.
+      const bool changed = ImGui::SliderScalar("##spc_position", ImGuiDataType_Double, &spc_seek_preview_, &minimum,
+                                               &maximum, "", ImGuiSliderFlags_AlwaysClamp | ImGuiSliderFlags_NoInput);
+      const auto slider_min = ImGui::GetItemRectMin();
+      const auto slider_max = ImGui::GetItemRectMax();
+      const auto label_size = ImGui::CalcTextSize(progress_label.c_str());
+      ImGui::GetWindowDrawList()->AddText(ImVec2((slider_min.x + slider_max.x - label_size.x) * 0.5F,
+                                                 (slider_min.y + slider_max.y - label_size.y) * 0.5F),
+                                          ImGui::GetColorU32(ImGuiCol_Text), progress_label.c_str());
+      if (ImGui::IsItemActivated()) StopAudio();
+      spc_seek_dragging_ = ImGui::IsItemActive();
+      if (ImGui::IsItemDeactivatedAfterEdit() || (changed && !spc_seek_dragging_)) {
+        SeekSpc(static_cast<uint64_t>(std::llround(spc_seek_preview_ * 32000.0)));
+      }
+      if (ImGui::IsItemHovered()) ImGui::SetTooltip("Drag to seek; release to play from that position.");
+    } else {
+      ImGui::ProgressBar(0.0F, ImVec2(-1.0F, 22.0F), "Track length unavailable");
+    }
+    ImGui::Spacing();
+    if (ImGui::Button(finished ? "Play again" : (ui_state_.paused ? "Resume" : "Pause"), ImVec2(120.0F, 30.0F))) {
+      TogglePlayback();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Restart", ImVec2(100.0F, 30.0F))) ResetMachine();
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    auto settings = audio_output_.GetSettings();
+    float volume_percent = settings.volume * 100.0F;
+    ImGui::SetNextItemWidth(-70.0F);
+    bool changed = ImGui::SliderFloat("Volume", &volume_percent, 0.0F, 100.0F, "%.0f%%", ImGuiSliderFlags_AlwaysClamp);
+    // Apply while dragging, but save preferences once the edit ends.
+    bool save = ImGui::IsItemDeactivatedAfterEdit();
+    if (changed) settings.volume = volume_percent / 100.0F;
+    if (ImGui::Checkbox("Mute", &settings.muted)) {
+      changed = true;
+      save = true;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Audio settings...")) audio_panel_.show = true;
+    if (!settings.enabled) {
+      ImGui::TextDisabled("Audio output is off.");
+      ImGui::SameLine();
+      if (ImGui::SmallButton("Enable sound")) {
+        settings.enabled = true;
+        changed = true;
+        save = true;
+      }
+    } else if (!audio_output_.GetError().empty()) {
+      ImGui::TextWrapped("Audio unavailable: %s", audio_output_.GetError().c_str());
+    } else if (!frontend::CanPlayAudio(true, ui_state_.speed_multiplier)) {
+      ImGui::TextDisabled("Audio is muted at this playback speed.");
+      if (ImGui::SmallButton("Return to 100% speed")) {
+        ui_state_.speed_multiplier = 1.0F;
+        save = true;
+      }
+    }
+    if (changed) (void)audio_output_.ApplySettings(settings);
+    if (save) SaveConfig();
+    ImGui::TextDisabled("Space to pause or resume");
+  }
+  ImGui::End();
+}
+
 void EmulatorApp::RenderMenuBar() {
   if (!ImGui::BeginMainMenuBar()) {
     return;
   }
   if (ImGui::BeginMenu("File")) {
-    if (ImGui::MenuItem("Load ROM...")) {
+    if (ImGui::MenuItem("Load ROM or SPC...")) {
       ui_state_.open_load_rom_dialog = true;
       ui_state_.load_rom_error.clear();
     }
     const bool has_last = !ui_state_.last_rom_path.empty();
     const std::string last_label =
-        has_last ? ("Load Last ROM (" + std::filesystem::path(ui_state_.last_rom_path).filename().string() + ")")
-                 : std::string("Load Last ROM");
+        has_last ? ("Load Last File (" + std::filesystem::path(ui_state_.last_rom_path).filename().string() + ")")
+                 : std::string("Load Last File");
     if (ImGui::MenuItem(last_label.c_str(), nullptr, false, has_last)) {
       if (!LoadRomFromPath(ui_state_.last_rom_path)) {
         ui_state_.open_load_rom_dialog = true;
@@ -436,10 +636,9 @@ void EmulatorApp::RenderMenuBar() {
   if (ImGui::BeginMenu("Emulation")) {
     const bool can_run = loaded_rom_;
     if (ImGui::MenuItem(ui_state_.paused ? "Resume" : "Pause", "Space", false, can_run)) {
-      ui_state_.paused = !ui_state_.paused;
-      last_tick_time_ = std::chrono::steady_clock::now();
+      TogglePlayback();
     }
-    if (ImGui::MenuItem("Reset", nullptr, false, can_run)) {
+    if (ImGui::MenuItem(loaded_spc_ ? "Restart track" : "Reset", nullptr, false, can_run)) {
       ResetMachine();
     }
     if (ImGui::BeginMenu("Speed", can_run)) {
@@ -523,7 +722,7 @@ void EmulatorApp::RenderMenuBar() {
                     ui_state_.paused ? "PAUSED" : "      ", static_cast<double>(perf_fps_),
                     static_cast<double>(perf_realtime_pct_));
     } else {
-      std::snprintf(overlay, sizeof(overlay), "No ROM loaded");
+      std::snprintf(overlay, sizeof(overlay), "No file loaded");
     }
     const float text_width = ImGui::CalcTextSize(overlay).x;
     if (text_width < region_width) {
@@ -537,11 +736,11 @@ void EmulatorApp::RenderMenuBar() {
 void EmulatorApp::RenderLoadRomDialog() {
   namespace fs = std::filesystem;
   if (ui_state_.open_load_rom_dialog) {
-    ImGui::OpenPopup("Load ROM");
+    ImGui::OpenPopup("Load ROM or SPC");
     ui_state_.open_load_rom_dialog = false;
   }
   ImGui::SetNextWindowSize(ImVec2(760.0F, 460.0F), ImGuiCond_Appearing);
-  if (!ImGui::BeginPopupModal("Load ROM", nullptr, ImGuiWindowFlags_NoCollapse)) {
+  if (!ImGui::BeginPopupModal("Load ROM or SPC", nullptr, ImGuiWindowFlags_NoCollapse)) {
     return;
   }
 
@@ -550,7 +749,7 @@ void EmulatorApp::RenderLoadRomDialog() {
     ImGui::TextDisabled("Shortcuts");
     ImGui::Separator();
     if (!ui_state_.last_rom_path.empty()) {
-      if (ImGui::Button("Last ROM", ImVec2(-1.0F, 0.0F))) {
+      if (ImGui::Button("Last file", ImVec2(-1.0F, 0.0F))) {
         if (LoadRomFromPath(ui_state_.last_rom_path)) {
           ui_state_.load_rom_error.clear();
           ImGui::CloseCurrentPopup();
@@ -602,7 +801,7 @@ void EmulatorApp::RenderLoadRomDialog() {
           for (char& c : ext) {
             c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
           }
-          if (ext == ".sfc" || ext == ".smc") {
+          if (ext == ".sfc" || ext == ".smc" || ext == ".spc") {
             files.push_back(entry.path());
           }
         }
@@ -612,7 +811,7 @@ void EmulatorApp::RenderLoadRomDialog() {
 
       if (ImGui::BeginChild("rom_list", ImVec2(0.0F, 0.0F), ImGuiChildFlags_Borders)) {
         if (subdirs.empty() && files.empty()) {
-          ImGui::TextDisabled("No subdirectories or .sfc/.smc files.");
+          ImGui::TextDisabled("No subdirectories or .sfc/.smc/.spc files.");
         }
         for (const fs::path& sub : subdirs) {
           const std::string label = "[DIR] " + sub.filename().string();
@@ -664,12 +863,11 @@ void EmulatorApp::Render() {
   {
     const ImGuiIO& io = ImGui::GetIO();
     if (!io.WantCaptureKeyboard && loaded_rom_ && ImGui::IsKeyPressed(ImGuiKey_Space, false)) {
-      ui_state_.paused = !ui_state_.paused;
-      last_tick_time_ = std::chrono::steady_clock::now();
+      TogglePlayback();
     }
   }
 
-  if (loaded_rom_) {
+  if (loaded_rom_ && !loaded_spc_) {
     UploadFrontBufferToTexture();
   }
 
@@ -678,12 +876,14 @@ void EmulatorApp::Render() {
   ImGui::NewFrame();
 
   RenderMenuBar();
-  const bool audio_running =
-      loaded_rom_ && !ui_state_.paused && !fatal_error_.has_value() && !snes_.GetCpu().GetFault().has_value();
-  if (frontend::RenderAudioPanel(audio_output_, snes_, audio_panel_, audio_running, ui_state_.speed_multiplier)) {
+  if (frontend::RenderAudioPanel(audio_output_, snes_, audio_panel_, ui_state_.speed_multiplier)) {
     SaveConfig();
   }
-  RenderBackgroundFrame();
+  if (loaded_spc_) {
+    RenderSpcPlayer();
+  } else {
+    RenderBackgroundFrame();
+  }
   RenderLoadRomDialog();
 
   if (!loaded_rom_) {
@@ -696,7 +896,7 @@ void EmulatorApp::Render() {
                                         ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
                                         ImGuiWindowFlags_NoNav | ImGuiWindowFlags_AlwaysAutoResize;
     if (ImGui::Begin("##no_rom_overlay", nullptr, kFlags)) {
-      ImGui::TextDisabled("No ROM loaded — File > Load ROM…");
+      ImGui::TextDisabled("No file loaded — File > Load ROM or SPC…");
     }
     ImGui::End();
   }
@@ -874,6 +1074,8 @@ void EmulatorApp::LoadConfig() {
       if (const auto parsed = frontend::ParseFiniteSetting(value, 0.001F, 10.0F)) ui_state_.speed_multiplier = *parsed;
     } else if (key == "sdsp_mode") {
       if (const auto parsed = frontend::ParseSoundQuality(value)) snes_.SetSdspModePending(*parsed);
+    } else if (key == "sdsp_backend") {
+      if (const auto parsed = frontend::ParseSdspBackend(value)) snes_.SetSdspBackendPending(*parsed);
     } else if (key == "maintain_aspect") {
       ui_state_.maintain_aspect = (value != "0");
     } else if (key == "integer_scale") {
@@ -895,6 +1097,7 @@ void EmulatorApp::SaveConfig() {
   stream << "maintain_aspect=" << (ui_state_.maintain_aspect ? 1 : 0) << "\n";
   stream << "integer_scale=" << (ui_state_.integer_scale ? 1 : 0) << "\n";
   stream << "sdsp_mode=" << static_cast<int>(snes_.GetSdspModePending()) << "\n";
+  stream << "sdsp_backend=" << frontend::SdspBackendSetting(snes_.GetSdspBackendPending()) << "\n";
   frontend::WriteAudioSettings(stream, audio_output_.GetSettings());
 }
 

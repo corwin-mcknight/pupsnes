@@ -11,6 +11,7 @@
 #include "pupsnes/hw/5a22/cpu_mmio.h"
 #include "pupsnes/hw/apu/apu.h"
 #include "pupsnes/memory/systembus.h"
+#include "pupsnes/memory/wram.h"
 
 namespace pupsnes {
 
@@ -75,7 +76,7 @@ void Ppu::MapSystemBus(SystemBus& bus) {
   // Page $21 covers the B-bus PPU window ($2100-$21FF). The PPU owns the
   // whole page — offsets $2100-$213F dispatch to PPU registers, and
   // $2140-$217F forward to the APU, which catches up its independent clock.
-  // $2180-$21FF remain open-bus / dropped writes.
+  // $2180-$2183 forward to WRAM; $2184-$21FF remain open-bus / dropped writes.
   //
   // Real hardware bills 6 master cycles for the $2000-$3FFF B-bus register
   // block (the "fast" bus class), so each access to this page costs 6.
@@ -106,8 +107,18 @@ void Ppu::Reset() {
   bg_hofs_.fill(0);
   bg_vofs_.fill(0);
   bg_scroll_prev_ = 0;
+  mosaic_size_ = 1;
+  mosaic_vertical_size_ = 1;
+  mosaic_vertical_index_ = 0;
+  mosaic_enabled_ = 0;
   main_screen_layers_ = 0;
   sub_screen_layers_ = 0;
+  window_select_.fill(0);
+  window_bounds_.fill(0);
+  window_logic_.fill(0);
+  window_region_masks_.fill(0);
+  main_window_layers_ = 0;
+  sub_window_layers_ = 0;
   cgwsel_ = 0;
   cgadsub_ = 0;
   coldata_r_ = 0;
@@ -363,7 +374,9 @@ MmioReadResult Ppu::ReadRegister(uint32_t offset, TimeMasterT current_time) {
     if (reg >= Apu::kPortBase && reg < Apu::kPortEnd) {
       return snes_->apu->ReadRegister(reg, current_time);
     }
-    // $2180-$21FF WRAM ports still open-bus until that device lands.
+    if (reg >= WRAM::kPortBase && reg < WRAM::kPortEnd) {
+      return snes_->GetWram().ReadPort(reg);
+    }
     return {0x00U, 0x00U};
   }
 
@@ -455,7 +468,9 @@ void Ppu::WriteRegister(uint32_t offset, uint8_t data, TimeMasterT current_time)
     if (reg >= Apu::kPortBase && reg < Apu::kPortEnd) {
       snes_->apu->WriteRegister(reg, data, current_time);
     }
-    // Writes to $2180-$21FF drop until WRAM-port device lands.
+    if (reg >= WRAM::kPortBase && reg < WRAM::kPortEnd) {
+      snes_->GetWram().WritePort(reg, data);
+    }
     return;
   }
   // Mirror the written byte into the shadow immediately so the debugger can
@@ -526,6 +541,7 @@ void Ppu::AdvanceHv() {
     if (v_ >= sppu::regs::kLinesPerFrameNtsc) {
       v_ = 0;
     }
+    AdvanceMosaicVerticalCounter();
     // Drive the VBlank NMI latch off live scanline transitions. Arm it the
     // instant V steps onto the first VBlank line; clear it at the frame-start
     // wrap so a subsequent VBlank can re-arm. Real hardware fires a pulse
@@ -648,12 +664,7 @@ constexpr PriorityPlan kPlanMode0 = BuildPriorityPlan(kOrderMode0, true);
 constexpr PriorityPlan kPlanMode1Normal = BuildPriorityPlan(kOrderMode1Normal, false);
 constexpr PriorityPlan kPlanMode1Bg3High = BuildPriorityPlan(kOrderMode1Bg3High, false);
 
-// 5-bit per-channel saturating add (0..31).
-constexpr uint8_t SatAdd5(uint8_t a, uint8_t b) {
-  const uint32_t sum = static_cast<uint32_t>(a) + static_cast<uint32_t>(b);
-  return static_cast<uint8_t>(sum > 31U ? 31U : sum);
-}
-// 5-bit per-channel saturating subtract (clamped to 0).
+// 5-bit per-channel saturating subtraction (0..31).
 constexpr uint8_t SatSub5(uint8_t a, uint8_t b) { return static_cast<uint8_t>(a > b ? a - b : 0U); }
 
 }  // namespace
@@ -706,13 +717,13 @@ uint8_t Ppu::FetchMode7Pixel(uint32_t screen_x, uint32_t screen_y) const {
   return (*vram_)[char_word * 2U + 1U];
 }
 
-Ppu::ResolvedScreens Ppu::ResolveMode7Screens(uint32_t screen_x, uint32_t screen_y, const ObjPixel& obj_px) const {
-  const uint8_t main_mask = main_screen_layers_;
-  const uint8_t sub_mask =
-      (cgwsel_ & sppu::regs::kCgwselSubScreenEnableMask) != 0U && (cgadsub_ & 0x3FU) != 0U ? sub_screen_layers_ : 0U;
-  const uint8_t bg_mask = m7_extbg_ ? 3U : 1U;
-  const uint8_t pixel =
-      ((static_cast<uint32_t>(main_mask) | sub_mask) & bg_mask) != 0U ? FetchMode7Pixel(screen_x, screen_y) : 0U;
+Ppu::ResolvedScreens Ppu::ResolveMode7Screens(uint32_t screen_x, uint32_t screen_y, const ObjPixel& obj_px,
+                                              uint8_t main_mask, uint8_t sub_mask) const {
+  const uint8_t visible_bg_mask = static_cast<uint8_t>(main_mask | sub_mask);
+  const bool bg1_needed = (visible_bg_mask & sppu::regs::kTmBg1Mask) != 0U;
+  const bool bg2_needed = m7_extbg_ && (visible_bg_mask & sppu::regs::kTmBg2Mask) != 0U;
+  const uint8_t bg1_pixel = bg1_needed ? FetchMode7Pixel(MosaicSourceX(0U, screen_x), MosaicSourceY(0U, screen_y)) : 0U;
+  const uint8_t bg2_pixel = bg2_needed ? FetchMode7Pixel(MosaicSourceX(1U, screen_x), MosaicSourceY(1U, screen_y)) : 0U;
   const auto resolve = [&](uint8_t mask) -> ResolvedPixel {
     uint8_t rank = 0;
     uint8_t index = 0;
@@ -725,14 +736,14 @@ Ppu::ResolvedScreens Ppu::ResolveMode7Screens(uint32_t screen_x, uint32_t screen
       layer = 4;
     }
     const uint8_t bg1_rank = m7_extbg_ ? 3U : 2U;
-    if ((mask & 1U) != 0U && pixel != 0U && bg1_rank > rank) {
+    if ((mask & sppu::regs::kTmBg1Mask) != 0U && bg1_pixel != 0U && bg1_rank > rank) {
       rank = bg1_rank;
-      index = pixel;
+      index = bg1_pixel;
       layer = 0;
     }
-    const uint8_t bg2_rank = (pixel & 0x80U) != 0U ? 5U : 1U;
-    if (m7_extbg_ && (mask & 2U) != 0U && (pixel & 0x7FU) != 0U && bg2_rank > rank) {
-      index = pixel & 0x7FU;
+    const uint8_t bg2_rank = (bg2_pixel & 0x80U) != 0U ? 5U : 1U;
+    if (m7_extbg_ && (mask & sppu::regs::kTmBg2Mask) != 0U && (bg2_pixel & 0x7FU) != 0U && bg2_rank > rank) {
+      index = bg2_pixel & 0x7FU;
       layer = 1;
     }
     uint16_t color = (*cgram_)[index];
@@ -745,23 +756,19 @@ Ppu::ResolvedScreens Ppu::ResolveMode7Screens(uint32_t screen_x, uint32_t screen
   return {resolve(main_mask), resolve(sub_mask)};
 }
 
-Ppu::ResolvedScreens Ppu::ResolveScreenPixels(uint32_t screen_x, uint32_t screen_y, const ObjPixel& obj_px) const {
+Ppu::ResolvedScreens Ppu::ResolveScreenPixels(uint32_t screen_x, uint32_t screen_y, const ObjPixel& obj_px,
+                                              uint8_t main_mask, uint8_t sub_mask) const {
   const PriorityPlan* plan = nullptr;
   if (bg_mode_ == 0U) {
     plan = &kPlanMode0;
   } else if (bg_mode_ == 1U) {
     plan = bg3_priority_ ? &kPlanMode1Bg3High : &kPlanMode1Normal;
   } else if (bg_mode_ == 7U) {
-    return ResolveMode7Screens(screen_x, screen_y, obj_px);
+    return ResolveMode7Screens(screen_x, screen_y, obj_px, main_mask, sub_mask);
   } else {
     return {{(*cgram_)[0], 5U, false}, {(*cgram_)[0], 5U, false}};
   }
 
-  // A sub-screen can only contribute when some layer enables color math.
-  // The winning main layer's eligibility is still checked by ApplyColorMath.
-  const uint8_t main_mask = main_screen_layers_;
-  const uint8_t sub_mask =
-      (cgwsel_ & sppu::regs::kCgwselSubScreenEnableMask) != 0U && (cgadsub_ & 0x3FU) != 0U ? sub_screen_layers_ : 0U;
   uint8_t main_rank = 0, sub_rank = 0;
   uint8_t main_index = 0, sub_index = 0;
   uint8_t main_layer = 5U, sub_layer = 5U;
@@ -807,8 +814,57 @@ Ppu::ResolvedScreens Ppu::ResolveScreenPixels(uint32_t screen_x, uint32_t screen
           {(*cgram_)[sub_index], sub_layer, sub_layer == 4U && (sub_index & 0x40U) != 0U}};
 }
 
-uint16_t Ppu::ApplyColorMath(uint16_t main_bgr, uint8_t main_layer, bool main_obj_high,
-                             const ResolvedPixel& sub) const {
+void Ppu::RebuildWindowLogic() {
+  window_region_masks_.fill(0);
+  for (uint8_t target = 0; target < 6U; ++target) {
+    const uint8_t select =
+        static_cast<uint8_t>((static_cast<uint32_t>(window_select_[target / 2U]) >> ((target & 1U) * 4U)) & 15U);
+    const bool one_enabled = (select & 2U) != 0U;
+    const bool two_enabled = (select & 8U) != 0U;
+    if (!one_enabled && !two_enabled) continue;
+    const uint8_t logic =
+        static_cast<uint8_t>((static_cast<uint32_t>(window_logic_[target / 4U]) >> ((target & 3U) * 2U)) & 3U);
+    for (uint8_t region = 0; region < 4U; ++region) {
+      const bool one = ((region & 1U) != 0U) != ((select & 1U) != 0U);
+      const bool two = ((region & 2U) != 0U) != ((select & 4U) != 0U);
+      bool masked = one_enabled ? one : two;
+      if (one_enabled && two_enabled) {
+        switch (logic) {
+          case 0: masked = one || two; break;
+          case 1: masked = one && two; break;
+          case 2: masked = one != two; break;
+          default: masked = one == two; break;  // XNOR (logic is two bits).
+        }
+      }
+      if (masked) window_region_masks_[region] |= static_cast<uint8_t>(1U << target);
+    }
+  }
+}
+
+uint8_t Ppu::WindowMaskAt(uint32_t screen_x) const {
+  const bool one = screen_x >= window_bounds_[0] && screen_x <= window_bounds_[1];
+  const bool two = screen_x >= window_bounds_[2] && screen_x <= window_bounds_[3];
+  return window_region_masks_[static_cast<std::size_t>(one) | (static_cast<std::size_t>(two) << 1U)];
+}
+
+namespace {
+
+constexpr bool ColorWindowAllows(uint8_t mode, bool inside) {
+  switch (mode) {
+    case 0: return true;
+    case 1: return inside;
+    case 2: return !inside;
+    default: return false;
+  }
+}
+
+}  // namespace
+
+uint16_t Ppu::ApplyColorMath(uint16_t main_bgr, uint8_t main_layer, bool main_obj_high, const ResolvedPixel& sub,
+                             bool color_window) const {
+  const bool main_visible = ColorWindowAllows(cgwsel_ >> 6U, color_window);
+  if (!main_visible) main_bgr = 0;
+  if (!ColorWindowAllows((static_cast<uint32_t>(cgwsel_) >> 4U) & 3U, color_window)) return main_bgr;
   // Determine if the main layer at this pixel is included in CGADSUB. The
   // OBJ case adds a "palette >= 4" gate per fullsnes.
   uint8_t layer_bit = 0;
@@ -833,25 +889,21 @@ uint16_t Ppu::ApplyColorMath(uint16_t main_bgr, uint8_t main_layer, bool main_ob
     }
   }
 
-  // Split BGR555 into per-channel intensities, apply add or subtract with
-  // saturation, then optionally halve the final per channel.
+  // Clipping preserves layer eligibility but disables halving. A transparent
+  // sub-screen also disables halving; explicitly selected fixed color does not.
+  const bool use_sub_screen = (cgwsel_ & sppu::regs::kCgwselSubScreenEnableMask) != 0U;
+  const bool halve =
+      (cgadsub_ & sppu::regs::kCgadsubHalfMask) != 0U && main_visible && (!use_sub_screen || sub.layer_id != 5U);
+  const bool subtract = (cgadsub_ & sppu::regs::kCgadsubSubtractMask) != 0U;
+  const auto blend = [subtract, halve](uint8_t a, uint8_t b) -> uint8_t {
+    // Preserve the carry for half-addition: (31 + 31) / 2 is 31, not 15.
+    uint8_t value = subtract ? SatSub5(a, b) : static_cast<uint8_t>(a + b);
+    if (halve) value >>= 1U;
+    return std::min<uint8_t>(value, 31U);
+  };
   const Bgr5 m = UnpackBgr555(main_bgr);
   const Bgr5 s = UnpackBgr555(sub_bgr);
-
-  const bool subtract = (cgadsub_ & sppu::regs::kCgadsubSubtractMask) != 0U;
-  uint8_t r = subtract ? SatSub5(m.r, s.r) : SatAdd5(m.r, s.r);
-  uint8_t g = subtract ? SatSub5(m.g, s.g) : SatAdd5(m.g, s.g);
-  uint8_t b = subtract ? SatSub5(m.b, s.b) : SatAdd5(m.b, s.b);
-
-  if ((cgadsub_ & sppu::regs::kCgadsubHalfMask) != 0U) {
-    // Per-channel right shift. fullsnes also documents a "skip halve when the
-    // sub-screen is the fixed-COLDATA fallback" quirk; v1 doesn't model that
-    // and applies the halve unconditionally when the bit is set.
-    r >>= 1U;
-    g >>= 1U;
-    b >>= 1U;
-  }
-  return PackBgr555(r, g, b);
+  return PackBgr555(blend(m.r, s.r), blend(m.g, s.g), blend(m.b, s.b));
 }
 
 void Ppu::EmitPixel(uint32_t h, uint32_t v) {
@@ -865,17 +917,28 @@ void Ppu::EmitPixel(uint32_t h, uint32_t v) {
     const uint32_t screen_x = h - sppu::regs::kVisibleHStart;
     const uint32_t screen_y = v - sppu::regs::kVisibleVStartNtsc;
 
-    // FetchObjPixel is gated on either TM or TS enabling OBJ, since the same
-    // resolved sprite pixel feeds both main and sub resolutions.
+    const uint8_t window_mask =
+        (static_cast<uint32_t>(main_window_layers_) | sub_window_layers_ | (cgwsel_ & 0xF0U)) != 0U
+            ? WindowMaskAt(screen_x)
+            : 0U;
+    const uint8_t main_mask =
+        main_screen_layers_ & static_cast<uint8_t>(~(static_cast<uint32_t>(window_mask) & main_window_layers_));
+    const uint8_t sub_mask =
+        (cgwsel_ & sppu::regs::kCgwselSubScreenEnableMask) != 0U && (cgadsub_ & 0x3FU) != 0U
+            ? sub_screen_layers_ & static_cast<uint8_t>(~(static_cast<uint32_t>(window_mask) & sub_window_layers_))
+            : 0U;
+
+    // Keep OBJ evaluation independent of window visibility: masking the first
+    // pixels must not postpone the per-line OAM snapshot until a later write.
     const uint8_t obj_enable_mask = static_cast<uint8_t>(main_screen_layers_ | sub_screen_layers_);
     ObjPixel obj_px = {0U, true, 0U};
     if ((obj_enable_mask & sppu::regs::kTmObjMask) != 0U) {
       obj_px = FetchObjPixel(screen_x, screen_y);
     }
 
-    const ResolvedScreens screens = ResolveScreenPixels(screen_x, screen_y, obj_px);
-    const uint16_t composed =
-        ApplyColorMath(screens.main.bgr, screens.main.layer_id, screens.main.obj_palette_high, screens.sub);
+    const ResolvedScreens screens = ResolveScreenPixels(screen_x, screen_y, obj_px, main_mask, sub_mask);
+    const uint16_t composed = ApplyColorMath(screens.main.bgr, screens.main.layer_id, screens.main.obj_palette_high,
+                                             screens.sub, (window_mask & sppu::regs::kColorWindowMask) != 0U);
     color = BrightnessScale(composed, brightness_);
   }
   // Outside the visible window and under forced-blank, the PPU drives black.
@@ -924,17 +987,18 @@ void Ppu::ReplayWrite(uint16_t offset, uint8_t data, TimeMasterT cycle) {
     }
     case sppu::regs::kOamData: {
       const uint16_t addr = oam_byte_addr_;
+      // Every even write refreshes the shared buffer, including high OAM.
+      if ((addr & 1U) == 0U) {
+        oam_write_latch_ = data;
+      }
       if (addr < 0x200U) {
-        // Low OAM: write-twice. Low byte latches; high byte commits both
-        // bytes of the current word.
-        if ((addr & 1U) == 0U) {
-          oam_write_latch_ = data;
-        } else {
+        // Low OAM: odd writes commit the buffered byte and current byte.
+        if ((addr & 1U) != 0U) {
           WriteOamByte(static_cast<uint16_t>(addr - 1U), oam_write_latch_);
           WriteOamByte(addr, data);
         }
       } else {
-        // High table: direct byte write, no latch.
+        // High OAM: every write also commits its byte immediately.
         WriteOamByte(addr, data);
       }
       oam_byte_addr_ = static_cast<uint16_t>((addr + 1U) & 0x3FFU);
@@ -1027,6 +1091,13 @@ void Ppu::ReplayWrite(uint16_t offset, uint8_t data, TimeMasterT cycle) {
       break;
     }
 
+    case sppu::regs::kMosaic:
+      mosaic_size_ = static_cast<uint8_t>(((data & sppu::regs::kMosaicSizeMask) >> sppu::regs::kMosaicSizeShift) + 1U);
+      mosaic_enabled_ = data & sppu::regs::kMosaicBgEnableMask;
+      // A mid-line enable or size change can select a different source row.
+      bg_row_dirty_.fill(true);
+      break;
+
     case sppu::regs::kBgmode: {
       const uint8_t old_mode = bg_mode_;
       const bool old_bg3_priority = bg3_priority_;
@@ -1094,6 +1165,23 @@ void Ppu::ReplayWrite(uint16_t offset, uint8_t data, TimeMasterT cycle) {
       break;
     }
 
+    case sppu::regs::kW12Sel:
+    case sppu::regs::kW34Sel:
+    case sppu::regs::kWObjSel:
+      window_select_[offset - sppu::regs::kW12Sel] = data;
+      RebuildWindowLogic();
+      break;
+    case sppu::regs::kWh0:
+    case sppu::regs::kWh1:
+    case sppu::regs::kWh2:
+    case sppu::regs::kWh3: window_bounds_[offset - sppu::regs::kWh0] = data; break;
+    case sppu::regs::kWBgLog:
+    case sppu::regs::kWObjLog:
+      window_logic_[offset - sppu::regs::kWBgLog] = data;
+      RebuildWindowLogic();
+      break;
+    case sppu::regs::kTmw: main_window_layers_ = data & 0x1FU; break;
+    case sppu::regs::kTsw: sub_window_layers_ = data & 0x1FU; break;
     case sppu::regs::kCgwsel: cgwsel_ = data; break;
     case sppu::regs::kCgadsub: cgadsub_ = data; break;
     case sppu::regs::kColdata: {
@@ -1238,10 +1326,41 @@ uint16_t Ppu::ReadVramWord(uint16_t word_addr) const {
   return PackWord(lo, hi);
 }
 
+void Ppu::AdvanceMosaicVerticalCounter() {
+  // MOSAIC blocks begin at the top edge of the visible TV image. A size write
+  // changes horizontal sampling immediately, but the vertical counter keeps
+  // its current block length and adopts the new size only at the next block.
+  if (v_ == sppu::regs::kVisibleVStartNtsc) {
+    mosaic_vertical_index_ = 0;
+    mosaic_vertical_size_ = mosaic_size_;
+    return;
+  }
+  if (v_ <= sppu::regs::kVisibleVStartNtsc || v_ >= sppu::regs::kVisibleVEnd239) {
+    return;
+  }
+  ++mosaic_vertical_index_;
+  if (mosaic_vertical_index_ == mosaic_vertical_size_) {
+    mosaic_vertical_index_ = 0;
+    mosaic_vertical_size_ = mosaic_size_;
+  }
+}
+
+uint32_t Ppu::MosaicSourceX(uint8_t bg, uint32_t screen_x) const {
+  if ((mosaic_enabled_ & static_cast<uint8_t>(1U << bg)) == 0U) return screen_x;
+  return screen_x - (screen_x % mosaic_size_);
+}
+
+uint32_t Ppu::MosaicSourceY(uint8_t bg, uint32_t screen_y) const {
+  if ((mosaic_enabled_ & static_cast<uint8_t>(1U << bg)) == 0U) return screen_y;
+  return screen_y - mosaic_vertical_index_;
+}
+
 Ppu::BgPixel Ppu::FetchBgPixel(uint8_t bg, uint8_t bpp, uint32_t screen_x, uint32_t screen_y) const {
   if (bg >= sppu::regs::kBgCount) {
     return {0U, true, false};
   }
+  screen_x = MosaicSourceX(bg, screen_x);
+  screen_y = MosaicSourceY(bg, screen_y);
   const uint32_t eff_x = (screen_x + bg_hofs_[bg]) & 0x3FFU;  // 10-bit wrap (covers 64-tile width).
   const int32_t cache_key = static_cast<int32_t>(eff_x >> 3U);
 

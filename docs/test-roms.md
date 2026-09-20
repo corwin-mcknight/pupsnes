@@ -120,3 +120,9 @@ Choose an unused output filename. See [Audio](audio.md) for playback settings an
 ## Mode 7 graphics fixture
 
 `ppu_mode7.sfc` draws a four-color sheared checkerboard with three HDMA scale bands. Its dedicated `[mode7]` integration test compares every visible pixel after CPU execution at two scheduler slice sizes. See [Mode 7](mode7.md) for the rendering scope and screenshot command.
+
+## Mosaic graphics fixture
+
+`ppu_mosaic.sfc` programs a deliberately non-uniform Mode 1 BG1 tile, then
+enables 4×4 BG1 mosaic. Its `[mosaic]` integration test verifies that each
+screen-wide 4×4 block resolves to the corresponding upper-left source pixel.

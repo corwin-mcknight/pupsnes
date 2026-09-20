@@ -132,6 +132,7 @@ class SystemBus {
   // fast-path cost to one predicted-not-taken branch.
   void SetEventSink(BusEventSink* sink) { event_sink_ = sink; }
   [[nodiscard]] BusEventSink* GetEventSink() const { return event_sink_; }
+  [[nodiscard]] uint8_t GetDataBusValue() const { return last_data_bus_value_; }
   [[nodiscard]] DebugReadResult DebugRead(SnesAddrT address) const;
   [[nodiscard]] DebugWriteResult DebugWrite(SnesAddrT address, uint8_t value);
 

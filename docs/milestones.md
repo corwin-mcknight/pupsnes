@@ -8,7 +8,7 @@ This roadmap describes where the project stands and what each milestone will mak
 
 ## Where we are
 
-The CPU implements all 256 instructions, and the core supports cartridge loading, memory, interrupts, and DMA/HDMA transfers. Mode 0, Mode 1, and Mode 7 backgrounds are implemented, along with sprites and color blending. LoROM, HiROM, and ExHiROM cartridges are supported, and the debugger provides live inspection, execution traces, and screenshots.
+The CPU implements all 256 instructions, and the core supports cartridge loading, memory, interrupts, and DMA/HDMA transfers. Mode 0, Mode 1, and Mode 7 backgrounds are implemented, along with sprites, window masking, and color blending. LoROM, HiROM, and ExHiROM cartridges are supported, and the debugger provides live inspection, execution traces, and screenshots.
 
 Super Castlevania IV and The Legend of Zelda: A Link to the Past reached playable gameplay with the former APU handshake stub, though neither was tested through to completion. The stub has been replaced by a complete SPC700 instruction set, timers, and the S-DSP voice and effects pipeline. Both frontends can play the resulting audio, and a command-line tool can capture it to WAV. Commercial-game sound still needs broader validation; several graphics effects are missing, and controller support is limited to player one.
 
@@ -45,11 +45,11 @@ The remaining work concerns accuracy in unusual cases and interactions with the 
 
 ## Milestone 3: Graphics
 
-**Partially complete.** Mode 0, Mode 1, and Mode 7 backgrounds, sprites, priorities, color blending, brightness, and overscan are implemented. The PPU also handles its video-memory ports, beam-position latches, and Mode 7 multiplication registers.
+**Partially complete.** Mode 0, Mode 1, and Mode 7 backgrounds, sprites, priorities, window masking, color blending, brightness, and overscan are implemented. The PPU also handles its video-memory ports, beam-position latches, and Mode 7 multiplication registers.
 
 **Mode 7 rendering is implemented**, including rotation and scaling, scroll and center registers, screen flips, wrapping and overflow behavior, EXTBG priorities, and BG1 direct color. A small test ROM exercises changing scale across scanlines through HDMA. This provides the graphics path used by rotating and scaling scenes; validation in commercial games remains to be done.
 
-Other remaining features include windows and masking, mosaic effects, background Modes 2–6 and their direct-color support, offset-per-tile effects, and high-resolution and interlaced output.
+Other remaining features include background Modes 2–6 and their direct-color support, offset-per-tile effects, and high-resolution and interlaced output.
 
 **The goal:** games using these features display their scenes and effects correctly, while existing Mode 0/1 games retain their current behavior. Small graphics test ROMs and comparisons of known scenes will help establish progress.
 
@@ -91,4 +91,4 @@ Progress here means more diagnostic tests passing, fewer visual and audio errors
 
 The current order is **graphics completeness, save states and rewind, then broader cartridge support**. Controller improvements, audio compatibility, and fixes for known game problems can progress alongside those larger efforts.
 
-**Mode 7 is ready for game testing.** The next graphics features are windows and masking, mosaic, and the remaining background modes. Audio now has an end-to-end path from uploaded sound programs to speakers and WAV files; further work there should build on concrete music, effect, and timing problems found in games.
+**Mode 7 is ready for game testing.** The next graphics features are mosaic and the remaining background modes. Audio now has an end-to-end path from uploaded sound programs to speakers and WAV files; further work there should build on concrete music, effect, and timing problems found in games.

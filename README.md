@@ -26,9 +26,9 @@ Legend: ✅ implemented · ⚠️ partial · ❌ not yet
 |---|---|---|
 | **CPU — 65C816 (5A22)** | ✅ | All 256 opcodes, all modes, cycle-accurate memory timing |
 | **DMA / HDMA** | ✅ | All channels and modes, cycle-accurate CPU stall |
-| **PPU — backgrounds** | ⚠️ | Mode 0 & Mode 1 only |
+| **PPU — backgrounds** | ⚠️ | Modes 0, 1, and 7 implemented; Modes 2–6 remain |
 | **PPU — sprites (OBJ)** | ✅ | Fully implemented. 32-per-line hardware cap enforced |
-| **PPU — color math & screen** | ⚠️ | No windows, mosaic, hi-res, direct color |
+| **PPU — color math & screen** | ⚠️ | Windows and color math implemented; mosaic, hi-res, Modes 3/4 direct color remain |
 | **Audio — APU (SPC700 + S-DSP)** | ⚠️ | All SPC700 opcodes, real IPL upload, timers, eight-voice synthesis, stereo playback and WAV capture; timing and compatibility work continues. |
 | **Input** | ⚠️ | Player 1 standard controller ✅; P2, multitap, mouse, Super Scope ❌ |
 | **Cartridge / mappers** | ⚠️ | No coprocessors (SA-1, SuperFX, DSP-n…) |
@@ -37,7 +37,7 @@ Legend: ✅ implemented · ⚠️ partial · ❌ not yet
 
 ## What runs today
 
-PupSNES renders **Mode 0 / Mode 1** backgrounds, sprites, color math, and HDMA raster effects. The following titles previously reached playable gameplay using the APU handshake stub; they were **not** tested through to completion:
+PupSNES renders **Mode 0 / 1 / 7** backgrounds, sprites, color math, and HDMA raster effects. The following titles previously reached playable gameplay using the APU handshake stub; they were **not** tested through to completion:
 
 - **Super Castlevania IV**
 - **The Legend of Zelda: A Link to the Past**
@@ -75,7 +75,7 @@ A finer-grained checklist for the curious.
 - ✅ Sprites/OBJ: all 8 size pairs, flips, priority, palette groups, 32-sprite/line cap
 - ✅ Color math (add / subtract / half), ✅ fixed color (COLDATA), ✅ main & sub screen, ✅ INIDISP brightness, ✅ overscan
 - ✅ VRAM / OAM / CGRAM port protocols (VMAIN translate & increment, RDVRAM prefetch quirk, write-twice/read-twice latches)
-- ❌ Windows (W1/W2 + logic), ❌ mosaic, ❌ hi-res / interlace output (Mode 5/6), ❌ direct color in Modes 3/4, ❌ offset-per-tile
+- ✅ Windows (W1/W2 + logic, main/sub masks, color clipping), ❌ mosaic, ❌ hi-res / interlace output (Mode 5/6), ❌ direct color in Modes 3/4, ❌ offset-per-tile
 
 **DMA / HDMA**
 - ✅ General-purpose DMA: 8 channels, transfer modes 0–7, fixed/increment/decrement addressing, both directions
@@ -90,6 +90,7 @@ A finer-grained checklist for the curious.
 - ✅ All three APU timers, DSP register access, and a native 32 kHz stereo stream
 - ✅ Eight S-DSP voices, BRR decoding, ADSR/GAIN envelopes, noise, pitch modulation, mixing, and echo/FIR through the pinned blargg DSP core
 - ✅ Gaussian (SNES) interpolation by default; optional linear interpolation applies on reset
+- ✅ Selectable Stub, Third-party, and Native DSP backends; Native currently shares the silent stub, with the real SPC700 running in all modes
 - ✅ Playback in the emulator and debugger, with 50% default volume and device/latency controls; native 16-bit stereo WAV capture without an audio device
 - See [Audio](docs/audio.md) for controls and capture commands, and [APU](docs/apu.md) for behavior and timing limitations.
 
@@ -156,7 +157,7 @@ PupSNES is built around a signal-horizon scheduler, with each chip an independen
 
 In rough priority order:
 
-1. **PPU completeness** — remaining background modes, windows, mosaic, hi-res / interlace, and Mode 7 game validation.
+1. **PPU completeness** — remaining background modes, mosaic, hi-res / interlace, and Mode 7 game validation.
 2. **Save states & rewind** — capture and restore the whole machine, including sound and instructions in progress.
 3. **More cartridges** — additional mappers and enhancement chips (SA-1, SuperFX, DSP-n…).
 4. **Enhancements beyond accuracy** — opt-in extras (e.g. a widescreen PPU), gated so they never compromise the accurate core.
