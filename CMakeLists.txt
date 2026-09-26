@@ -433,7 +433,9 @@ if(BUILD_TESTING)
   add_dependencies(pupsnes_tests pupsnes_test_roms)
 
   enable_testing()
-  add_test(NAME pupsnes_tests COMMAND pupsnes_tests)
+  add_test(NAME pupsnes_unit_tests COMMAND pupsnes_tests "[unit]~[integration]")
+  add_test(NAME pupsnes_integration_tests COMMAND pupsnes_tests "[integration]")
+  add_test(NAME pupsnes_additional_tests COMMAND pupsnes_tests "~[unit]~[integration]")
 endif()
 
 find_program(CLANG_FORMAT_EXE NAMES clang-format)

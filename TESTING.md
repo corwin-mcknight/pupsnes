@@ -13,6 +13,10 @@ cmake --build --preset dev
 ctest --test-dir build/dev
 ```
 
+CTest reports three non-overlapping groups: unit tests, integration tests, and
+additional legacy/topical tests that do not yet carry either high-level tag.
+Together, these groups cover every Catch2 test case.
+
 Run tests by tag (Catch2):
 
 ```sh
@@ -27,6 +31,22 @@ CI should use the `ci-verify.sh` script (preferred):
 ```sh
 ./ci-verify.sh
 ```
+
+The script can also run individual phases, which the GitHub Actions workflow
+uses to show each test group and lint as separate steps:
+
+```sh
+./ci-verify.sh configure
+./ci-verify.sh build
+./ci-verify.sh test-unit
+./ci-verify.sh test-integration
+./ci-verify.sh test-additional
+./ci-verify.sh lint
+```
+
+The default all-in-one command treats the existing lint backlog as
+non-blocking. The standalone `lint` phase returns the linter status so CI can
+display it while allowing the verification job to pass.
 
 If you need to run steps manually, use the `ci` preset and run CTest:
 
@@ -47,4 +67,4 @@ AI should run the CI verification script after every code change:
 ./ci-verify.sh
 ```
 
-This script configures, builds, runs unit tests, and runs the lint suite (`clang-format`, `clang-tidy`, `cpplint`) against the [Google C++ Style Guide](https://google.github.io/styleguide/cppguide.html). Lint is currently non-blocking — see [BUILDING.md](BUILDING.md#linting) for details and individual lint targets.
+This script configures, builds, runs every test group, and runs the lint suite (`clang-format`, `clang-tidy`, `cpplint`) against the [Google C++ Style Guide](https://google.github.io/styleguide/cppguide.html). Lint is currently non-blocking — see [BUILDING.md](BUILDING.md#linting) for details and individual lint targets.

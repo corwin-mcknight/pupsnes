@@ -75,5 +75,21 @@ jobs:
       - name: Create Conan profile
         run: conan profile detect --force
 
-      - name: Run CI pipeline
-        run: ./ci-verify.sh
+      - name: Configure
+        run: ./ci-verify.sh configure
+
+      - name: Build
+        run: ./ci-verify.sh build
+
+      - name: Run unit tests
+        run: ./ci-verify.sh test-unit
+
+      - name: Run integration tests
+        run: ./ci-verify.sh test-integration
+
+      - name: Run additional tests
+        run: ./ci-verify.sh test-additional
+
+      - name: Run lint
+        continue-on-error: true
+        run: ./ci-verify.sh lint
