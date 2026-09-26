@@ -1,5 +1,3 @@
-#include <OpenGL/gl3.h>
-
 #include <array>
 #include <cstdarg>
 #include <cstddef>
@@ -7,6 +5,7 @@
 #include <cstdio>
 
 #include "debugger/app.h"
+#include "frontend/opengl_headers.h"
 #include "imgui.h"
 #include "panel_utils.h"
 #include "panels.h"

@@ -1,9 +1,8 @@
 #include "app.h"
 
-// GLFW would otherwise pull in OpenGL/gl.h, which collides with gl3.h.
+// Let the shared wrapper select the platform's OpenGL header.
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
-#include <OpenGL/gl3.h>
 
 #include <algorithm>
 #include <array>
@@ -25,6 +24,7 @@
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
+#include "frontend/opengl_headers.h"
 #include "pupsnes/core/scheduler.h"
 #include "pupsnes/hw/5a22/cpu.h"
 #include "pupsnes/hw/apu/apu.h"
