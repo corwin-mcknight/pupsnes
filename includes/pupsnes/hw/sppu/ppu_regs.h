@@ -94,6 +94,12 @@ inline constexpr uint16_t kBgMapEntryPriorityMask = 0x2000;
 inline constexpr uint16_t kBgMapEntryHflipMask = 0x4000;
 inline constexpr uint16_t kBgMapEntryVflipMask = 0x8000;
 
+// Modes 2/4 BG3 offset entries: bits 13/14 enable BG1/BG2 independently.
+// Mode 2 reads horizontal and vertical words from rows eight pixels apart.
+// Mode 4 reads one word; bit 15 selects horizontal (0) or vertical (1).
+inline constexpr uint16_t kBgOffsetBg1EnableMask = 0x2000;  // shift left once for BG2
+inline constexpr uint16_t kBgOffsetVerticalMask = 0x8000;
+
 // OAM low-table byte 3 (attributes) bit layout:
 //   bit    0   = tile number bit 8 (selects tile region 1 when set)
 //   bits  3:1  = palette group (0..7)
@@ -139,7 +145,7 @@ inline constexpr uint8_t kTmBg4Mask = 0x08;
 inline constexpr uint8_t kTmObjMask = 0x10;
 
 // $2130 CGWSEL — Color math control A.
-//   bit 0   = Direct Color mode (implemented for Mode 7 BG1).
+//   bit 0   = Direct Color mode (implemented for Modes 3/4/7 BG1).
 //   bit 1   = Sub-screen BG/OBJ Enable. 0=sub-screen is COLDATA only,
 //             1=sub-screen also renders BG/OBJ from TS, falling back to
 //             COLDATA where transparent.

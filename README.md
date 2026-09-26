@@ -26,9 +26,9 @@ Legend: ✅ implemented · ⚠️ partial · ❌ not yet
 |---|---|---|
 | **CPU — 65C816 (5A22)** | ✅ | All 256 opcodes, all modes, cycle-accurate memory timing |
 | **DMA / HDMA** | ✅ | All channels and modes, cycle-accurate CPU stall |
-| **PPU — backgrounds** | ⚠️ | Modes 0, 1, and 7 implemented; Modes 2–6 remain |
+| **PPU — backgrounds** | ⚠️ | Modes 0–4 and 7 implemented; Modes 5 and 6 remain |
 | **PPU — sprites (OBJ)** | ✅ | Fully implemented. 32-per-line hardware cap enforced |
-| **PPU — color math & screen** | ⚠️ | Windows and color math implemented; mosaic, hi-res, Modes 3/4 direct color remain |
+| **PPU — color math & screen** | ⚠️ | Windows, color math, mosaic, Mode 3/4/7 direct color, and Mode 2/4 offset-per-tile implemented; hi-res/interlace remain |
 | **Audio — APU (SPC700 + S-DSP)** | ⚠️ | All SPC700 opcodes, real IPL upload, timers, eight-voice synthesis, stereo playback and WAV capture; timing and compatibility work continues. |
 | **Input** | ⚠️ | Player 1 standard controller ✅; P2, multitap, mouse, Super Scope ❌ |
 | **Cartridge / mappers** | ⚠️ | No coprocessors (SA-1, SuperFX, DSP-n…) |
@@ -37,7 +37,7 @@ Legend: ✅ implemented · ⚠️ partial · ❌ not yet
 
 ## What runs today
 
-PupSNES renders **Mode 0 / 1 / 7** backgrounds, sprites, color math, and HDMA raster effects. The following titles previously reached playable gameplay using the APU handshake stub; they were **not** tested through to completion:
+PupSNES renders **Mode 0 / 1 / 2 / 3 / 4 / 7** backgrounds, sprites, mosaic, color math, and HDMA raster effects. The following titles previously reached playable gameplay using the APU handshake stub; they were **not** tested through to completion:
 
 - **Super Castlevania IV**
 - **The Legend of Zelda: A Link to the Past**
@@ -69,13 +69,13 @@ A finer-grained checklist for the curious.
 - ✅ Per-access bus timing (FastROM / slow ROM / WRAM / MMIO), DRAM refresh, branch & page-cross penalties
 
 **PPU — video**
-- ✅ Background **Mode 0**, ✅ **Mode 1** (incl. BG3 priority elevation)
+- ✅ Background **Mode 0**, ✅ **Mode 1** (incl. BG3 priority elevation), ✅ **Mode 3** (8bpp BG1, 4bpp BG2, BG1 direct color)
 - ✅ **Mode 7** affine rotation/scaling, flips, overflow modes, EXTBG, and BG1 direct color
-- ❌ Modes **2, 3, 4, 5, 6**
+- Modes **2 and 4** implemented, including BG3-driven offset-per-tile and Mode 4 BG1 direct color; Modes **5 and 6** remain.
 - ✅ Sprites/OBJ: all 8 size pairs, flips, priority, palette groups, 32-sprite/line cap
 - ✅ Color math (add / subtract / half), ✅ fixed color (COLDATA), ✅ main & sub screen, ✅ INIDISP brightness, ✅ overscan
 - ✅ VRAM / OAM / CGRAM port protocols (VMAIN translate & increment, RDVRAM prefetch quirk, write-twice/read-twice latches)
-- ✅ Windows (W1/W2 + logic, main/sub masks, color clipping), ❌ mosaic, ❌ hi-res / interlace output (Mode 5/6), ❌ direct color in Modes 3/4, ❌ offset-per-tile
+- Windows (W1/W2 + logic, main/sub masks, color clipping), mosaic, and Mode 2/4 offset-per-tile implemented; hi-res / interlace output (Mode 5/6) remains.
 
 **DMA / HDMA**
 - ✅ General-purpose DMA: 8 channels, transfer modes 0–7, fixed/increment/decrement addressing, both directions
@@ -157,7 +157,7 @@ PupSNES is built around a signal-horizon scheduler, with each chip an independen
 
 In rough priority order:
 
-1. **PPU completeness** — remaining background modes, mosaic, hi-res / interlace, and Mode 7 game validation.
+1. **PPU completeness** — remaining background modes, offset-per-tile, hi-res / interlace, and Mode 3/7 game validation.
 2. **Save states & rewind** — capture and restore the whole machine, including sound and instructions in progress.
 3. **More cartridges** — additional mappers and enhancement chips (SA-1, SuperFX, DSP-n…).
 4. **Enhancements beyond accuracy** — opt-in extras (e.g. a widescreen PPU), gated so they never compromise the accurate core.

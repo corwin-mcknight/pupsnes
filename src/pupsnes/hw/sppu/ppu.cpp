@@ -610,6 +610,18 @@ constexpr std::array<Slot, 10> kOrderMode1Bg3High = {{
     {false, 2U, 0U},
 }};
 
+// Modes 2/3/4 priority: OBJ3, BG1.1, OBJ2, BG2.1, OBJ1, BG1.0, OBJ0, BG2.0.
+constexpr std::array<Slot, 8> kOrderMode234 = {{
+    {true, 0U, 3U},
+    {false, 0U, 1U},
+    {true, 0U, 2U},
+    {false, 1U, 1U},
+    {true, 0U, 1U},
+    {false, 0U, 0U},
+    {true, 0U, 0U},
+    {false, 1U, 0U},
+}};
+
 struct RankedBg {
   uint8_t bg = 0;
   uint8_t mask = 0;
@@ -618,6 +630,11 @@ struct RankedBg {
   uint8_t low_rank = 0;
   uint8_t high_rank = 0;
   uint8_t max_rank = 0;
+};
+
+struct BgFormat {
+  uint8_t bpp = 0;
+  uint8_t cgram_base = 0;
 };
 
 struct PriorityPlan {
@@ -630,7 +647,8 @@ struct PriorityPlan {
 // Rank zero is backdrop. First occurrence orders BGs by their maximum
 // possible rank; candidates that cannot beat either winner need no fetch.
 template <std::size_t N>
-consteval PriorityPlan BuildPriorityPlan(const std::array<Slot, N>& order, bool mode0) {
+consteval PriorityPlan BuildPriorityPlan(const std::array<Slot, N>& order,
+                                         const std::array<BgFormat, sppu::regs::kBgCount>& formats) {
   PriorityPlan plan;
   for (std::size_t i = 0; i < N; ++i) {
     const Slot slot = order[i];
@@ -643,13 +661,9 @@ consteval PriorityPlan BuildPriorityPlan(const std::array<Slot, N>& order, bool 
     while (entry < plan.count && plan.backgrounds[entry].bg != slot.bg) ++entry;
     if (entry == plan.count) {
       ++plan.count;
-      plan.backgrounds[entry] = {slot.bg,
-                                 static_cast<uint8_t>(1U << slot.bg),
-                                 static_cast<uint8_t>((mode0 || slot.bg == 2U) ? 2U : 4U),
-                                 static_cast<uint8_t>(mode0 ? slot.bg * 32U : 0U),
-                                 0U,
-                                 0U,
-                                 rank};
+      plan.backgrounds[entry] = {
+          slot.bg, static_cast<uint8_t>(1U << slot.bg), formats[slot.bg].bpp, formats[slot.bg].cgram_base, 0U, 0U,
+          rank};
     }
     if (slot.priority != 0U) {
       plan.backgrounds[entry].high_rank = rank;
@@ -660,9 +674,43 @@ consteval PriorityPlan BuildPriorityPlan(const std::array<Slot, N>& order, bool 
   return plan;
 }
 
-constexpr PriorityPlan kPlanMode0 = BuildPriorityPlan(kOrderMode0, true);
-constexpr PriorityPlan kPlanMode1Normal = BuildPriorityPlan(kOrderMode1Normal, false);
-constexpr PriorityPlan kPlanMode1Bg3High = BuildPriorityPlan(kOrderMode1Bg3High, false);
+constexpr std::array<BgFormat, sppu::regs::kBgCount> kFormatsMode0 = {{
+    {2U, 0U},
+    {2U, 32U},
+    {2U, 64U},
+    {2U, 96U},
+}};
+constexpr std::array<BgFormat, sppu::regs::kBgCount> kFormatsMode1 = {{
+    {4U, 0U},
+    {4U, 0U},
+    {2U, 0U},
+    {0U, 0U},
+}};
+constexpr std::array<BgFormat, sppu::regs::kBgCount> kFormatsMode2 = {{
+    {4U, 0U},
+    {4U, 0U},
+    {0U, 0U},
+    {0U, 0U},
+}};
+constexpr std::array<BgFormat, sppu::regs::kBgCount> kFormatsMode3 = {{
+    {8U, 0U},
+    {4U, 0U},
+    {0U, 0U},
+    {0U, 0U},
+}};
+constexpr std::array<BgFormat, sppu::regs::kBgCount> kFormatsMode4 = {{
+    {8U, 0U},
+    {2U, 0U},
+    {0U, 0U},
+    {0U, 0U},
+}};
+
+constexpr PriorityPlan kPlanMode0 = BuildPriorityPlan(kOrderMode0, kFormatsMode0);
+constexpr PriorityPlan kPlanMode1Normal = BuildPriorityPlan(kOrderMode1Normal, kFormatsMode1);
+constexpr PriorityPlan kPlanMode1Bg3High = BuildPriorityPlan(kOrderMode1Bg3High, kFormatsMode1);
+constexpr PriorityPlan kPlanMode2 = BuildPriorityPlan(kOrderMode234, kFormatsMode2);
+constexpr PriorityPlan kPlanMode3 = BuildPriorityPlan(kOrderMode234, kFormatsMode3);
+constexpr PriorityPlan kPlanMode4 = BuildPriorityPlan(kOrderMode234, kFormatsMode4);
 
 // 5-bit per-channel saturating subtraction (0..31).
 constexpr uint8_t SatSub5(uint8_t a, uint8_t b) { return static_cast<uint8_t>(a > b ? a - b : 0U); }
@@ -763,6 +811,12 @@ Ppu::ResolvedScreens Ppu::ResolveScreenPixels(uint32_t screen_x, uint32_t screen
     plan = &kPlanMode0;
   } else if (bg_mode_ == 1U) {
     plan = bg3_priority_ ? &kPlanMode1Bg3High : &kPlanMode1Normal;
+  } else if (bg_mode_ == 2U) {
+    plan = &kPlanMode2;
+  } else if (bg_mode_ == 3U) {
+    plan = &kPlanMode3;
+  } else if (bg_mode_ == 4U) {
+    plan = &kPlanMode4;
   } else if (bg_mode_ == 7U) {
     return ResolveMode7Screens(screen_x, screen_y, obj_px, main_mask, sub_mask);
   } else {
@@ -771,20 +825,29 @@ Ppu::ResolvedScreens Ppu::ResolveScreenPixels(uint32_t screen_x, uint32_t screen
 
   uint8_t main_rank = 0, sub_rank = 0;
   uint8_t main_index = 0, sub_index = 0;
+  uint16_t main_color = (*cgram_)[0], sub_color = (*cgram_)[0];
   uint8_t main_layer = 5U, sub_layer = 5U;
   if (!obj_px.transparent) {
     const uint8_t rank = plan->obj_ranks[obj_px.priority];
     if ((main_mask & sppu::regs::kTmObjMask) != 0U) {
       main_rank = rank;
       main_index = obj_px.cgram_index;
+      main_color = (*cgram_)[main_index];
       main_layer = 4U;
     }
     if ((sub_mask & sppu::regs::kTmObjMask) != 0U) {
       sub_rank = rank;
       sub_index = obj_px.cgram_index;
+      sub_color = (*cgram_)[sub_index];
       sub_layer = 4U;
     }
   }
+
+  const auto decode_direct_color = [](uint8_t color_index, uint8_t palette_group) -> uint16_t {
+    return static_cast<uint16_t>(((color_index & 0x07U) << 2U) | ((palette_group & 0x01U) << 1U) |
+                                 ((color_index & 0x38U) << 4U) | ((palette_group & 0x02U) << 5U) |
+                                 ((color_index & 0xC0U) << 7U) | ((palette_group & 0x04U) << 10U));
+  };
 
   const RankedBg* const backgrounds = plan->backgrounds.data();
   for (uint8_t i = 0; i < plan->count; ++i) {
@@ -798,20 +861,25 @@ Ppu::ResolvedScreens Ppu::ResolveScreenPixels(uint32_t screen_x, uint32_t screen
     if (px.transparent) continue;
     const uint8_t rank = px.priority ? bg.high_rank : bg.low_rank;
     const uint8_t index = static_cast<uint8_t>(px.cgram_index + bg.cgram_base);
+    const bool direct_color =
+        (bg_mode_ == 3U || bg_mode_ == 4U) && bg.bg == 0U && (cgwsel_ & sppu::regs::kCgwselDirectColorMask) != 0U;
+    const uint16_t color = direct_color ? decode_direct_color(px.color_index, px.palette_group) : (*cgram_)[index];
     if (main_possible && rank > main_rank) {
       main_rank = rank;
       main_index = index;
+      main_color = color;
       main_layer = bg.bg;
     }
     if (sub_possible && rank > sub_rank) {
       sub_rank = rank;
       sub_index = index;
+      sub_color = color;
       sub_layer = bg.bg;
     }
   }
   // OBJ palette 4..7 are math-eligible; BG/backdrop never use this flag.
-  return {{(*cgram_)[main_index], main_layer, main_layer == 4U && (main_index & 0x40U) != 0U},
-          {(*cgram_)[sub_index], sub_layer, sub_layer == 4U && (sub_index & 0x40U) != 0U}};
+  return {{main_color, main_layer, main_layer == 4U && (main_index & 0x40U) != 0U},
+          {sub_color, sub_layer, sub_layer == 4U && (sub_index & 0x40U) != 0U}};
 }
 
 void Ppu::RebuildWindowLogic() {
@@ -1111,7 +1179,7 @@ void Ppu::ReplayWrite(uint16_t offset, uint8_t data, TimeMasterT cycle) {
       bg_tile_16x16_[1] = (data & sppu::regs::kBgmodeBg2TileSizeMask) != 0U;
       bg_tile_16x16_[2] = (data & sppu::regs::kBgmodeBg3TileSizeMask) != 0U;
       bg_tile_16x16_[3] = (data & sppu::regs::kBgmodeBg4TileSizeMask) != 0U;
-      // Tile-size flip changes tile_w and the bytes_per_char ladder; dirty all.
+      // Modes and tile sizes affect both BG decoding and BG3 offset lookup.
       bg_row_dirty_.fill(true);
       break;
     }
@@ -1125,6 +1193,10 @@ void Ppu::ReplayWrite(uint16_t offset, uint8_t data, TimeMasterT cycle) {
       bg_tilemap_word_base_[bg] = static_cast<uint16_t>(static_cast<uint16_t>(data & sppu::regs::kBgScBaseMask) << 8);
       bg_tilemap_layout_[bg] = static_cast<uint8_t>(data & sppu::regs::kBgScLayoutMask);
       bg_row_dirty_[bg] = true;
+      if (bg == 2U && (bg_mode_ == 2U || bg_mode_ == 4U)) {
+        bg_row_dirty_[0] = true;
+        bg_row_dirty_[1] = true;
+      }
       break;
     }
 
@@ -1297,8 +1369,8 @@ void Ppu::WriteBgScroll(uint8_t bg, uint8_t data, bool is_hofs) {
   // bit 2) and clear bit 2 of every smooth scroll step, producing visible
   // 4-pixel jitter. Render path masks with kBgScrollMask.
   // VOFS: no feedback term; mask to 10 bits at storage.
-  // V scroll changes pixel_in_y → dirty the cache. H scroll intentionally
-  // doesn't: the (eff_x >> 3) cache key re-keys naturally at column crossings.
+  // V scroll changes the cached row. H scroll naturally re-keys when the
+  // effective 8-pixel column changes; its fine bits only select a pixel.
   const uint16_t high = static_cast<uint16_t>(static_cast<uint16_t>(data) << 8);
   if (is_hofs) {
     const uint16_t mid = static_cast<uint16_t>(bg_scroll_prev_ & 0xF8U);
@@ -1308,6 +1380,11 @@ void Ppu::WriteBgScroll(uint8_t bg, uint8_t data, bool is_hofs) {
     const uint16_t low = static_cast<uint16_t>(bg_scroll_prev_);
     bg_vofs_[bg] = static_cast<uint16_t>((high | low) & sppu::regs::kBgScrollMask);
     bg_row_dirty_[bg] = true;
+  }
+  // BG3 supplies offsets for both rendered BGs in Modes 2/4.
+  if (bg == 2U && (bg_mode_ == 2U || bg_mode_ == 4U)) {
+    bg_row_dirty_[0] = true;
+    bg_row_dirty_[1] = true;
   }
   bg_scroll_prev_ = data;
 }
@@ -1355,53 +1432,84 @@ uint32_t Ppu::MosaicSourceY(uint8_t bg, uint32_t screen_y) const {
   return screen_y - mosaic_vertical_index_;
 }
 
+uint16_t Ppu::ReadBgTilemapEntry(uint8_t bg, uint32_t x, uint32_t y) const {
+  const uint32_t tile_size = bg_tile_16x16_[bg] ? 16U : 8U;
+  const uint32_t tile_x = x / tile_size;
+  const uint32_t tile_y = y / tile_size;
+
+  // BGxSC layout:
+  //   0 (32x32): single screen
+  //   1 (64x32): SC0|SC1 horizontally, second screen at +0x400 words
+  //   2 (32x64): SC0/SC1 vertically,  second screen at +0x400
+  //   3 (64x64): 2x2, TR=+0x400, BL=+0x800, BR=+0xC00
+  const uint8_t layout = bg_tilemap_layout_[bg];
+  const bool wide = (layout == 1U) || (layout == 3U);
+  const bool tall = (layout == 2U) || (layout == 3U);
+  const uint32_t tile_x_wrapped = tile_x & (wide ? 0x3FU : 0x1FU);
+  const uint32_t tile_y_wrapped = tile_y & (tall ? 0x3FU : 0x1FU);
+  const uint32_t screen_col = (tile_x_wrapped >> 5U) & 0x1U;
+  const uint32_t screen_row = (tile_y_wrapped >> 5U) & 0x1U;
+  const uint32_t local_x = tile_x_wrapped & 0x1FU;
+  const uint32_t local_y = tile_y_wrapped & 0x1FU;
+  uint32_t screen_offset_words = 0;
+  if (layout == 1U) {
+    screen_offset_words = screen_col * 0x400U;
+  } else if (layout == 2U) {
+    screen_offset_words = screen_row * 0x400U;
+  } else if (layout == 3U) {
+    screen_offset_words = (screen_row * 0x800U) + (screen_col * 0x400U);
+  }
+
+  const uint32_t tilemap_word_addr =
+      static_cast<uint32_t>(bg_tilemap_word_base_[bg]) + screen_offset_words + (local_y * 32U) + local_x;
+  return ReadVramWord(static_cast<uint16_t>(tilemap_word_addr));
+}
+
 Ppu::BgPixel Ppu::FetchBgPixel(uint8_t bg, uint8_t bpp, uint32_t screen_x, uint32_t screen_y) const {
   if (bg >= sppu::regs::kBgCount) {
-    return {0U, true, false};
+    return {0U, 0U, 0U, true, false};
   }
   screen_x = MosaicSourceX(bg, screen_x);
   screen_y = MosaicSourceY(bg, screen_y);
-  const uint32_t eff_x = (screen_x + bg_hofs_[bg]) & 0x3FFU;  // 10-bit wrap (covers 64-tile width).
-  const int32_t cache_key = static_cast<int32_t>(eff_x >> 3U);
+  uint32_t eff_x = screen_x + bg_hofs_[bg];
+  uint32_t eff_y = screen_y + bg_vofs_[bg];
+  if (bg < 2U && (bg_mode_ == 2U || bg_mode_ == 4U)) {
+    const uint32_t offset_x = screen_x + (bg_hofs_[bg] & 7U);
+    // The first partially visible 8-pixel column uses ordinary scrolling,
+    // even for 16x16 BG tiles. Subsequent columns use BG3's previous column;
+    // BG3's fine HOFS and the screen Y do not participate in that lookup.
+    // Follow Anomie's 8x8-subtile rule and ares/sfc/ppu/background.cpp's
+    // 8-pixel fetch cadence, rather than the fast renderer's 16x16 exemption.
+    if (offset_x >= 8U) {
+      const uint32_t lookup_x = offset_x - 8U + (bg_hofs_[2] & ~7U);
+      const uint16_t horizontal = ReadBgTilemapEntry(2U, lookup_x, bg_vofs_[2]);
+      const uint16_t enable_mask = static_cast<uint16_t>(sppu::regs::kBgOffsetBg1EnableMask << bg);
+      if (bg_mode_ == 4U) {
+        if ((horizontal & enable_mask) != 0U) {
+          if ((horizontal & sppu::regs::kBgOffsetVerticalMask) != 0U) {
+            eff_y = screen_y + horizontal;
+          } else {
+            eff_x = offset_x + (horizontal & ~7U);
+          }
+        }
+      } else {
+        const uint16_t vertical = ReadBgTilemapEntry(2U, lookup_x, bg_vofs_[2] + 8U);
+        if ((horizontal & enable_mask) != 0U) eff_x = offset_x + (horizontal & ~7U);
+        if ((vertical & enable_mask) != 0U) eff_y = screen_y + vertical;
+      }
+    }
+  }
+  eff_x &= sppu::regs::kBgScrollMask;
+  eff_y &= sppu::regs::kBgScrollMask;
+  // Adjacent offset columns can select the same X but different rows.
+  const int32_t cache_key = static_cast<int32_t>((eff_y << 7U) | (eff_x >> 3U));
 
   BgRowCache& cache = bg_row_cache_[bg];
   if (cache.key != cache_key || bg_row_dirty_[bg]) {
-    const bool bg_is_2bpp = (bpp == 2U);
     const uint32_t tile_w = bg_tile_16x16_[bg] ? 16U : 8U;
     const uint32_t tile_h = tile_w;  // SNES BG tiles are square.
-    // Cache miss: decode the tilemap entry and load the 8-pixel column's
-    // plane bytes. This is the heavy path FetchBgPixel used to walk on every
-    // dot; under the cache it runs at most once per 8 pixels.
-    const uint32_t eff_y = (screen_y + bg_vofs_[bg]) & 0x3FFU;
-    const uint32_t tile_x = eff_x / tile_w;
-    const uint32_t tile_y = eff_y / tile_h;
-
-    // BGxSC layout:
-    //   0 (32x32): single screen
-    //   1 (64x32): SC0|SC1 horizontally, second screen at +0x400 words
-    //   2 (32x64): SC0/SC1 vertically,  second screen at +0x400
-    //   3 (64x64): 2x2, TR=+0x400, BL=+0x800, BR=+0xC00
-    const uint8_t layout = bg_tilemap_layout_[bg];
-    const bool wide = (layout == 1U) || (layout == 3U);
-    const bool tall = (layout == 2U) || (layout == 3U);
-    const uint32_t tile_x_wrapped = tile_x & (wide ? 0x3FU : 0x1FU);
-    const uint32_t tile_y_wrapped = tile_y & (tall ? 0x3FU : 0x1FU);
-    const uint32_t screen_col = (tile_x_wrapped >> 5U) & 0x1U;
-    const uint32_t screen_row = (tile_y_wrapped >> 5U) & 0x1U;
-    const uint32_t local_x = tile_x_wrapped & 0x1FU;
-    const uint32_t local_y = tile_y_wrapped & 0x1FU;
-    uint32_t screen_offset_words = 0;
-    if (layout == 1U) {
-      screen_offset_words = screen_col * 0x400U;
-    } else if (layout == 2U) {
-      screen_offset_words = screen_row * 0x400U;
-    } else if (layout == 3U) {
-      screen_offset_words = (screen_row * 0x800U) + (screen_col * 0x400U);
-    }
-
-    const uint32_t tilemap_word_addr =
-        static_cast<uint32_t>(bg_tilemap_word_base_[bg]) + screen_offset_words + (local_y * 32U) + local_x;
-    const uint16_t entry = ReadVramWord(static_cast<uint16_t>(tilemap_word_addr));
+    // Cache miss: decode the tilemap entry and the selected 8-pixel row.
+    const uint16_t entry = ReadBgTilemapEntry(bg, eff_x, eff_y);
 
     uint16_t char_index = static_cast<uint16_t>(entry & sppu::regs::kBgMapEntryCharMask);
     const uint8_t palette_group =
@@ -1424,35 +1532,55 @@ Ppu::BgPixel Ppu::FetchBgPixel(uint8_t bg, uint8_t bpp, uint32_t screen_x, uint3
       pixel_in_y &= 7U;
     }
 
-    const uint32_t bytes_per_char = bg_is_2bpp ? 16U : 32U;
+    const uint32_t bytes_per_char = bpp == 2U ? 16U : (bpp == 4U ? 32U : 64U);
     const uint32_t char_byte_base = static_cast<uint32_t>(bg_char_word_base_[bg]) << 1U;
     const uint32_t tile_byte_addr =
         char_byte_base + (static_cast<uint32_t>(char_index) * bytes_per_char) + (pixel_in_y * 2U);
 
-    const uint32_t* const expanded = kExpandedPlane.data();
-    cache.pixels = expanded[GetVramByte(tile_byte_addr)] | (expanded[GetVramByte(tile_byte_addr + 1U)] << 1U);
-    if (!bg_is_2bpp) {
-      cache.pixels |=
-          (expanded[GetVramByte(tile_byte_addr + 16U)] << 2U) | (expanded[GetVramByte(tile_byte_addr + 17U)] << 3U);
+    if (bpp < 8U) {
+      const uint32_t* const expanded = kExpandedPlane.data();
+      cache.pixels = expanded[GetVramByte(tile_byte_addr)] |
+                     (static_cast<uint64_t>(expanded[GetVramByte(tile_byte_addr + 1U)]) << 1U);
+      if (bpp >= 4U) {
+        cache.pixels |= static_cast<uint64_t>(expanded[GetVramByte(tile_byte_addr + 16U)]) << 2U;
+        cache.pixels |= static_cast<uint64_t>(expanded[GetVramByte(tile_byte_addr + 17U)]) << 3U;
+      }
+    } else {
+      const std::array<uint8_t, 8> plane_bytes = {
+          GetVramByte(tile_byte_addr),       GetVramByte(tile_byte_addr + 1U),  GetVramByte(tile_byte_addr + 16U),
+          GetVramByte(tile_byte_addr + 17U), GetVramByte(tile_byte_addr + 32U), GetVramByte(tile_byte_addr + 33U),
+          GetVramByte(tile_byte_addr + 48U), GetVramByte(tile_byte_addr + 49U),
+      };
+      cache.pixels = 0;
+      for (uint32_t col = 0; col < 8U; ++col) {
+        const uint8_t bit = static_cast<uint8_t>(7U - col);
+        uint8_t color = 0;
+        for (uint8_t plane = 0; plane < 8U; ++plane) {
+          color = static_cast<uint8_t>(color | (((static_cast<uint32_t>(plane_bytes[plane]) >> bit) & 1U) << plane));
+        }
+        cache.pixels |= static_cast<uint64_t>(color) << (col * 8U);
+      }
     }
     cache.palette_base = static_cast<uint8_t>(palette_group << bpp);
+    cache.palette_group = palette_group;
     cache.priority = priority;
     cache.hflip = hflip;
     cache.key = cache_key;
     bg_row_dirty_[bg] = false;
   }
 
-  // Extract one decoded color index. The cache still invalidates at exactly
-  // the same register/VRAM writes and tile/scanline boundaries as before.
+  // Extract one decoded color index. The cache stores four bits per pixel for
+  // 2/4bpp and eight bits per pixel for 8bpp.
   uint32_t bit_in_x = eff_x & 7U;
   if (cache.hflip) bit_in_x = 7U - bit_in_x;
-  const uint8_t color_index = static_cast<uint8_t>((cache.pixels >> (bit_in_x * 4U)) & 0x0FU);
+  const uint32_t pixel_stride = bpp == 8U ? 8U : 4U;
+  const uint8_t color_index = static_cast<uint8_t>((cache.pixels >> (bit_in_x * pixel_stride)) & ((1U << bpp) - 1U));
 
   if (color_index == 0U) {
-    return {0U, true, cache.priority};
+    return {0U, color_index, cache.palette_group, true, cache.priority};
   }
   const uint8_t cgram_index = static_cast<uint8_t>(cache.palette_base | color_index);
-  return {cgram_index, false, cache.priority};
+  return {cgram_index, color_index, cache.palette_group, false, cache.priority};
 }
 
 namespace {

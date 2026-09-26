@@ -140,6 +140,7 @@ set(PUPSNES_TEST_SOURCES
   src/tests/opcode_alu_indx_tests.cpp
   src/tests/opcode_bcd_tests.cpp
   src/tests/ppu_tests.cpp
+  src/tests/ppu_mode3_integration_tests.cpp
   src/tests/nmi_tests.cpp
   src/tests/hv_irq_tests.cpp
   src/tests/apu_tests.cpp
@@ -380,6 +381,7 @@ if(BUILD_TESTING)
     ${CMAKE_CURRENT_SOURCE_DIR}/testroms/ppu_blue_cgram/ppu_blue_cgram.s
     ${CMAKE_CURRENT_SOURCE_DIR}/testroms/ppu_mode7/ppu_mode7.s
     ${CMAKE_CURRENT_SOURCE_DIR}/testroms/ppu_mosaic/ppu_mosaic.s
+    ${CMAKE_CURRENT_SOURCE_DIR}/testroms/ppu_mode3/ppu_mode3.s
     ${CMAKE_CURRENT_SOURCE_DIR}/testroms/apu_upload/apu_upload.s
     ${CMAKE_CURRENT_SOURCE_DIR}/testroms/apu_transfers/apu_transfers.s
     ${CMAKE_CURRENT_SOURCE_DIR}/testroms/apu_arithmetic/apu_arithmetic.s

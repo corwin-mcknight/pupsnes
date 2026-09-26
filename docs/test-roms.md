@@ -126,3 +126,31 @@ Choose an unused output filename. See [Audio](audio.md) for playback settings an
 `ppu_mosaic.sfc` programs a deliberately non-uniform Mode 1 BG1 tile, then
 enables 4×4 BG1 mosaic. Its `[mosaic]` integration test verifies that each
 screen-wide 4×4 block resolves to the corresponding upper-left source pixel.
+
+## Mode 3 graphics fixture
+
+`ppu_mode3.sfc` renders asymmetric 16x16 8bpp BG1 tiles over perforated 8x8
+4bpp BG2 tiles, with twelve 16x16 sprites exercising all four OBJ priority
+levels. Mirrored tilemap entries, transparent apertures, and varying palette
+attributes expose character-stride, flip, and layer-order errors.
+
+HDMA selects three horizontal bands:
+
+- Rows 0–79: indexed BG1, using CGRAM.
+- Rows 80–159: direct-color BG1, including the tilemap palette bits.
+- Rows 160–223: direct-color BG1 plus saturating fixed RGB(4,8,12) addition.
+
+BG2 and OBJ remain indexed in every band. The dedicated
+`src/tests/ppu_mode3_integration_tests.cpp` test compares every visible pixel
+against independent scene expectations at two scheduler slice sizes.
+
+```sh
+build/ci/pupsnes_tests '[mode3]'
+build/ci/pupsnes-screenshot --rom build/ci/test-roms/ppu_mode3.sfc --frames 8 --output /tmp/ppu-mode3.ppm
+sips -s format png /tmp/ppu-mode3.ppm --out /tmp/ppu-mode3.png
+```
+
+The top band has indexed-color motifs; the middle band changes their colors;
+the bottom band visibly brightens BG1 without adding to BG2 or OBJ. Sprites
+are partially hidden according to their priority. Eight frames allow setup
+and HDMA to settle before capture. See [Screenshots](screenshots.md).

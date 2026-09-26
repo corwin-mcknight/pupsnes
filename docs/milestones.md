@@ -45,11 +45,17 @@ The remaining work concerns accuracy in unusual cases and interactions with the 
 
 ## Milestone 3: Graphics
 
-**Partially complete.** Mode 0, Mode 1, and Mode 7 backgrounds, sprites, priorities, window masking, color blending, brightness, and overscan are implemented. The PPU also handles its video-memory ports, beam-position latches, and Mode 7 multiplication registers.
+**Partially complete.** Modes 0–4 and Mode 7 backgrounds, sprites, priorities, mosaic, window masking, color blending, brightness, and overscan are implemented. The PPU also handles its video-memory ports, beam-position latches, and Mode 7 multiplication registers.
 
 **Mode 7 rendering is implemented**, including rotation and scaling, scroll and center registers, screen flips, wrapping and overflow behavior, EXTBG priorities, and BG1 direct color. A small test ROM exercises changing scale across scanlines through HDMA. This provides the graphics path used by rotating and scaling scenes; validation in commercial games remains to be done.
 
-Other remaining features include background Modes 2–6 and their direct-color support, offset-per-tile effects, and high-resolution and interlaced output.
+**Mode 3 rendering is implemented**, with 8bpp indexed/direct-color BG1 and 4bpp BG2. A test ROM combines flipped 16x16 tiles, transparent pixels, BG/OBJ priority overlap, and HDMA-controlled indexed, direct-color, and color-math bands. Its complete visible framebuffer is checked against independent expectations at two scheduler slice sizes.
+
+**Modes 2 and 4 are implemented**, including BG3-driven per-column scroll replacement, independent BG1/BG2 enables, Mode 2's separate horizontal/vertical offsets, and Mode 4's axis selector and BG1 direct color. Regressions cover partial first columns, fine scrolling, tilemap and VRAM wrapping, 16x16 tiles, mosaic, queued writes, priorities, windows, and color math. Standalone smoke ROMs for both modes produced 256×224 frames matching independent pixel expectations.
+
+Offset semantics follow [Anomie's register specification](https://github.com/gilligan/snesdev/blob/master/docs/snes_registers.txt) and the [ares cycle renderer](https://github.com/ares-emulator/ares/blob/master/ares/sfc/ppu/background.cpp). The first-column exemption remains eight pixels for 16x16 destination tiles, following their subtile fetch rules rather than the sixteen-pixel exemption in fast renderers; this edge has not been checked on physical hardware.
+
+Remaining graphics features include Modes 5 and 6, Mode 6 offset-per-tile, and high-resolution and interlaced output.
 
 **The goal:** games using these features display their scenes and effects correctly, while existing Mode 0/1 games retain their current behavior. Small graphics test ROMs and comparisons of known scenes will help establish progress.
 
@@ -91,4 +97,4 @@ Progress here means more diagnostic tests passing, fewer visual and audio errors
 
 The current order is **graphics completeness, save states and rewind, then broader cartridge support**. Controller improvements, audio compatibility, and fixes for known game problems can progress alongside those larger efforts.
 
-**Mode 7 is ready for game testing.** The next graphics features are mosaic and the remaining background modes. Audio now has an end-to-end path from uploaded sound programs to speakers and WAV files; further work there should build on concrete music, effect, and timing problems found in games.
+**Modes 2, 3, 4, and 7 are ready for broader game testing.** Mosaic and Mode 2/4 offset-per-tile are implemented. The next graphics milestone is hi-res/interlace output for Modes 5/6. Audio now has an end-to-end path from uploaded sound programs to speakers and WAV files; further work there should build on concrete music, effect, and timing problems found in games.

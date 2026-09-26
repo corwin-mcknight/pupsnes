@@ -45,7 +45,7 @@ struct PpuHvbStatus {
 
 // SPPU — Super Nintendo Picture Processing Unit. Owns the B-bus PPU window
 // ($2100-$213F) mirrored across banks $00-$3F / $80-$BF, advances via a
-// dot loop in CatchUpTo, and renders Modes 0/1 per-dot (so per-line HDMA scroll
+// dot loop in CatchUpTo, and renders Modes 0–4/7 per-dot (so per-line HDMA scroll
 // modulation needs no extra plumbing — the dot loop drains pending writes up
 // to the dot's start cycle before fetching).
 //
@@ -346,13 +346,19 @@ class Ppu : public Device {
   // Read a 16-bit word from VRAM (low byte at 2*word_addr, high at +1).
   // Word addresses wrap modulo 32K (mask &0x7FFF on the word index).
   [[nodiscard]] uint16_t ReadVramWord(uint16_t word_addr) const;
+  // Shared BG map addressing for graphics and Mode 2/4 BG3 offset words.
+  // Coordinates are pixels in the selected BG's 8x8 or 16x16 tilemap.
+  [[nodiscard]] uint16_t ReadBgTilemapEntry(uint8_t bg, uint32_t x, uint32_t y) const;
 
-  // BG pixel fetch result. `cgram_index` is the BG-local palette index
-  // ((palette_group << bpp) | color_index); the caller adds any per-mode
-  // CGRAM region offset. Caller must have drained the lazy-replay log to
-  // the dot's start cycle before calling FetchBgPixel.
+  // BG pixel fetch result. For opaque 2/4bpp pixels, `cgram_index` combines
+  // palette_group and color_index; for 8bpp it is the unmodified color_index.
+  // The caller adds any per-mode CGRAM region offset. The raw color_index
+  // and palette_group also support direct color. Caller must have drained
+  // the lazy-replay log to the dot's start cycle before calling FetchBgPixel.
   struct BgPixel {
     uint8_t cgram_index;
+    uint8_t color_index;
+    uint8_t palette_group;
     bool transparent;
     bool priority;
   };
@@ -360,15 +366,16 @@ class Ppu : public Device {
   [[nodiscard]] uint32_t MosaicSourceX(uint8_t bg, uint32_t screen_x) const;
   [[nodiscard]] uint32_t MosaicSourceY(uint8_t bg, uint32_t screen_y) const;
   void AdvanceMosaicVerticalCounter();
-  // One BG's cached 8-pixel column. Planes are decoded into eight 4-bit
-  // color indices for the current row of the current (sub-)tile. Cleared at scanline
-  // boundaries; invalidated mid-line via `bg_row_dirty_[bg]` when a register
-  // write changes the data the cache holds (VRAM write, scroll, tilemap base,
-  // tile size mode, etc.).
+  // One BG's cached 8-pixel column. Planes are decoded into eight color
+  // indices for the current row of the current (sub-)tile. Cleared at
+  // scanline boundaries; invalidated mid-line via `bg_row_dirty_[bg]` when a
+  // register write changes the data the cache holds (VRAM write, scroll,
+  // tilemap base, tile size mode, etc.).
   struct BgRowCache {
-    int32_t key = -1;  // (eff_x >> 3) when valid; -1 forces refetch
-    uint32_t pixels = 0;
+    int32_t key = -1;  // (eff_y << 7) | (eff_x >> 3); -1 forces refetch
+    uint64_t pixels = 0;
     uint8_t palette_base = 0;
+    uint8_t palette_group = 0;
     bool priority = false;
     bool hflip = false;
   };
@@ -441,7 +448,7 @@ class Ppu : public Device {
   uint8_t brightness_ = 0;
 
   // Decoded BGMODE ($2105) + BGxSC / BGxNBA / BGxOFS / TM. Indices run
-  // BG1=0..BG4=3; only BG1..BG3 participate in Mode 1.
+  // BG1=0..BG4=3; BG3 supplies offsets rather than pixels in Modes 2/4.
   uint8_t bg_mode_ = 0;
   bool bg3_priority_ = false;
   std::array<bool, sppu::regs::kBgCount> bg_tile_16x16_{};
@@ -580,11 +587,10 @@ class Ppu : public Device {
   mutable int32_t obj_line_v_ = -1;
 
   // --- Per-BG row cache ---
-  // Each FetchBgPixel call serves 8 consecutive pixels from a single decoded
-  // tilemap entry. The cache reuses that decode while pixels stay inside the
-  // same 8-pixel column; bg_row_dirty_ flags register writes that change the
-  // underlying bytes (VRAM, scroll, BGnSC/NBA, BGMODE) and force the next
-  // fetch to refresh. Mutable for the same reason as the OAM cache.
+  // Reuses a decoded tilemap entry and row while pixels stay inside the same
+  // effective 8-pixel column and Y coordinate. bg_row_dirty_ flags writes
+  // that change its inputs (VRAM, scroll, BGnSC/NBA, BGMODE, and BG3 offset
+  // lookup registers in Modes 2/4). Mutable for the same reason as OAM.
   mutable std::array<BgRowCache, sppu::regs::kBgCount> bg_row_cache_{};
   mutable std::array<bool, sppu::regs::kBgCount> bg_row_dirty_{};
 

@@ -1097,6 +1097,30 @@ void WriteTile4bpp(SNES& snes, uint16_t char_word_base, uint16_t char_index, con
     WriteVramWord(snes, static_cast<uint16_t>(base + 8U + row), static_cast<uint16_t>(p2 | (p3 << 8U)), now);
   }
 }
+// Write an 8bpp 8x8 tile pattern to VRAM at `char_word_base + char_index*32`
+// (64 bytes = 32 words). The eight bitplanes are stored as four interleaved
+// plane pairs, matching the SNES character layout.
+void WriteTile8bpp(SNES& snes, uint16_t char_word_base, uint16_t char_index, const uint8_t (&pixels)[64],
+                   TimeMasterT& now) {
+  const uint16_t base = static_cast<uint16_t>(char_word_base + char_index * 32U);
+  for (uint16_t row = 0; row < 8; ++row) {
+    std::array<uint32_t, 8> planes{};
+    for (uint16_t col = 0; col < 8; ++col) {
+      const uint32_t value = pixels[row * 8 + col];
+      const uint8_t shift = static_cast<uint8_t>(7U - col);
+      for (uint8_t plane = 0; plane < 8U; ++plane) {
+        planes[plane] |= ((value >> plane) & 1U) << shift;
+      }
+    }
+    WriteVramWord(snes, static_cast<uint16_t>(base + row), static_cast<uint16_t>(planes[0] | (planes[1] << 8U)), now);
+    WriteVramWord(snes, static_cast<uint16_t>(base + 8U + row), static_cast<uint16_t>(planes[2] | (planes[3] << 8U)),
+                  now);
+    WriteVramWord(snes, static_cast<uint16_t>(base + 16U + row), static_cast<uint16_t>(planes[4] | (planes[5] << 8U)),
+                  now);
+    WriteVramWord(snes, static_cast<uint16_t>(base + 24U + row), static_cast<uint16_t>(planes[6] | (planes[7] << 8U)),
+                  now);
+  }
+}
 
 // Set the OAM byte address. byte_addr must be even (the OAMADDL latch only
 // captures bits 1..8 of byte_addr; bit 0 is implicitly 0). For odd-byte access
@@ -1167,6 +1191,50 @@ TimeMasterT ConfigureIndexedMosaicBg1(SNES& snes, uint8_t mosaic) {
   return now;
 }
 
+struct OffsetFixture {
+  SNES snes;
+  TimeMasterT now = 1;
+  uint8_t mode;
+
+  explicit OffsetFixture(uint8_t bgmode) : mode(bgmode & 7U) {
+    snes.GetPpu().Reset();
+    Write(sppu::regs::kInidisp, 0x0FU);
+    Write(sppu::regs::kVmain, 0x80U);
+    Write(sppu::regs::kBgmode, bgmode);
+    Write(sppu::regs::kBg1Sc, 0x40U);
+    Write(sppu::regs::kBg2Sc, 0x44U);
+    Write(sppu::regs::kBg3Sc, 0x50U);
+    Write(sppu::regs::kBg12Nba, 0x21U);
+    Write(sppu::regs::kTm, 1U);
+    for (uint8_t color = 0; color < 16U; ++color) WriteCgramWord(snes, color, color, now);
+  }
+
+  void Write(uint16_t reg, uint8_t value) { BusWrite(snes, reg, value, now++); }
+  void Scroll(uint16_t reg, uint16_t value) {
+    Write(reg, static_cast<uint8_t>(value));
+    Write(reg, static_cast<uint8_t>(value >> 8U));
+  }
+  void Tile(uint8_t bg, uint16_t character, const uint8_t (&pixels)[64]) {
+    if (mode == 4U && bg == 0U) {
+      WriteTile8bpp(snes, 0x1000U, character, pixels, now);
+    } else if (mode == 4U) {
+      WriteTile2bpp(snes, 0x2000U, character, pixels, now);
+    } else {
+      WriteTile4bpp(snes, bg == 0U ? 0x1000U : 0x2000U, character, pixels, now);
+    }
+  }
+  void Solid(uint8_t bg, uint16_t character, uint8_t color) {
+    uint8_t pixels[64];
+    for (uint8_t& pixel : pixels) pixel = color;
+    Tile(bg, character, pixels);
+  }
+  void Render() { snes.GetPpu().CatchUpTo(kFrameEndNtsc); }
+  uint16_t Pixel(uint32_t x, uint32_t y = 0) {
+    const FrameBufferView view = snes.GetPpu().BuildFrontView();
+    return view.pixels[y * view.stride + x];
+  }
+};
+
 }  // namespace
 
 TEST_CASE("Mode 1 BG1 4bpp tile renders to the framebuffer with palette colors", "[unit][ppu]") {
@@ -1222,6 +1290,865 @@ TEST_CASE("Mode 1 BG1 4bpp tile renders to the framebuffer with palette colors",
   // Row 1+ should be white (color 5).
   REQUIRE(view.pixels[1U * view.stride + 0U] == 0x7FFFU);
   REQUIRE(view.pixels[7U * view.stride + 7U] == 0x7FFFU);
+}
+
+TEST_CASE("Mode 3 BG1 decodes all eight planes with 64-byte strides and ignores indexed palette bits",
+          "[unit][ppu][mode3]") {
+  SNES snes;
+  Ppu& ppu = snes.GetPpu();
+  ppu.Reset();
+  TimeMasterT now = 1;
+
+  BusWrite(snes, sppu::regs::kInidisp, 0x0FU, now++);
+  BusWrite(snes, sppu::regs::kVmain, 0x80U, now++);
+  WriteCgramWord(snes, 0U, 0x0000U, now);
+  for (uint16_t color = 1; color <= 0x80U; color <<= 1U) {
+    WriteCgramWord(snes, static_cast<uint8_t>(color), static_cast<uint16_t>(color), now);
+  }
+  constexpr uint8_t kAdjacentIndices[] = {0x81U, 0x42U, 0x24U, 0x18U, 0xAAU, 0x55U, 0xFEU, 0xFFU};
+  for (uint8_t color : kAdjacentIndices) WriteCgramWord(snes, color, color, now);
+
+  uint8_t tile[64] = {};
+  tile[0] = 0x01U;
+  tile[1] = 0x02U;
+  tile[2] = 0x04U;
+  tile[3] = 0x08U;
+  tile[4] = 0x10U;
+  tile[5] = 0x20U;
+  tile[6] = 0x40U;
+  tile[7] = 0x80U;
+  tile[8] = 0x00U;
+  WriteTile8bpp(snes, 0x1000U, 0U, tile, now);
+  WriteVramWord(snes, 0x0000U, 0x0000U, now);
+  uint8_t adjacent[64] = {};
+  for (uint8_t x = 0; x < 8U; ++x) adjacent[x] = kAdjacentIndices[x];
+  WriteTile8bpp(snes, 0x1000U, 1U, adjacent, now);
+  WriteVramWord(snes, 0x0001U, 0x1C01U, now);  // Adjacent character, palette 7.
+  WriteVramWord(snes, 0x0002U, 0x1400U, now);  // Same first character, palette 5.
+
+  BusWrite(snes, sppu::regs::kBgmode, 0x03U, now++);
+  BusWrite(snes, sppu::regs::kBg1Sc, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kBg12Nba, 0x01U, now++);
+  BusWrite(snes, sppu::regs::kTm, sppu::regs::kTmBg1Mask, now++);
+  REQUIRE(now < 1452U);
+
+  ppu.CatchUpTo(kFrameEndNtsc);
+  const FrameBufferView view = ppu.BuildFrontView();
+  for (uint8_t x = 0; x < 8U; ++x) {
+    REQUIRE(view.pixels[x] == static_cast<uint16_t>(1U << x));
+    REQUIRE(view.pixels[8U + x] == kAdjacentIndices[x]);
+    REQUIRE(view.pixels[16U + x] == static_cast<uint16_t>(1U << x));
+  }
+  REQUIRE(view.pixels[1U * view.stride] == 0U);
+}
+
+TEST_CASE("Mode 3 BG1 direct color combines pixel and tile palette bits without CGRAM", "[unit][ppu][mode3]") {
+  SNES snes;
+  Ppu& ppu = snes.GetPpu();
+  ppu.Reset();
+  TimeMasterT now = 1;
+
+  BusWrite(snes, sppu::regs::kInidisp, 0x0FU, now++);
+  BusWrite(snes, sppu::regs::kVmain, 0x80U, now++);
+  WriteCgramWord(snes, 0U, 0x0000U, now);
+  WriteCgramWord(snes, 0xE3U, 0x1234U, now);
+  WriteCgramWord(snes, 1U, 0x7FFFU, now);
+
+  uint8_t tile[64] = {};
+  tile[0] = 0xE3U;
+  tile[2] = 0x01U;
+  WriteTile8bpp(snes, 0x1000U, 0U, tile, now);
+  // Palette group 5 supplies bgr = 101 in direct-color mode.
+  WriteVramWord(snes, 0x0000U, static_cast<uint16_t>(5U << 10U), now);
+  constexpr uint8_t kPalettes[] = {0U, 1U, 2U, 4U, 7U};
+  for (uint16_t entry = 0; entry < 5U; ++entry) {
+    WriteVramWord(snes, static_cast<uint16_t>(entry + 1U), static_cast<uint16_t>(kPalettes[entry] << 10U), now);
+  }
+
+  BusWrite(snes, sppu::regs::kBgmode, 0x03U, now++);
+  BusWrite(snes, sppu::regs::kBg1Sc, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kBg12Nba, 0x01U, now++);
+  BusWrite(snes, sppu::regs::kCgwsel, sppu::regs::kCgwselDirectColorMask, now++);
+  BusWrite(snes, sppu::regs::kTm, sppu::regs::kTmBg1Mask, now++);
+  REQUIRE(now < 1452U);
+
+  ppu.CatchUpTo(kFrameEndNtsc);
+  const FrameBufferView view = ppu.BuildFrontView();
+  // fullsnes: RRRr0, GGGg0, BBb00. Palette blue is BGR555 bit 12,
+  // not bit 11; isolate each palette channel rather than copying a converter.
+  REQUIRE(view.pixels[0] == 0x720EU);  // E3, palette 5: R=14, G=16, B=28.
+  REQUIRE(view.pixels[1] == 0U);
+  REQUIRE(view.pixels[2] == 0x1006U);  // 01, palette 5: R=6, G=0, B=4.
+  constexpr uint16_t kExpected[] = {0x620CU, 0x620EU, 0x624CU, 0x720CU, 0x724EU};
+  for (uint32_t entry = 0; entry < 5U; ++entry) {
+    CAPTURE(entry);
+    REQUIRE(view.pixels[(entry + 1U) * 8U] == kExpected[entry]);
+    REQUIRE(view.pixels[(entry + 1U) * 8U + 1U] == 0U);
+  }
+}
+
+TEST_CASE("Mode 3 follows every adjacent BG and OBJ priority boundary on both screens", "[unit][ppu][mode3]") {
+  SNES snes;
+  Ppu& ppu = snes.GetPpu();
+  ppu.Reset();
+  TimeMasterT now = 1;
+  BusWrite(snes, sppu::regs::kInidisp, 0x0FU, now++);
+  BusWrite(snes, sppu::regs::kVmain, 0x80U, now++);
+  WriteCgramWord(snes, 0xE3U, 4U, now);       // BG1: red 4.
+  WriteCgramWord(snes, 0x32U, 0x1000U, now);  // BG2 palette 3: blue 4.
+  WriteCgramWord(snes, 0xC1U, 0x0080U, now);  // OBJ palette 4: green 4, math eligible.
+  uint8_t bg1[64], bg2[64], obj[64];
+  for (uint8_t& pixel : bg1) pixel = 0xE3U;
+  for (uint8_t& pixel : bg2) pixel = 2U;
+  for (uint8_t& pixel : obj) pixel = 1U;
+  WriteTile8bpp(snes, 0x1000U, 0U, bg1, now);
+  WriteTile4bpp(snes, 0x3000U, 0U, bg2, now);
+  WriteTile4bpp(snes, 0x0000U, 1U, obj, now);
+
+  // Highest first: OBJ3, BG1H, OBJ2, BG2H, OBJ1, BG1L, OBJ0, BG2L.
+  // Seven overlaps straddle the seven adjacent boundaries. The remaining
+  // columns check BG2 against backdrop and the three BG/BG comparisons.
+  // Character 1 on either BG is transparent; OBJ uses its own character base.
+  constexpr uint16_t kBg1Entries[] = {0x2000U, 0x2000U, 1U, 1U, 0U, 0U, 1U, 1U, 0x2000U, 0U, 0U};
+  constexpr uint16_t kBg2Entries[] = {1U, 1U, 0x2C00U, 0x2C00U, 1U, 1U, 0x0C00U, 0x0C00U, 0x2C00U, 0x0C00U, 0x2C00U};
+  constexpr uint8_t kObjPriorities[] = {3U, 2U, 2U, 1U, 1U, 0U, 0U};
+  for (uint16_t column = 0; column < 11U; ++column) {
+    WriteVramWord(snes, static_cast<uint16_t>(0x0808U + column), kBg1Entries[column], now);
+    WriteVramWord(snes, static_cast<uint16_t>(0x0C08U + column), kBg2Entries[column], now);
+    if (column < 7U) {
+      WriteOamLowEntry(snes, static_cast<uint8_t>(column), static_cast<uint8_t>(64U + column * 8U), 0U, 1U,
+                       static_cast<uint8_t>((static_cast<uint32_t>(kObjPriorities[column]) << 4U) | 0x08U), now);
+    }
+  }
+  BusWrite(snes, sppu::regs::kBgmode, 0x03U, now++);
+  BusWrite(snes, sppu::regs::kBg1Sc, 0x08U, now++);
+  BusWrite(snes, sppu::regs::kBg2Sc, 0x0CU, now++);
+  BusWrite(snes, sppu::regs::kBg12Nba, 0x31U, now++);
+  BusWrite(snes, sppu::regs::kTm, 0x13U, now++);
+  BusWrite(snes, sppu::regs::kTs, 0x13U, now++);
+  BusWrite(snes, sppu::regs::kCgwsel, sppu::regs::kCgwselSubScreenEnableMask, now++);
+  BusWrite(snes, sppu::regs::kCgadsub, 0x3FU, now++);
+  REQUIRE(now < 1452U);
+
+  ppu.CatchUpTo(kFrameEndNtsc);
+  const FrameBufferView view = ppu.BuildFrontView();
+  // Identical main/sub winners add to twice the selected channel.
+  constexpr uint16_t kExpected[] = {0x0100U, 8U, 0x0100U, 0x2000U, 0x0100U, 8U, 0x0100U, 0x2000U, 8U, 8U, 0x2000U};
+  for (uint32_t column = 0; column < 11U; ++column) {
+    CAPTURE(column);
+    REQUIRE(view.pixels[64U + column * 8U] == kExpected[column]);
+  }
+}
+
+TEST_CASE("Mode 3 zero BG1 pixels expose BG2 OBJ and backdrop despite palette bits", "[unit][ppu][mode3]") {
+  for (bool direct : {false, true}) {
+    CAPTURE(direct);
+    SNES snes;
+    Ppu& ppu = snes.GetPpu();
+    ppu.Reset();
+    TimeMasterT now = 1;
+    BusWrite(snes, sppu::regs::kInidisp, 0x0FU, now++);
+    BusWrite(snes, sppu::regs::kVmain, 0x80U, now++);
+    WriteCgramWord(snes, 0U, 0x001FU, now);
+    WriteCgramWord(snes, 0x32U, 0x03E0U, now);
+    WriteCgramWord(snes, 0x81U, 0x7C00U, now);
+    WriteCgramWord(snes, 0xE3U, 0x4210U, now);
+    uint8_t bg1[64] = {}, bg2[64] = {}, obj[64] = {};
+    bg1[3] = 0xE3U;
+    bg2[0] = bg2[3] = 2U;
+    obj[1] = obj[3] = 1U;
+    WriteTile8bpp(snes, 0x1000U, 0U, bg1, now);
+    WriteTile4bpp(snes, 0x3000U, 0U, bg2, now);
+    WriteTile4bpp(snes, 0x0000U, 1U, obj, now);
+    WriteVramWord(snes, 0x0800U, 0x3C00U, now);  // BG1 high, palette 7, zero at x=0..2.
+    WriteVramWord(snes, 0x0C00U, 0x0C00U, now);  // BG2 low, palette 3.
+    WriteOamLowEntry(snes, 0U, 0U, 0U, 1U, 0U, now);
+    BusWrite(snes, sppu::regs::kBgmode, 0x03U, now++);
+    BusWrite(snes, sppu::regs::kBg1Sc, 0x08U, now++);
+    BusWrite(snes, sppu::regs::kBg2Sc, 0x0CU, now++);
+    BusWrite(snes, sppu::regs::kBg12Nba, 0x31U, now++);
+    BusWrite(snes, sppu::regs::kCgwsel, direct ? sppu::regs::kCgwselDirectColorMask : 0U, now++);
+    BusWrite(snes, sppu::regs::kTm, 0x13U, now++);
+    REQUIRE(now < 1452U);
+
+    ppu.CatchUpTo(kFrameEndNtsc);
+    const FrameBufferView view = ppu.BuildFrontView();
+    REQUIRE(view.pixels[0] == 0x03E0U);  // BG2 remains indexed even with direct color enabled.
+    REQUIRE(view.pixels[1] == 0x7C00U);  // OBJ remains indexed.
+    REQUIRE(view.pixels[2] == 0x001FU);  // Zero does not become palette-derived direct black.
+    REQUIRE(view.pixels[3] == (direct ? 0x724EU : 0x4210U));
+  }
+}
+
+TEST_CASE("Mode 3 has no BG3 or BG4 on either screen", "[unit][ppu][mode3]") {
+  SNES snes;
+  Ppu& ppu = snes.GetPpu();
+  ppu.Reset();
+  TimeMasterT now = 1;
+  BusWrite(snes, sppu::regs::kInidisp, 0x0FU, now++);
+  BusWrite(snes, sppu::regs::kVmain, 0x80U, now++);
+  WriteCgramWord(snes, 0U, 1U, now);
+  for (uint8_t index : {uint8_t{1}, uint8_t{2}, uint8_t{0x41}, uint8_t{0x62}}) {
+    WriteCgramWord(snes, index, 0x7C00U, now);
+  }
+  uint8_t bg3[64], bg4[64];
+  for (uint8_t& pixel : bg3) pixel = 1U;
+  for (uint8_t& pixel : bg4) pixel = 2U;
+  WriteTile2bpp(snes, 0x3000U, 0U, bg3, now);
+  WriteTile2bpp(snes, 0x4000U, 0U, bg4, now);
+  WriteVramWord(snes, 0x0800U, 0x2000U, now);
+  WriteVramWord(snes, 0x0C00U, 0x2000U, now);
+  BusWrite(snes, sppu::regs::kBg3Sc, 0x08U, now++);
+  BusWrite(snes, sppu::regs::kBg4Sc, 0x0CU, now++);
+  BusWrite(snes, sppu::regs::kBg34Nba, 0x43U, now++);
+  BusWrite(snes, sppu::regs::kBgmode, 0x0BU, now++);  // Mode 1's BG3-high bit must not revive BG3.
+  BusWrite(snes, sppu::regs::kTm, 0x0CU, now++);
+  BusWrite(snes, sppu::regs::kTs, 0x0CU, now++);
+  BusWrite(snes, sppu::regs::kCgwsel, sppu::regs::kCgwselSubScreenEnableMask, now++);
+  BusWrite(snes, sppu::regs::kCgadsub, 0x3FU, now++);
+  BusWrite(snes, sppu::regs::kColdata, 0x42U, now++);  // Sub backdrop: green 2.
+  REQUIRE(now < 1452U);
+
+  ppu.CatchUpTo(kFrameEndNtsc);
+  const FrameBufferView view = ppu.BuildFrontView();
+  REQUIRE(view.pixels[0] == 0x0041U);  // Main backdrop red 1 + fixed sub green 2.
+}
+
+TEST_CASE("Mode 3 16x16 flips and fine scroll preserve subtiles across character address wrap", "[unit][ppu][mode3]") {
+  SNES snes;
+  Ppu& ppu = snes.GetPpu();
+  ppu.Reset();
+  TimeMasterT now = 1;
+  BusWrite(snes, sppu::regs::kInidisp, 0x0FU, now++);
+  BusWrite(snes, sppu::regs::kVmain, 0x80U, now++);
+  for (uint16_t color = 0x80U; color < 0xC0U; ++color) {
+    WriteCgramWord(snes, static_cast<uint8_t>(color), color, now);
+  }
+  // fullsnes BG carry rule: 3FF,400 / 40F,410. With a $1000-word
+  // character base these land at $0FE0,$1000,$11E0,$1200 after VRAM wrap.
+  constexpr uint16_t kCharacters[] = {0x3FFU, 0x400U, 0x40FU, 0x410U};
+  for (uint16_t quadrant = 0; quadrant < 4U; ++quadrant) {
+    uint8_t tile[64];
+    for (uint16_t y = 0; y < 8U; ++y) {
+      for (uint16_t x = 0; x < 8U; ++x) {
+        tile[y * 8U + x] = static_cast<uint8_t>(0x80U + quadrant * 16U + (y % 4U) * 4U + x % 4U);
+      }
+    }
+    WriteTile8bpp(snes, 0x1000U, kCharacters[quadrant], tile, now);
+  }
+  WriteVramWord(snes, 0x3000U, 0x03FFU, now);
+  WriteVramWord(snes, 0x3001U, 0x43FFU, now);  // H flip.
+  WriteVramWord(snes, 0x3002U, 0x83FFU, now);  // V flip.
+  WriteVramWord(snes, 0x3003U, 0xC3FFU, now);  // Both flips.
+  BusWrite(snes, sppu::regs::kBgmode, 0x13U, now++);
+  BusWrite(snes, sppu::regs::kBg1Sc, 0x30U, now++);
+  BusWrite(snes, sppu::regs::kBg12Nba, 0x01U, now++);
+  BusWrite(snes, sppu::regs::kBg1Hofs, 5U, now++);
+  BusWrite(snes, sppu::regs::kBg1Hofs, 0U, now++);
+  BusWrite(snes, sppu::regs::kBg1Vofs, 3U, now++);
+  BusWrite(snes, sppu::regs::kBg1Vofs, 0U, now++);
+  BusWrite(snes, sppu::regs::kTm, sppu::regs::kTmBg1Mask, now++);
+  REQUIRE(now < 1452U);
+
+  ppu.CatchUpTo(kFrameEndNtsc);
+  const FrameBufferView view = ppu.BuildFrontView();
+  // Explicit (screen x,y,color) probes cover sub-tile crossings, reversal
+  // within each 8-pixel row, and reversal of the 16x16 quadrant order.
+  constexpr uint16_t kProbes[][3] = {
+      {0U, 0U, 0x8DU},   {2U, 0U, 0x8FU},  {3U, 0U, 0x9CU},  {10U, 4U, 0x9FU}, {0U, 5U, 0xA1U},  {3U, 5U, 0xB0U},
+      {10U, 12U, 0xBFU}, {11U, 0U, 0x9FU}, {18U, 0U, 0x9CU}, {19U, 0U, 0x8FU}, {26U, 0U, 0x8CU}, {27U, 1U, 0xACU},
+      {34U, 5U, 0x8FU},  {43U, 0U, 0xB3U}, {50U, 0U, 0xB0U}, {51U, 0U, 0xA3U}, {58U, 0U, 0xA0U}, {43U, 12U, 0x93U},
+  };
+  for (const auto& probe : kProbes) {
+    CAPTURE(probe[0], probe[1]);
+    REQUIRE(view.pixels[probe[1] * view.stride + probe[0]] == probe[2]);
+  }
+}
+
+TEST_CASE("Mode 3 scroll crosses both 64x64 map seams with tilemap VRAM wrap", "[unit][ppu][mode3]") {
+  SNES snes;
+  Ppu& ppu = snes.GetPpu();
+  ppu.Reset();
+  TimeMasterT now = 1;
+  BusWrite(snes, sppu::regs::kInidisp, 0x0FU, now++);
+  BusWrite(snes, sppu::regs::kVmain, 0x80U, now++);
+  constexpr uint8_t kIndices[] = {0x11U, 0x22U, 0x44U, 0x88U};
+  constexpr uint16_t kColors[] = {0x001FU, 0x03E0U, 0x7C00U, 0x7FFFU};
+  for (uint16_t character = 0; character < 4U; ++character) {
+    WriteCgramWord(snes, kIndices[character], kColors[character], now);
+    uint8_t tile[64];
+    for (uint8_t& pixel : tile) pixel = kIndices[character];
+    WriteTile8bpp(snes, 0x2000U, character, tile, now);
+  }
+  // Four cells around map coordinate (256,256). The second, third and
+  // fourth 32x32 screens wrap past the end of the 32K-word VRAM.
+  WriteVramWord(snes, 0x7FFFU, 0U, now);
+  WriteVramWord(snes, 0x83E0U, 1U, now);
+  WriteVramWord(snes, 0x841FU, 2U, now);
+  WriteVramWord(snes, 0x8800U, 3U, now);
+  BusWrite(snes, sppu::regs::kBgmode, 0x03U, now++);
+  BusWrite(snes, sppu::regs::kBg1Sc, 0x7FU, now++);
+  BusWrite(snes, sppu::regs::kBg12Nba, 0x02U, now++);
+  BusWrite(snes, sppu::regs::kBg1Hofs, 0xFFU, now++);
+  BusWrite(snes, sppu::regs::kBg1Hofs, 0U, now++);
+  BusWrite(snes, sppu::regs::kBg1Vofs, 0xFFU, now++);
+  BusWrite(snes, sppu::regs::kBg1Vofs, 0U, now++);
+  BusWrite(snes, sppu::regs::kTm, sppu::regs::kTmBg1Mask, now++);
+  REQUIRE(now < 1452U);
+
+  ppu.CatchUpTo(kFrameEndNtsc);
+  const FrameBufferView view = ppu.BuildFrontView();
+  REQUIRE(view.pixels[0] == 0x001FU);
+  REQUIRE(view.pixels[1] == 0x03E0U);
+  REQUIRE(view.pixels[view.stride] == 0x7C00U);
+  REQUIRE(view.pixels[view.stride + 1U] == 0x7FFFU);
+}
+
+TEST_CASE("Mode 3 direct color on either screen composes with layer and color windows", "[unit][ppu][mode3]") {
+  for (bool direct_main : {true, false}) {
+    CAPTURE(direct_main);
+    SNES snes;
+    Ppu& ppu = snes.GetPpu();
+    ppu.Reset();
+    TimeMasterT now = 1;
+    BusWrite(snes, sppu::regs::kInidisp, 0x0FU, now++);
+    BusWrite(snes, sppu::regs::kVmain, 0x80U, now++);
+    WriteCgramWord(snes, 0U, 1U, now);
+    WriteCgramWord(snes, 0x49U, 0x7FFFU, now);  // Must not supply the BG1 color.
+    WriteCgramWord(snes, 0x32U, 0x1882U, now);  // BG2: R=2, G=4, B=6.
+    uint8_t bg1[64], bg2[64];
+    for (uint8_t& pixel : bg1) pixel = 0x49U;
+    for (uint8_t& pixel : bg2) pixel = 2U;
+    WriteTile8bpp(snes, 0x1000U, 0U, bg1, now);
+    WriteTile4bpp(snes, 0x3000U, 0U, bg2, now);
+    WriteVramWord(snes, 0x0000U, 0x1C00U, now);  // Direct BG1: R=6, G=6, B=12.
+    WriteVramWord(snes, 0x0400U, 0x0C00U, now);
+    BusWrite(snes, sppu::regs::kBgmode, 0x03U, now++);
+    BusWrite(snes, sppu::regs::kBg1Sc, 0x00U, now++);
+    BusWrite(snes, sppu::regs::kBg2Sc, 0x04U, now++);
+    BusWrite(snes, sppu::regs::kBg12Nba, 0x31U, now++);
+    BusWrite(snes, sppu::regs::kTm, direct_main ? 1U : 2U, now++);
+    BusWrite(snes, sppu::regs::kTs, direct_main ? 2U : 1U, now++);
+    BusWrite(snes, sppu::regs::kWh0, 2U, now++);
+    BusWrite(snes, sppu::regs::kWh1, 5U, now++);
+    BusWrite(snes, sppu::regs::kW12Sel, 0x02U, now++);  // Mask BG1 in window 1.
+    BusWrite(snes, direct_main ? sppu::regs::kTmw : sppu::regs::kTsw, 1U, now++);
+    BusWrite(snes, sppu::regs::kWh2, 4U, now++);
+    BusWrite(snes, sppu::regs::kWh3, 7U, now++);
+    BusWrite(snes, sppu::regs::kWObjSel, 0x80U, now++);  // Color window uses window 2.
+    BusWrite(snes, sppu::regs::kCgwsel, 0x13U, now++);   // Direct, real sub, math inside color window.
+    BusWrite(snes, sppu::regs::kCgadsub, 0x23U, now++);  // BG1, BG2, backdrop.
+    BusWrite(snes, sppu::regs::kColdata, 0x23U, now++);  // Windowed sub falls back to red 3.
+    REQUIRE(now < 1452U);
+
+    ppu.CatchUpTo(kFrameEndNtsc);
+    const FrameBufferView view = ppu.BuildFrontView();
+    REQUIRE(view.pixels[0] == (direct_main ? 0x30C6U : 0x1882U));  // Math disabled outside color window.
+    REQUIRE(view.pixels[2] == (direct_main ? 1U : 0x1882U));       // BG1 masked, still no math.
+    REQUIRE(view.pixels[4] == (direct_main ? 0x1883U : 0x1885U));  // Main backdrop or sub fixed fallback.
+    REQUIRE(view.pixels[6] == 0x4948U);                            // R=8, G=10, B=18 on either assignment.
+  }
+}
+
+TEST_CASE("Mode 3 mosaic repeats eight-bit source pixels without leaking adjacent palette attributes",
+          "[unit][ppu][mode3]") {
+  SNES snes;
+  Ppu& ppu = snes.GetPpu();
+  ppu.Reset();
+  TimeMasterT now = 1;
+  BusWrite(snes, sppu::regs::kInidisp, 0x0FU, now++);
+  BusWrite(snes, sppu::regs::kVmain, 0x80U, now++);
+  uint8_t tile[64];
+  for (uint8_t& pixel : tile) pixel = 0xFFU;
+  tile[0] = 0x81U;
+  tile[4] = 0x22U;
+  tile[32] = 0xC3U;
+  tile[36] = 0x54U;
+  WriteTile8bpp(snes, 0x1000U, 0U, tile, now);
+  WriteVramWord(snes, 0x0000U, 0x0C00U, now);  // Palette 3.
+  WriteVramWord(snes, 0x0001U, 0x1000U, now);  // Same character, palette 4.
+  BusWrite(snes, sppu::regs::kBgmode, 0x03U, now++);
+  BusWrite(snes, sppu::regs::kBg1Sc, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kBg12Nba, 0x01U, now++);
+  BusWrite(snes, sppu::regs::kTm, sppu::regs::kTmBg1Mask, now++);
+  BusWrite(snes, sppu::regs::kCgwsel, sppu::regs::kCgwselDirectColorMask, now++);
+  BusWrite(snes, sppu::regs::kMosaic, 0x31U, now++);  // 4x4, BG1 only.
+  REQUIRE(now < 1452U);
+
+  ppu.CatchUpTo(kFrameEndNtsc);
+  const FrameBufferView view = ppu.BuildFrontView();
+  REQUIRE(view.pixels[0] == 0x4046U);
+  REQUIRE(view.pixels[3U * view.stride + 3U] == 0x4046U);
+  REQUIRE(view.pixels[4] == 0x024AU);
+  REQUIRE(view.pixels[3U * view.stride + 7U] == 0x024AU);
+  REQUIRE(view.pixels[4U * view.stride] == 0x604EU);
+  REQUIRE(view.pixels[7U * view.stride + 3U] == 0x604EU);
+  REQUIRE(view.pixels[4U * view.stride + 4U] == 0x2152U);
+  REQUIRE(view.pixels[7U * view.stride + 7U] == 0x2152U);
+  REQUIRE(view.pixels[8] == 0x5004U);
+  REQUIRE(view.pixels[3U * view.stride + 11U] == 0x5004U);
+}
+
+TEST_CASE("Mode 3 replays BGMODE and CGWSEL changes within a cached tile row", "[unit][ppu][mode3]") {
+  SNES snes;
+  Ppu& ppu = snes.GetPpu();
+  ppu.Reset();
+  TimeMasterT now = 1;
+  BusWrite(snes, sppu::regs::kInidisp, 0x0FU, now++);
+  BusWrite(snes, sppu::regs::kVmain, 0x80U, now++);
+  WriteCgramWord(snes, 0x5DU, 0x001FU, now);  // Mode 1 palette 5, index 13.
+  WriteCgramWord(snes, 0xE3U, 0x03E0U, now);  // Mode 3 indexed.
+  uint8_t four_bit[64], eight_bit[64];
+  for (uint8_t& pixel : four_bit) pixel = 13U;
+  for (uint8_t& pixel : eight_bit) pixel = 0xE3U;
+  // Character 1 has different byte addresses at the two depths, not just
+  // different masks on the same source row.
+  WriteTile4bpp(snes, 0x1000U, 1U, four_bit, now);
+  WriteTile8bpp(snes, 0x1000U, 1U, eight_bit, now);
+  WriteVramWord(snes, 0x0000U, 0x1401U, now);
+  BusWrite(snes, sppu::regs::kBgmode, 0x01U, now++);
+  BusWrite(snes, sppu::regs::kBg1Sc, 0x00U, now++);
+  BusWrite(snes, sppu::regs::kBg12Nba, 0x01U, now++);
+  BusWrite(snes, sppu::regs::kTm, sppu::regs::kTmBg1Mask, now++);
+  REQUIRE(now < 1452U);
+
+  // Visible x=0 begins at 1452; all transitions remain within one 8-pixel
+  // fetch key. Earlier dots must keep their original depth/color selection.
+  BusWrite(snes, sppu::regs::kBgmode, 0x03U, 1452U + 2U * 4U);
+  BusWrite(snes, sppu::regs::kCgwsel, sppu::regs::kCgwselDirectColorMask, 1452U + 4U * 4U);
+  BusWrite(snes, sppu::regs::kCgwsel, 0U, 1452U + 6U * 4U);
+  BusWrite(snes, sppu::regs::kBgmode, 0x01U, 1452U + 7U * 4U);
+  ppu.CatchUpTo(kFrameEndNtsc);
+  const FrameBufferView view = ppu.BuildFrontView();
+  constexpr uint16_t kExpected[] = {0x001FU, 0x001FU, 0x03E0U, 0x03E0U, 0x720EU, 0x720EU, 0x03E0U, 0x001FU};
+  for (uint32_t x = 0; x < 8U; ++x) {
+    CAPTURE(x);
+    REQUIRE(view.pixels[x] == kExpected[x]);
+  }
+}
+
+TEST_CASE("Offset modes retain their indexed depths and Mode 4 BG1 direct color without valid offsets",
+          "[unit][ppu][opt]") {
+  for (uint8_t mode : {uint8_t{2U}, uint8_t{4U}}) {
+    for (bool direct : {false, true}) {
+      CAPTURE(mode, direct);
+      OffsetFixture f(mode);
+      WriteCgramWord(f.snes, mode == 2U ? 0x5DU : 0xE3U, 0x001FU, f.now);
+      WriteCgramWord(f.snes, mode == 2U ? 0x32U : 0x0EU, 0x03E0U, f.now);
+      uint8_t bg1[64] = {}, bg2[64] = {};
+      bg1[0] = bg1[3] = mode == 2U ? 13U : 0xE3U;
+      bg2[0] = bg2[1] = bg2[3] = 2U;
+      f.Tile(0U, 1U, bg1);
+      f.Tile(1U, 1U, bg2);
+      for (uint16_t column : {uint16_t{0U}, uint16_t{1U}}) {
+        WriteVramWord(f.snes, static_cast<uint16_t>(0x4000U + column), 0x3401U, f.now);
+        WriteVramWord(f.snes, static_cast<uint16_t>(0x4400U + column), 0x0C01U, f.now);
+      }
+      WriteVramWord(f.snes, 0x5000U, 0x8018U, f.now);  // Selector alone is not a validity bit.
+      WriteVramWord(f.snes, 0x5020U, 0x0010U, f.now);
+      f.Write(sppu::regs::kCgwsel, direct ? 1U : 0U);
+      f.Write(sppu::regs::kTm, 3U);
+      REQUIRE(f.now < 1452U);
+      f.Render();
+      const uint16_t bg1_color = mode == 4U && direct ? 0x720EU : 0x001FU;
+      REQUIRE(f.Pixel(0U) == bg1_color);
+      REQUIRE(f.Pixel(1U) == 0x03E0U);  // BG2 stays indexed, including palette stride.
+      REQUIRE(f.Pixel(2U) == 0U);       // Zero remains transparent even in direct color.
+      REQUIRE(f.Pixel(8U) == bg1_color);
+      REQUIRE(f.Pixel(9U) == 0x03E0U);
+    }
+  }
+}
+
+TEST_CASE("Offset modes never display BG3 or BG4 on either screen", "[unit][ppu][opt]") {
+  for (uint8_t mode : {uint8_t{2U}, uint8_t{4U}}) {
+    CAPTURE(mode);
+    OffsetFixture f(mode);
+    WriteCgramWord(f.snes, 0U, 1U, f.now);
+    WriteCgramWord(f.snes, 1U, 0x7C00U, f.now);
+    uint8_t pixels[64];
+    for (uint8_t& pixel : pixels) pixel = 1U;
+    WriteTile2bpp(f.snes, 0x3000U, 0U, pixels, f.now);
+    WriteVramWord(f.snes, 0x5000U, 0x2000U, f.now);
+    WriteVramWord(f.snes, 0x5400U, 0x2000U, f.now);
+    f.Write(sppu::regs::kBg34Nba, 0x33U);
+    f.Write(sppu::regs::kBg4Sc, 0x54U);
+    f.Write(sppu::regs::kBgmode, static_cast<uint8_t>(mode | 8U));
+    f.Write(sppu::regs::kTm, 0x0CU);
+    f.Write(sppu::regs::kTs, 0x0CU);
+    f.Write(sppu::regs::kCgwsel, 2U);
+    f.Write(sppu::regs::kCgadsub, 0x3FU);
+    f.Write(sppu::regs::kColdata, 0x42U);
+    REQUIRE(f.now < 1452U);
+    f.Render();
+    REQUIRE(f.Pixel(0U) == 0x0041U);  // Main backdrop red 1 plus fixed sub green 2.
+  }
+}
+
+TEST_CASE("Mode 2 independently enables horizontal and vertical offsets for each background", "[unit][ppu][opt]") {
+  for (uint8_t bg : {uint8_t{0U}, uint8_t{1U}}) {
+    CAPTURE(bg);
+    OffsetFixture f(2U);
+    const uint16_t map = bg == 0U ? 0x4000U : 0x4400U;
+    const uint16_t valid = bg == 0U ? 0x2000U : 0x4000U;
+    const uint16_t other = bg == 0U ? 0x4000U : 0x2000U;
+    f.Write(sppu::regs::kTm, static_cast<uint8_t>(1U << bg));
+    f.Scroll(bg == 0U ? sppu::regs::kBg1Hofs : sppu::regs::kBg2Hofs, 16U);
+    f.Scroll(bg == 0U ? sppu::regs::kBg1Vofs : sppu::regs::kBg2Vofs, 24U);
+    for (uint8_t color = 1U; color <= 4U; ++color) f.Solid(bg, color, color);
+    WriteVramWord(f.snes, static_cast<uint16_t>(map + 98U), 1U, f.now);   // Ordinary (16,24).
+    WriteVramWord(f.snes, static_cast<uint16_t>(map + 105U), 2U, f.now);  // H only: (72,24).
+    WriteVramWord(f.snes, static_cast<uint16_t>(map + 36U), 3U, f.now);   // V only: (32,8).
+    WriteVramWord(f.snes, static_cast<uint16_t>(map + 43U), 4U, f.now);   // H and V: (88,8).
+    WriteVramWord(f.snes, static_cast<uint16_t>(map + 102U), 1U, f.now);  // Neither: (48,24).
+    for (uint16_t column = 0; column < 4U; ++column) {
+      const uint16_t hvalid = column == 0U || column == 2U ? valid : other;
+      const uint16_t vvalid = column == 1U || column == 2U ? valid : other;
+      WriteVramWord(f.snes, static_cast<uint16_t>(0x5000U + column), static_cast<uint16_t>(hvalid | 64U), f.now);
+      WriteVramWord(f.snes, static_cast<uint16_t>(0x5020U + column), static_cast<uint16_t>(vvalid | 8U), f.now);
+    }
+    REQUIRE(f.now < 1452U);
+    f.Render();
+    REQUIRE(f.Pixel(0U) == 1U);
+    REQUIRE(f.Pixel(8U) == 2U);
+    REQUIRE(f.Pixel(16U) == 3U);
+    REQUIRE(f.Pixel(24U) == 4U);
+    REQUIRE(f.Pixel(32U) == 1U);
+  }
+}
+
+TEST_CASE("Mode 4 selects one offset axis and requires the selected background validity bit", "[unit][ppu][opt]") {
+  for (uint8_t bg : {uint8_t{0U}, uint8_t{1U}}) {
+    CAPTURE(bg);
+    OffsetFixture f(4U);
+    const uint16_t map = bg == 0U ? 0x4000U : 0x4400U;
+    const uint16_t valid = bg == 0U ? 0x2000U : 0x4000U;
+    const uint16_t other = bg == 0U ? 0x4000U : 0x2000U;
+    f.Write(sppu::regs::kTm, static_cast<uint8_t>(1U << bg));
+    f.Scroll(bg == 0U ? sppu::regs::kBg1Hofs : sppu::regs::kBg2Hofs, 16U);
+    f.Scroll(bg == 0U ? sppu::regs::kBg1Vofs : sppu::regs::kBg2Vofs, 16U);
+    for (uint8_t color = 1U; color <= 3U; ++color) f.Solid(bg, color, color);
+    WriteVramWord(f.snes, static_cast<uint16_t>(map + 66U), 1U, f.now);
+    WriteVramWord(f.snes, static_cast<uint16_t>(map + 73U), 2U, f.now);
+    WriteVramWord(f.snes, static_cast<uint16_t>(map + 36U), 3U, f.now);
+    WriteVramWord(f.snes, static_cast<uint16_t>(map + 69U), 1U, f.now);
+    WriteVramWord(f.snes, static_cast<uint16_t>(map + 70U), 1U, f.now);
+    WriteVramWord(f.snes, 0x5000U, static_cast<uint16_t>(valid | 64U), f.now);
+    WriteVramWord(f.snes, 0x5001U, static_cast<uint16_t>(valid | 0x8008U), f.now);
+    WriteVramWord(f.snes, 0x5002U, static_cast<uint16_t>(other | 0x8040U), f.now);
+    WriteVramWord(f.snes, 0x5003U, 0x8040U, f.now);
+    WriteVramWord(f.snes, 0x5020U, static_cast<uint16_t>(valid | 0x8008U), f.now);  // Must not supply a second axis.
+    REQUIRE(f.now < 1452U);
+    f.Render();
+    REQUIRE(f.Pixel(0U) == 1U);
+    REQUIRE(f.Pixel(8U) == 2U);   // H replaces 16 with 64, V stays 16.
+    REQUIRE(f.Pixel(16U) == 3U);  // V replaces 16 with 8, H stays 16.
+    REQUIRE(f.Pixel(24U) == 1U);
+    REQUIRE(f.Pixel(32U) == 1U);
+  }
+}
+
+TEST_CASE("Offset modes exempt the first partial tile and preserve only destination fine horizontal scroll",
+          "[unit][ppu][opt]") {
+  for (uint8_t mode : {uint8_t{2U}, uint8_t{4U}}) {
+    CAPTURE(mode);
+    OffsetFixture f(mode);
+    uint8_t first[64], offset[64];
+    for (uint16_t pixel = 0; pixel < 64U; ++pixel) {
+      first[pixel] = static_cast<uint8_t>(1U + pixel % 8U);
+      offset[pixel] = static_cast<uint8_t>(8U + pixel % 8U);
+    }
+    f.Tile(0U, 1U, first);
+    f.Tile(0U, 2U, offset);
+    f.Solid(0U, 3U, 2U);
+    WriteVramWord(f.snes, 0x4001U, 1U, f.now);
+    WriteVramWord(f.snes, 0x4009U, 2U, f.now);
+    WriteVramWord(f.snes, 0x4012U, 3U, f.now);
+    WriteVramWord(f.snes, 0x5000U, 0x2047U, f.now);
+    WriteVramWord(f.snes, 0x5001U, 0x2087U, f.now);
+    f.Scroll(sppu::regs::kBg1Hofs, 13U);
+    f.Scroll(sppu::regs::kBg3Hofs, 7U);  // BG3 fine scroll and offset-entry fine bits are ignored.
+    REQUIRE(f.now < 1452U);
+    f.Render();
+    REQUIRE(f.Pixel(0U) == 6U);
+    REQUIRE(f.Pixel(2U) == 8U);
+    REQUIRE(f.Pixel(3U) == 8U);  // First offset begins after just three visible pixels.
+    REQUIRE(f.Pixel(7U) == 12U);
+    REQUIRE(f.Pixel(10U) == 15U);
+    REQUIRE(f.Pixel(11U) == 2U);  // Next BG3 column, not screen-aligned x=16.
+  }
+}
+
+TEST_CASE("Mode 2 fixes the BG3 lookup row while distinct vertical offsets can share a cached source X",
+          "[unit][ppu][opt]") {
+  OffsetFixture f(2U);
+  uint8_t first[64], second[64];
+  for (uint16_t pixel = 0; pixel < 64U; ++pixel) {
+    first[pixel] = pixel < 8U ? 1U : 4U;
+    second[pixel] = pixel < 8U ? 2U : 5U;
+  }
+  f.Tile(0U, 1U, first);
+  f.Tile(0U, 2U, second);
+  f.Solid(0U, 3U, 3U);
+  WriteVramWord(f.snes, 0x4009U, 1U, f.now);
+  WriteVramWord(f.snes, 0x4029U, 2U, f.now);
+  WriteVramWord(f.snes, 0x43E9U, 3U, f.now);
+  f.Scroll(sppu::regs::kBg3Vofs, 24U);
+  WriteVramWord(f.snes, 0x5060U, 0x2040U, f.now);
+  WriteVramWord(f.snes, 0x5061U, 0x2038U, f.now);
+  WriteVramWord(f.snes, 0x5062U, 0x2030U, f.now);
+  WriteVramWord(f.snes, 0x5080U, 0x2000U, f.now);
+  WriteVramWord(f.snes, 0x5081U, 0x2008U, f.now);
+  WriteVramWord(f.snes, 0x5082U, 0x23FFU, f.now);
+  REQUIRE(f.now < 1452U);
+  f.Render();
+  REQUIRE(f.Pixel(8U) == 1U);   // All three columns address source X=72.
+  REQUIRE(f.Pixel(16U) == 2U);  // But source Y is 0, 8, and 1023.
+  REQUIRE(f.Pixel(24U) == 3U);
+  REQUIRE(f.Pixel(8U, 1U) == 4U);  // Screen Y is added to the replacement offset.
+  REQUIRE(f.Pixel(16U, 1U) == 5U);
+  REQUIRE(f.Pixel(24U, 1U) == 1U);  // 1023 + 1 wraps.
+  REQUIRE(f.Pixel(8U, 8U) == 2U);   // BG3 lookup still uses rows 3/4, not rows 4/5.
+}
+
+TEST_CASE("Mode 2 BG3 lookup crosses each map layout seam and wraps its VRAM address", "[unit][ppu][opt]") {
+  // H at (248,255)/(256,255), V at (248,263)/(256,263).
+  // These are literal SNES word addresses for 64x32, 32x64, and 64x64 maps.
+  constexpr uint16_t kAddresses[][4] = {
+      {0x7FFFU, 0x83E0U, 0x7C1FU, 0x8000U},
+      {0x7FFFU, 0x7FE0U, 0x801FU, 0x8000U},
+      {0x7FFFU, 0x83E0U, 0x841FU, 0x8800U},
+  };
+  for (uint8_t layout = 1U; layout <= 3U; ++layout) {
+    CAPTURE(layout);
+    OffsetFixture f(2U);
+    f.Solid(0U, 1U, 1U);
+    f.Solid(0U, 2U, 2U);
+    f.Write(sppu::regs::kBg3Sc, static_cast<uint8_t>(0x7CU | layout));
+    f.Scroll(sppu::regs::kBg3Hofs, 255U);
+    f.Scroll(sppu::regs::kBg3Vofs, 255U);
+    WriteVramWord(f.snes, kAddresses[layout - 1U][0], 0x2040U, f.now);
+    WriteVramWord(f.snes, kAddresses[layout - 1U][1], 0x2080U, f.now);
+    WriteVramWord(f.snes, kAddresses[layout - 1U][2], 0x2008U, f.now);
+    WriteVramWord(f.snes, kAddresses[layout - 1U][3], 0x2010U, f.now);
+    WriteVramWord(f.snes, 0x4029U, 1U, f.now);
+    WriteVramWord(f.snes, 0x4052U, 2U, f.now);
+    REQUIRE(f.now < 1452U);
+    f.Render();
+    REQUIRE(f.Pixel(8U) == 1U);
+    REQUIRE(f.Pixel(15U) == 1U);
+    REQUIRE(f.Pixel(16U) == 2U);
+  }
+}
+
+TEST_CASE("Mode 2 BG3 16x16 cells repeat offsets and can share horizontal and vertical lookup words",
+          "[unit][ppu][opt]") {
+  OffsetFixture f(0x42U);
+  for (uint8_t color = 1U; color <= 6U; ++color) f.Solid(0U, color, color);
+  WriteVramWord(f.snes, 0x5000U, 0x2008U, f.now);
+  WriteVramWord(f.snes, 0x5001U, 0x2020U, f.now);
+  WriteVramWord(f.snes, 0x5020U, 0x2010U, f.now);
+  WriteVramWord(f.snes, 0x5021U, 0x2018U, f.now);
+  WriteVramWord(f.snes, 0x4022U, 1U, f.now);
+  WriteVramWord(f.snes, 0x4023U, 2U, f.now);
+  WriteVramWord(f.snes, 0x4087U, 3U, f.now);
+  WriteVramWord(f.snes, 0x4042U, 4U, f.now);
+  WriteVramWord(f.snes, 0x4043U, 5U, f.now);
+  WriteVramWord(f.snes, 0x4067U, 6U, f.now);
+  SECTION("Both axes read the same 16-pixel row") {
+    REQUIRE(f.now < 1452U);
+    f.Render();
+    REQUIRE(f.Pixel(8U) == 1U);
+    REQUIRE(f.Pixel(16U) == 2U);
+    REQUIRE(f.Pixel(24U) == 3U);
+  }
+  SECTION("BG3 fine vertical scroll separates the two lookup rows") {
+    f.Scroll(sppu::regs::kBg3Vofs, 8U);
+    REQUIRE(f.now < 1452U);
+    f.Render();
+    REQUIRE(f.Pixel(8U) == 4U);
+    REQUIRE(f.Pixel(16U) == 5U);
+    REQUIRE(f.Pixel(24U) == 6U);
+  }
+}
+
+TEST_CASE("Mode 2 offsets each 8x8 half of a flipped 16x16 destination tile independently", "[unit][ppu][opt]") {
+  for (uint8_t bg : {uint8_t{0U}, uint8_t{1U}}) {
+    CAPTURE(bg);
+    OffsetFixture f(0x32U);
+    const uint16_t map = bg == 0U ? 0x4000U : 0x4400U;
+    const uint16_t valid = bg == 0U ? 0x2000U : 0x4000U;
+    f.Write(sppu::regs::kTm, static_cast<uint8_t>(1U << bg));
+    f.Solid(bg, 1U, 1U);
+    f.Solid(bg, 2U, 2U);
+    f.Solid(bg, 17U, 3U);
+    f.Solid(bg, 18U, 4U);
+    WriteVramWord(f.snes, map, 1U, f.now);
+    WriteVramWord(f.snes, static_cast<uint16_t>(map + 1U), 0xC001U, f.now);
+    WriteVramWord(f.snes, 0x5000U, static_cast<uint16_t>(valid | 8U), f.now);
+    WriteVramWord(f.snes, 0x5001U, valid, f.now);
+    WriteVramWord(f.snes, 0x5002U, valid, f.now);
+    WriteVramWord(f.snes, 0x5021U, static_cast<uint16_t>(valid | 8U), f.now);
+    WriteVramWord(f.snes, 0x5022U, static_cast<uint16_t>(valid | 8U), f.now);
+    REQUIRE(f.now < 1452U);
+    f.Render();
+    REQUIRE(f.Pixel(0U) == 1U);
+    REQUIRE(f.Pixel(7U) == 1U);
+    REQUIRE(f.Pixel(8U) == 4U);
+    REQUIRE(f.Pixel(15U) == 4U);
+    REQUIRE(f.Pixel(16U) == 2U);
+    REQUIRE(f.Pixel(23U) == 2U);
+    REQUIRE(f.Pixel(24U) == 1U);
+  }
+}
+
+TEST_CASE("Queued BG3 writes update both offset backgrounds inside the current source tile", "[unit][ppu][opt]") {
+  OffsetFixture f(2U);
+  WriteCgramWord(f.snes, 1U, 1U, f.now);
+  WriteCgramWord(f.snes, 2U, 0x0020U, f.now);
+  WriteCgramWord(f.snes, 3U, 4U, f.now);
+  WriteCgramWord(f.snes, 4U, 0x0080U, f.now);
+  f.Solid(0U, 1U, 1U);
+  f.Solid(0U, 2U, 3U);
+  f.Solid(1U, 1U, 2U);
+  f.Solid(1U, 2U, 4U);
+  WriteVramWord(f.snes, 0x4001U, 1U, f.now);
+  WriteVramWord(f.snes, 0x4021U, 2U, f.now);
+  WriteVramWord(f.snes, 0x4401U, 1U, f.now);
+  WriteVramWord(f.snes, 0x4421U, 2U, f.now);
+  WriteVramWord(f.snes, 0x5000U, 0x6000U, f.now);
+  WriteVramWord(f.snes, 0x5020U, 0x6000U, f.now);
+  WriteVramWord(f.snes, 0x5001U, 0x6000U, f.now);
+  WriteVramWord(f.snes, 0x5021U, 0x6008U, f.now);
+  WriteVramWord(f.snes, 0x5040U, 0x6000U, f.now);
+  WriteVramWord(f.snes, 0x5060U, 0x6008U, f.now);
+  WriteVramWord(f.snes, 0x5400U, 0x6000U, f.now);
+  WriteVramWord(f.snes, 0x5420U, 0x6008U, f.now);
+  f.Write(sppu::regs::kTs, 2U);
+  f.Write(sppu::regs::kCgwsel, 2U);
+  f.Write(sppu::regs::kCgadsub, 1U);
+  REQUIRE(f.now < 1452U);
+  f.now = 1452U + 12U * 4U;
+  SECTION("BG3SC changes the offset table") { f.Write(sppu::regs::kBg3Sc, 0x54U); }
+  SECTION("BG3HOFS changes the offset column") { f.Scroll(sppu::regs::kBg3Hofs, 8U); }
+  SECTION("BG3VOFS changes the offset rows") { f.Scroll(sppu::regs::kBg3Vofs, 16U); }
+  SECTION("VRAM writes change the offset word") { WriteVramWord(f.snes, 0x5020U, 0x6008U, f.now); }
+  f.Render();
+  REQUIRE(f.Pixel(8U) == 0x0021U);
+  REQUIRE(f.Pixel(11U) == 0x0021U);  // Already-emitted main and sub pixels survive.
+  REQUIRE(f.Pixel(13U) == 0x0084U);
+  REQUIRE(f.Pixel(15U) == 0x0084U);
+}
+
+TEST_CASE("Offset modes apply mosaic source coordinates before choosing the BG3 offset column", "[unit][ppu][opt]") {
+  for (uint8_t mode : {uint8_t{2U}, uint8_t{4U}}) {
+    CAPTURE(mode);
+    OffsetFixture f(mode);
+    for (uint8_t character = 1U; character <= 3U; ++character) {
+      uint8_t pixels[64];
+      for (uint16_t pixel = 0; pixel < 64U; ++pixel) {
+        pixels[pixel] = static_cast<uint8_t>(character + (pixel / 8U == 6U ? 3U : 0U));
+      }
+      f.Tile(0U, character, pixels);
+    }
+    WriteVramWord(f.snes, 0x4000U, 1U, f.now);
+    if (mode == 2U) {
+      WriteVramWord(f.snes, 0x5000U, 0x2040U, f.now);
+      WriteVramWord(f.snes, 0x5001U, 0x2080U, f.now);
+      WriteVramWord(f.snes, 0x5020U, 0x2008U, f.now);
+      WriteVramWord(f.snes, 0x5021U, 0x2010U, f.now);
+      WriteVramWord(f.snes, 0x4029U, 2U, f.now);
+      WriteVramWord(f.snes, 0x4052U, 3U, f.now);
+    } else {
+      WriteVramWord(f.snes, 0x5000U, 0xA008U, f.now);
+      WriteVramWord(f.snes, 0x5001U, 0xA010U, f.now);
+      WriteVramWord(f.snes, 0x4021U, 2U, f.now);
+      WriteVramWord(f.snes, 0x4042U, 3U, f.now);
+    }
+    f.Scroll(sppu::regs::kBg1Hofs, 5U);
+    f.Write(sppu::regs::kMosaic, 0x51U);  // 6x6 blocks cross both offset boundaries (x=3 and x=11).
+    REQUIRE(f.now < 1452U);
+    f.Render();
+    for (uint32_t y = 0; y < 12U; ++y) {
+      for (uint32_t x = 0; x < 18U; ++x) {
+        CAPTURE(x, y);
+        REQUIRE(f.Pixel(x, y) == 1U + x / 6U + (y >= 6U ? 3U : 0U));
+      }
+    }
+  }
+}
+
+TEST_CASE("Mode 4 offset direct color on either screen composes with layer and color windows", "[unit][ppu][opt]") {
+  for (bool direct_main : {true, false}) {
+    CAPTURE(direct_main);
+    OffsetFixture f(4U);
+    WriteCgramWord(f.snes, 0U, 1U, f.now);
+    WriteCgramWord(f.snes, 0x49U, 0x7FFFU, f.now);
+    WriteCgramWord(f.snes, 0x0EU, 0x1882U, f.now);
+    f.Solid(0U, 1U, 0x49U);
+    f.Solid(1U, 1U, 2U);
+    WriteVramWord(f.snes, 0x4009U, 0x1C01U, f.now);  // BG1 R=6, G=6, B=12.
+    WriteVramWord(f.snes, 0x4409U, 0x0C01U, f.now);  // BG2 R=2, G=4, B=6.
+    WriteVramWord(f.snes, 0x5000U, 0x6040U, f.now);
+    f.Write(sppu::regs::kTm, direct_main ? 1U : 2U);
+    f.Write(sppu::regs::kTs, direct_main ? 2U : 1U);
+    f.Write(sppu::regs::kWh0, 10U);
+    f.Write(sppu::regs::kWh1, 13U);
+    f.Write(sppu::regs::kW12Sel, 2U);
+    f.Write(direct_main ? sppu::regs::kTmw : sppu::regs::kTsw, 1U);
+    f.Write(sppu::regs::kWh2, 12U);
+    f.Write(sppu::regs::kWh3, 15U);
+    f.Write(sppu::regs::kWObjSel, 0x80U);
+    f.Write(sppu::regs::kCgwsel, 0x13U);
+    f.Write(sppu::regs::kCgadsub, 0x23U);
+    f.Write(sppu::regs::kColdata, 0x23U);
+    REQUIRE(f.now < 1452U);
+    f.Render();
+    REQUIRE(f.Pixel(0U) == 1U);
+    REQUIRE(f.Pixel(8U) == (direct_main ? 0x30C6U : 0x1882U));
+    REQUIRE(f.Pixel(10U) == (direct_main ? 1U : 0x1882U));
+    REQUIRE(f.Pixel(12U) == (direct_main ? 0x1883U : 0x1885U));
+    REQUIRE(f.Pixel(14U) == 0x4948U);
+  }
+}
+
+TEST_CASE("Offset modes preserve every adjacent BG and OBJ priority boundary on both screens", "[unit][ppu][opt]") {
+  for (uint8_t mode : {uint8_t{2U}, uint8_t{4U}}) {
+    CAPTURE(mode);
+    OffsetFixture f(mode);
+    WriteCgramWord(f.snes, mode == 2U ? 13U : 0xE3U, 4U, f.now);
+    WriteCgramWord(f.snes, mode == 2U ? 0x32U : 0x0EU, 0x1000U, f.now);
+    WriteCgramWord(f.snes, 0xC1U, 0x0080U, f.now);
+    f.Solid(0U, 0U, mode == 2U ? 13U : 0xE3U);
+    f.Solid(1U, 0U, 2U);
+    uint8_t obj[64];
+    for (uint8_t& pixel : obj) pixel = 1U;
+    WriteTile4bpp(f.snes, 0x0000U, 1U, obj, f.now);
+    // OBJ3 > BG1H > OBJ2 > BG2H > OBJ1 > BG1L > OBJ0 > BG2L.
+    constexpr uint16_t kBg1[] = {0x2000U, 0x2000U, 1U, 1U, 0U, 0U, 1U, 1U, 0x2000U, 0U, 0U};
+    constexpr uint16_t kBg2[] = {1U, 1U, 0x2C00U, 0x2C00U, 1U, 1U, 0x0C00U, 0x0C00U, 0x2C00U, 0x0C00U, 0x2C00U};
+    constexpr uint8_t kObjPriorities[] = {3U, 2U, 2U, 1U, 1U, 0U, 0U};
+    for (uint16_t column = 0; column < 11U; ++column) {
+      WriteVramWord(f.snes, static_cast<uint16_t>(0x4010U + column), kBg1[column], f.now);
+      WriteVramWord(f.snes, static_cast<uint16_t>(0x4410U + column), kBg2[column], f.now);
+      WriteVramWord(f.snes, static_cast<uint16_t>(0x5007U + column), 0x6040U, f.now);
+      if (column < 7U) {
+        WriteOamLowEntry(f.snes, static_cast<uint8_t>(column), static_cast<uint8_t>(64U + column * 8U), 0U, 1U,
+                         static_cast<uint8_t>((static_cast<uint32_t>(kObjPriorities[column]) << 4U) | 0x08U), f.now);
+      }
+    }
+    f.Write(sppu::regs::kTm, 0x13U);
+    f.Write(sppu::regs::kTs, 0x13U);
+    f.Write(sppu::regs::kCgwsel, 2U);
+    f.Write(sppu::regs::kCgadsub, 0x3FU);
+    REQUIRE(f.now < 1452U);
+    f.Render();
+    constexpr uint16_t kExpected[] = {0x0100U, 8U, 0x0100U, 0x2000U, 0x0100U, 8U, 0x0100U, 0x2000U, 8U, 8U, 0x2000U};
+    for (uint32_t column = 0; column < 11U; ++column) {
+      CAPTURE(column);
+      REQUIRE(f.Pixel(64U + column * 8U) == kExpected[column]);
+    }
+  }
 }
 
 TEST_CASE("MOSAIC repeats the enabled BG's upper-left source pixel", "[unit][ppu]") {
@@ -1827,8 +2754,7 @@ TEST_CASE("Mode 0 priority: BG1 prio-0 wins over BG2 prio-0", "[unit][ppu]") {
 }
 
 TEST_CASE("Unimplemented BG modes still emit backdrop only", "[unit][ppu]") {
-  // Modes 2..7 don't have renderers yet — they should always fall through
-  // to the backdrop path regardless of how BG state is configured.
+  // Modes 5/6 do not yet have renderers, regardless of the BG configuration.
   SNES snes;
   Ppu& ppu = snes.GetPpu();
   ppu.Reset();
@@ -1844,8 +2770,8 @@ TEST_CASE("Unimplemented BG modes still emit backdrop only", "[unit][ppu]") {
   WriteTile4bpp(snes, 0x1000U, 0, solid_red, now);
   WriteVramWord(snes, 0x0000U, 0x0000U, now);
 
-  // BGMODE = 2 (offset-per-tile mode, not yet implemented).
-  BusWrite(snes, sppu::regs::kBgmode, 0x02U, now++);
+  // BGMODE = 5 (hires mode, not yet implemented).
+  BusWrite(snes, sppu::regs::kBgmode, 0x05U, now++);
   BusWrite(snes, sppu::regs::kBg1Sc, 0x00U, now++);
   BusWrite(snes, sppu::regs::kBg12Nba, 0x01U, now++);
   BusWrite(snes, sppu::regs::kBg1Hofs, 0x00U, now++);
