@@ -152,9 +152,24 @@ void Ppu::Reset() {
   pending_writes_cursor_ = 0;
   partial_dot_cycles_ = 0;
 
-  // Per-scanline OAM cache: -1 sentinel forces a rebuild on the next OBJ fetch.
-  obj_line_v_ = -1;
-  obj_line_count_ = 0;
+  obj_pixel_lines_ = {};
+  obj_fetched_tiles_ = {};
+  obj_fetched_count_ = {};
+  obj_output_ = obj_pixel_lines_[0].data();
+  obj_output_ready_ = false;
+  obj_selected_ = {};
+  obj_next_dot_ = 0;
+  obj_sync_dot_ = 0;
+  obj_first_ = 0;
+  obj_selected_count_ = 0;
+  obj_fetch_remaining_ = 0;
+  obj_fetch_column_ = 0;
+  obj_tile_count_ = 0;
+  obj_position_ = {};
+  obj_fetch_position_valid_ = false;
+  obj_tile_fetch_ = {};
+  obj_range_over_ = false;
+  obj_time_over_ = false;
 
   // Per-BG row cache: -1 sentinel + dirty=true forces a refetch.
   for (auto& c : bg_row_cache_) c = {};
@@ -227,6 +242,10 @@ void Ppu::CatchUpTo(TimeMasterT target) {
     // start cycle so EmitPixel observes the state valid at dot-start.
     const TimeMasterT dot_start_time = local_time_ - static_cast<TimeMasterDeltaT>(partial_dot_cycles_);
     DrainPendingWritesUpTo(dot_start_time);
+    if (h_ == obj_sync_dot_) {
+      SyncObjPipeline(h_ + 1U);
+      obj_sync_dot_ = sppu::regs::kDotsPerLine - 1U;
+    }
     EmitPixel(h_, v_);
 
     // Track that this pixel has been drawn in the current frame.
@@ -424,9 +443,13 @@ MmioReadResult Ppu::ReadRegister(uint32_t offset, TimeMasterT current_time) {
     case sppu::regs::kOphct: return ReadOpct(ophct_, ophct_read_high_);
     case sppu::regs::kOpvct: return ReadOpct(opvct_, opvct_read_high_);
     case sppu::regs::kStat77: {
-      // Bits 3:0 = PPU1 version (1), bits 6:4 open-bus, bit 7 time-over
-      // (stubbed 0). Only the driven bits set mask=1.
-      return {static_cast<uint8_t>(0x01U), sppu::regs::kStat77VersionMask};
+      SyncObjPipeline(h_);
+      // Reading does not clear overflow. Bit 4 floats; bit 5 is master/slave (0).
+      const uint8_t value = static_cast<uint8_t>(0x01U | (obj_range_over_ ? sppu::regs::kStat77RangeOverMask : 0U) |
+                                                 (obj_time_over_ ? sppu::regs::kStat77TimeOverMask : 0U));
+      const uint8_t driven = sppu::regs::kStat77VersionMask | sppu::regs::kStat77MasterSlaveMask |
+                             sppu::regs::kStat77RangeOverMask | sppu::regs::kStat77TimeOverMask;
+      return {value, driven};
     }
     case sppu::regs::kStat78: {
       // Bits 3:0 = PPU2 version (3 on real HW; use 3), bit 4 = NTSC/PAL
@@ -533,13 +556,14 @@ void Ppu::AdvanceHv() {
   if (h_ >= sppu::regs::kDotsPerLine) {
     h_ = 0;
     ++v_;
-    // Scanline transition invalidates both PPU render caches: the OAM list
-    // is rebuilt at the next OBJ fetch, and each BG's row cache is cleared
-    // so the next BG fetch re-reads the tilemap entry for the new pixel_in_y.
-    obj_line_v_ = -1;
+    // Start next-line OBJ preparation and invalidate the BG row caches.
+    obj_next_dot_ = 0;
+    obj_sync_dot_ = 0;
     for (auto& c : bg_row_cache_) c.key = -1;
     if (v_ >= sppu::regs::kLinesPerFrameNtsc) {
       v_ = 0;
+      obj_range_over_ = false;
+      obj_time_over_ = false;
     }
     AdvanceMosaicVerticalCounter();
     // Drive the VBlank NMI latch off live scanline transitions. Arm it the
@@ -548,6 +572,7 @@ void Ppu::AdvanceHv() {
     // from the NMI line at this boundary; we only need the latch until CPU
     // interrupt delivery lands.
     if (v_ == VblankStartLine()) {
+      if (!forced_blank_) oam_byte_addr_ = oam_byte_addr_reload_;
       vblank_nmi_flag_ = true;
       events::Emit(snes_->GetEmuEventSink(), local_time_, CursorHv(), EmuEventKind::kNmiAsserted, v_);
     } else if (v_ == 0) {
@@ -996,12 +1021,12 @@ void Ppu::EmitPixel(uint32_t h, uint32_t v) {
             ? sub_screen_layers_ & static_cast<uint8_t>(~(static_cast<uint32_t>(window_mask) & sub_window_layers_))
             : 0U;
 
-    // Keep OBJ evaluation independent of window visibility: masking the first
-    // pixels must not postpone the per-line OAM snapshot until a later write.
-    const uint8_t obj_enable_mask = static_cast<uint8_t>(main_screen_layers_ | sub_screen_layers_);
+    const uint8_t obj_enable_mask = static_cast<uint8_t>(main_mask | sub_mask);
     ObjPixel obj_px = {0U, true, 0U};
     if ((obj_enable_mask & sppu::regs::kTmObjMask) != 0U) {
-      obj_px = FetchObjPixel(screen_x, screen_y);
+      if (!obj_output_ready_) BuildObjPixels();
+      const uint16_t pixel = obj_output_[screen_x];
+      obj_px = {static_cast<uint8_t>(pixel), pixel == 0U, static_cast<uint8_t>(pixel >> 8U)};
     }
 
     const ResolvedScreens screens = ResolveScreenPixels(screen_x, screen_y, obj_px, main_mask, sub_mask);
@@ -1019,6 +1044,16 @@ void Ppu::OnEndOfFrame() {
 }
 
 void Ppu::ReplayWrite(uint16_t offset, uint8_t data, TimeMasterT cycle) {
+  // Consume prior OBJ operations before changing an input they sample.
+  // Main/sub enables, windows, CGRAM and color math remain live at emission.
+  switch (offset) {
+    case sppu::regs::kInidisp:
+    case sppu::regs::kObsel:
+    case sppu::regs::kOamData:
+    case sppu::regs::kVmDataL:
+    case sppu::regs::kVmDataH: SyncObjPipeline(h_); break;
+    default: break;
+  }
   switch (offset) {
     case sppu::regs::kInidisp: {
       const bool old_blank = forced_blank_;
@@ -1153,9 +1188,8 @@ void Ppu::ReplayWrite(uint16_t offset, uint8_t data, TimeMasterT cycle) {
       obj_region0_word_ = static_cast<uint16_t>((name_base << 13U) & 0x7FFFU);
       obj_region1_word_ =
           static_cast<uint16_t>((static_cast<uint32_t>(obj_region0_word_) + 0x1000U + (name_select << 12U)) & 0x7FFFU);
-      // Size pair / tile-region change affects every cached entry's width,
-      // height, and tile mapping. Force the next OBJ fetch to re-evaluate.
-      obj_line_v_ = -1;
+      // The OBJ pipeline samples this state on subsequent OAM/VRAM fetches.
+      // Already-fetched pixels on either line must not be invalidated.
       break;
     }
 
@@ -1606,113 +1640,174 @@ constexpr std::array<ObjSizePair, 8> kObjSizes = {{
 
 }  // namespace
 
-void Ppu::EvaluateObjLine(uint32_t screen_y) const {
-  obj_line_count_ = 0;
-  obj_line_v_ = static_cast<int32_t>(screen_y);
-
+Ppu::ObjPosition Ppu::ReadObjPosition(uint8_t index) const {
+  const uint32_t base = static_cast<uint32_t>(index) * 4U;
+  const uint8_t* const oam = oam_->data();
+  const uint32_t high = static_cast<uint32_t>(oam[0x200U + index / 4U]) >> ((index & 3U) * 2U);
   const ObjSizePair sizes = kObjSizes[obj_size_select_];
+  const bool large = (high & 2U) != 0U;
+  const int16_t x = static_cast<int16_t>(static_cast<int32_t>(oam[base]) - ((high & 1U) != 0U ? 256 : 0));
+  return {x, oam[base + 1U], large ? sizes.large_w : sizes.small_w, large ? sizes.large_h : sizes.small_h};
+}
 
-  for (uint8_t obj = 0; obj < 128U; ++obj) {
-    const uint16_t low_addr = static_cast<uint16_t>(obj * 4U);
-
-    // High-table byte holds (X-high, size) bit-pair at position (obj%4)*2 for
-    // four OBJs at a time. Read it + Y first so the common "no Y overlap"
-    // reject path skips the X/tile/attr reads.
-    const uint16_t high_byte_addr = static_cast<uint16_t>(sppu::regs::kOamHighTableBase + (obj >> 2U));
-    const uint8_t high_byte = ReadOamByte(high_byte_addr);
-    const uint8_t high_shift = static_cast<uint8_t>((obj & 3U) << 1U);
-    const bool large = ((high_byte >> (high_shift + 1U)) & 1U) != 0U;
-
-    const uint8_t width = large ? sizes.large_w : sizes.small_w;
-    const uint8_t height = large ? sizes.large_h : sizes.small_h;
-
-    const uint8_t y_raw = ReadOamByte(static_cast<uint16_t>(low_addr + 1U));
-    // Y range with 8-bit wrap (sprites can wrap bottom→top).
-    const uint8_t y_internal_8 = static_cast<uint8_t>(static_cast<uint8_t>(screen_y) - y_raw);
-    if (y_internal_8 >= height) continue;
-
-    const bool x_high_bit = ((high_byte >> high_shift) & 1U) != 0U;
-    const uint8_t x_lo = ReadOamByte(low_addr);
-    // X is 9-bit signed (sign-extend bit 8). Sprites can sit partly off-screen.
-    int16_t signed_x = static_cast<int16_t>(x_lo);
-    if (x_high_bit) {
-      signed_x = static_cast<int16_t>(signed_x | static_cast<int16_t>(0xFF00));
+void Ppu::SyncObjPipeline(uint32_t end_dot) {
+  // All mutations of sampled inputs fence this loop. Batching is therefore
+  // equivalent to visiting the same operations on each dot, including partial
+  // catch-ups, but avoids per-dot dispatch and processing blank selection slots.
+  while (obj_next_dot_ < end_dot) {
+    if (forced_blank_ && obj_next_dot_ > 0U && obj_next_dot_ < 256U) {
+      const uint32_t next = (end_dot + 1U) & ~1U;
+      obj_next_dot_ = next >= 256U ? kObjFetchStart : next;
+    } else {
+      StepObjPipeline();
     }
-
-    const uint8_t tile_lo = ReadOamByte(static_cast<uint16_t>(low_addr + 2U));
-    const uint8_t attr = ReadOamByte(static_cast<uint16_t>(low_addr + 3U));
-    const uint16_t base_tile = static_cast<uint16_t>(tile_lo | ((attr & sppu::regs::kObjAttrTileHighMask) << 8U));
-
-    if (obj_line_count_ < kObjLineCap) {
-      obj_line_list_[obj_line_count_++] = {signed_x, y_internal_8, width, height, base_tile, attr};
-    }
-    // OBJs past the cap are dropped (hardware time-over). The STAT77 bit isn't
-    // surfaced yet (see ReadRegister stub), but the visible-pixel behavior
-    // matches: lowest OAM indices win, anything past 32 doesn't render.
   }
 }
 
-Ppu::ObjPixel Ppu::FetchObjPixel(uint32_t screen_x, uint32_t screen_y) const {
-  // Lazy-build the per-line sprite list the first time a new scanline asks
-  // for an OBJ pixel. Once latched, mid-line OAM writes don't perturb the
-  // current line — matching hardware where OAM evaluation runs in the tail
-  // of the previous scanline.
-  if (obj_line_v_ != static_cast<int32_t>(screen_y)) {
-    EvaluateObjLine(screen_y);
-  }
-
-  for (uint8_t i = 0; i < obj_line_count_; ++i) {
-    const ObjLineEntry& e = obj_line_list_[i];
-
-    const int32_t x_internal = static_cast<int32_t>(screen_x) - static_cast<int32_t>(e.x);
-    if (x_internal < 0 || x_internal >= static_cast<int32_t>(e.width)) continue;
-
-    const bool hflip = (e.attr & sppu::regs::kObjAttrHflipMask) != 0U;
-    const bool vflip = (e.attr & sppu::regs::kObjAttrVflipMask) != 0U;
-    uint32_t pix_x = static_cast<uint32_t>(x_internal);
-    uint32_t pix_y = static_cast<uint32_t>(e.y_internal);
-    if (hflip) pix_x = (static_cast<uint32_t>(e.width) - 1U) - pix_x;
-    if (vflip) pix_y = (static_cast<uint32_t>(e.height) - 1U) - pix_y;
-
-    const uint32_t sub_x = pix_x >> 3U;
-    const uint32_t sub_y = pix_y >> 3U;
-    const uint32_t in_x = pix_x & 7U;
-    const uint32_t in_y = pix_y & 7U;
-
-    // 9-bit tile number (bit 8 from attr.0). Low nibble wraps within its
-    // 16-tile row; high nibble wraps within its 16-row page; the region-select
-    // bit does NOT carry.
-    const uint16_t tile_x_low = static_cast<uint16_t>(((e.base_tile & 0x0FU) + sub_x) & 0x0FU);
-    const uint16_t tile_y_low = static_cast<uint16_t>((((e.base_tile >> 4U) & 0x0FU) + sub_y) & 0x0FU);
-    const uint16_t region_bit = static_cast<uint16_t>(e.base_tile & 0x100U);
-    const uint16_t effective_tile = static_cast<uint16_t>(region_bit | (tile_y_low << 4U) | tile_x_low);
-
-    const uint16_t region_word_base = (effective_tile & 0x100U) ? obj_region1_word_ : obj_region0_word_;
-    const uint16_t tile_in_region = static_cast<uint16_t>(effective_tile & 0xFFU);
-    const uint32_t tile_byte_addr =
-        (static_cast<uint32_t>(region_word_base) << 1U) + (static_cast<uint32_t>(tile_in_region) * 32U) + (in_y * 2U);
-
-    const uint8_t shift = static_cast<uint8_t>(7U - in_x);
-    const uint8_t p0 = (GetVramByte(tile_byte_addr + 0U) >> shift) & 1U;
-    const uint8_t p1 = (GetVramByte(tile_byte_addr + 1U) >> shift) & 1U;
-    const uint8_t p2 = (GetVramByte(tile_byte_addr + 16U) >> shift) & 1U;
-    const uint8_t p3 = (GetVramByte(tile_byte_addr + 17U) >> shift) & 1U;
-    const uint8_t color_index = static_cast<uint8_t>(p0 | (p1 << 1U) | (p2 << 2U) | (p3 << 3U));
-    if (color_index == 0U) {
-      continue;
+void Ppu::StepObjPipeline() {
+  const uint32_t dot = obj_next_dot_;
+  // OAM selection: position on even dots 0..254, range check on odd dots.
+  // OAM tile setup: 270..339; VRAM words: 272..339 (two dots per tile).
+  // The two-stage fetch overlaps setup of the next tile with graphics reads
+  // for the previous one. See docs/obj-pipeline.md for evidence and limits.
+  if (dot == 0U) {
+    obj_selected_count_ = 0;
+    obj_fetch_remaining_ = 0;
+    obj_fetch_column_ = 0;
+    obj_tile_count_ = 0;
+    obj_fetch_position_valid_ = false;
+    obj_tile_fetch_ = {};
+    obj_fetched_count_[(v_ + 1U) & 1U] = 0;
+    obj_output_ = obj_pixel_lines_[v_ & 1U].data();
+    obj_output_ready_ = false;
+    obj_first_ =
+        oam_priority_rotation_ ? static_cast<uint8_t>((static_cast<uint32_t>(oam_byte_addr_) >> 2U) & 0x7FU) : 0U;
+    if (v_ >= VblankStartLine()) {
+      obj_next_dot_ = sppu::regs::kDotsPerLine;
+      return;
     }
-
-    // OBJ palette region: $80..$FF, eight 16-color groups.
-    const unsigned palette_group =
-        (static_cast<unsigned>(e.attr) >> sppu::regs::kObjAttrPaletteShift) & sppu::regs::kObjAttrPaletteMask;
-    const uint8_t cgram_index =
-        static_cast<uint8_t>(0x80U | (palette_group << 4U) | static_cast<unsigned>(color_index));
-    const uint8_t priority = static_cast<uint8_t>((static_cast<unsigned>(e.attr) >> sppu::regs::kObjAttrPriorityShift) &
-                                                  sppu::regs::kObjAttrPriorityMask);
-    return {cgram_index, false, priority};
   }
 
-  return {0U, true, 0U};
+  if (dot < 256U) {
+    const uint8_t index = static_cast<uint8_t>((static_cast<uint32_t>(obj_first_) + dot / 2U) & 0x7FU);
+    if ((dot & 1U) == 0U) {
+      obj_next_dot_ = dot == 254U ? kObjFetchStart : dot + 2U;
+      if (forced_blank_) return;
+      obj_position_ = ReadObjPosition(index);
+      const uint8_t row = static_cast<uint8_t>(v_ - obj_position_.y);
+      if (row >= obj_position_.height) return;
+      if (obj_position_.x != -256 && obj_position_.x + obj_position_.width <= 0) return;
+      obj_next_dot_ = dot + 1U;
+    } else {
+      obj_next_dot_ = dot == 255U ? kObjFetchStart : dot + 1U;
+      if (forced_blank_) return;
+      if (obj_selected_count_ == kObjLineCap) {
+        obj_range_over_ = true;
+        obj_next_dot_ = kObjFetchStart;
+      } else {
+        obj_selected_[obj_selected_count_++] = index;
+      }
+    }
+    return;
+  }
+
+  if (dot == kObjFetchStart) obj_fetch_remaining_ = obj_selected_count_;
+  obj_next_dot_ = dot + 1U;
+  if ((dot & 1U) == 0U) {
+    // Latch planes 0/1 before sampling the next tile's OAM position.
+    if (obj_tile_fetch_.valid) {
+      obj_tile_fetch_.pixels = 0;
+      if (!forced_blank_) {
+        obj_tile_fetch_.pixels = kExpandedPlane[GetVramByte(obj_tile_fetch_.byte_address)] |
+                                 (kExpandedPlane[GetVramByte(obj_tile_fetch_.byte_address + 1U)] << 1U);
+      }
+    }
+    obj_fetch_position_valid_ = false;
+    if (!forced_blank_) {
+      // Skip clipped columns without consuming VRAM fetch slots. Selection
+      // saved indices, so positions/attributes are sampled again at fetch time.
+      while (obj_fetch_remaining_ > 0U) {
+        obj_position_ = ReadObjPosition(obj_selected_[obj_fetch_remaining_ - 1U]);
+        const uint8_t columns = static_cast<uint8_t>(obj_position_.width / 8U);
+        while (obj_fetch_column_ < columns) {
+          const int32_t x = obj_position_.x + obj_fetch_column_ * 8;
+          if (obj_position_.x == -256 || (x > -8 && x < 256)) {
+            obj_fetch_position_valid_ = true;
+            return;
+          }
+          ++obj_fetch_column_;
+        }
+        --obj_fetch_remaining_;
+        obj_fetch_column_ = 0;
+      }
+    }
+  } else {
+    if (obj_tile_fetch_.valid && !forced_blank_) FinishObjTile();
+    obj_tile_fetch_.valid = false;
+    if (obj_fetch_position_valid_ && !forced_blank_) PrepareObjTile();
+  }
+  if (!obj_tile_fetch_.valid && obj_fetch_remaining_ == 0U) obj_next_dot_ = sppu::regs::kDotsPerLine;
+}
+
+void Ppu::PrepareObjTile() {
+  if (obj_tile_count_ == kObjTileCap) {
+    obj_time_over_ = true;
+    obj_fetch_remaining_ = 0;
+    return;
+  }
+  ++obj_tile_count_;
+  const uint32_t base = static_cast<uint32_t>(obj_selected_[obj_fetch_remaining_ - 1U]) * 4U;
+  const uint32_t tile = ReadOamByte(static_cast<uint16_t>(base + 2U));
+  const uint32_t attr = ReadOamByte(static_cast<uint16_t>(base + 3U));
+  uint32_t row = static_cast<uint8_t>(v_ - obj_position_.y);
+  // Rectangular OBJ flips each square half separately, as on hardware.
+  if ((attr & sppu::regs::kObjAttrVflipMask) != 0U) row ^= obj_position_.width - 1U;
+  const bool hflip = (attr & sppu::regs::kObjAttrHflipMask) != 0U;
+  const uint32_t column = hflip ? obj_position_.width / 8U - 1U - obj_fetch_column_ : obj_fetch_column_;
+  const uint32_t character = (((tile >> 4U) + (row >> 3U)) & 15U) * 16U + ((tile + column) & 15U);
+  const uint32_t region = (attr & 1U) != 0U ? obj_region1_word_ : obj_region0_word_;
+  obj_tile_fetch_ = {region * 2U + character * 32U + (row & 7U) * 2U,
+                     0U,
+                     static_cast<int16_t>(obj_position_.x + obj_fetch_column_ * 8),
+                     static_cast<uint16_t>(0x80U | ((attr & 0x0EU) << 3U) | ((attr & 0x30U) << 4U)),
+                     hflip,
+                     true};
+  ++obj_fetch_column_;
+  if (obj_fetch_column_ == obj_position_.width / 8U ||
+      (obj_position_.x != -256 && obj_position_.x + obj_fetch_column_ * 8 >= 256)) {
+    --obj_fetch_remaining_;
+    obj_fetch_column_ = 0;
+  }
+}
+
+void Ppu::FinishObjTile() {
+  const ObjTileFetch& tile = obj_tile_fetch_;
+  const uint32_t pixels = tile.pixels | (kExpandedPlane[GetVramByte(tile.byte_address + 16U)] << 2U) |
+                          (kExpandedPlane[GetVramByte(tile.byte_address + 17U)] << 3U);
+  if (pixels == 0U || tile.x <= -8 || tile.x >= 256) return;
+  const uint32_t next_line = (v_ + 1U) & 1U;
+  obj_fetched_tiles_[next_line][obj_fetched_count_[next_line]++] = {pixels, tile.x, tile.palette_priority, tile.hflip};
+}
+
+void Ppu::BuildObjPixels() {
+  // Only materialize output if a screen actually consumes OBJ. The sampled
+  // rows remain immutable, so enabling a layer/window later loses no history.
+  std::fill_n(obj_output_, sppu::regs::kLogicalWidth, uint16_t{0});
+  obj_output_ready_ = true;
+  const uint32_t line = v_ & 1U;
+  const ObjFetchedTile* const tiles = obj_fetched_tiles_[line].data();
+  for (uint8_t i = 0; i < obj_fetched_count_[line]; ++i) {
+    const ObjFetchedTile& tile = tiles[i];
+    const uint32_t start = tile.x < 0 ? static_cast<uint32_t>(-tile.x) : 0U;
+    const uint32_t end = std::min(8U, static_cast<uint32_t>(256 - tile.x));
+    for (uint32_t x = start; x < end; ++x) {
+      const uint32_t shift = (tile.hflip ? 7U - x : x) * 4U;
+      const uint16_t color = static_cast<uint16_t>((tile.pixels >> shift) & 15U);
+      // Later fetches have higher OBJ priority. Transparent texels preserve
+      // previously fetched pixels, regardless of OBJ-vs-BG priority bits.
+      if (color != 0U) obj_output_[tile.x + static_cast<int32_t>(x)] = tile.palette_priority | color;
+    }
+  }
 }
 
 }  // namespace pupsnes

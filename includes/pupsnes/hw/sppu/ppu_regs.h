@@ -269,6 +269,9 @@ inline constexpr uint8_t kOpctHighDrivenMask = 0x01;  // only bit 0 driven on 2n
 // $213E STAT77 — sprite overflow / time-over / version.
 inline constexpr uint16_t kStat77 = 0x213E;
 inline constexpr uint8_t kStat77VersionMask = 0x0F;  // bits 3:0
+inline constexpr uint8_t kStat77MasterSlaveMask = 0x20;
+inline constexpr uint8_t kStat77RangeOverMask = 0x40;
+inline constexpr uint8_t kStat77TimeOverMask = 0x80;
 
 // $213F STAT78 — field / PAL / version.
 inline constexpr uint16_t kStat78 = 0x213F;

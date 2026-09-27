@@ -1,9 +1,12 @@
+#include <algorithm>
+#include <array>
 #include <catch2/catch_test_macros.hpp>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <memory>
 #include <vector>
 
 #include "pupsnes/core/scheduler.h"
@@ -307,7 +310,7 @@ TEST_CASE("OAM high-table even writes set the shared word buffer", "[unit][ppu][
   }
 }
 
-TEST_CASE("STAT77 version field reads as PPU1 version 1 with open-bus upper bits", "[unit][ppu]") {
+TEST_CASE("STAT77 drives version and cleared overflow flags while bit 4 floats", "[unit][ppu]") {
   SNES snes;
   Ppu& ppu = snes.GetPpu();
   ppu.Reset();
@@ -315,8 +318,8 @@ TEST_CASE("STAT77 version field reads as PPU1 version 1 with open-bus upper bits
   // Prime the latch with 0xF0 so we can tell driven vs floating bits apart.
   BusWrite(snes, 0x7E0000, 0xF0, /*now=*/0);
   BusFollowResult stat = BusRead(snes, sppu::regs::kStat77, /*now=*/1);
-  // Bits 3:0 driven as version 1; bits 7:4 come from the bus latch (0xF).
-  REQUIRE(stat.data == 0xF1);
+  // Version 1, master/slave and overflow zero; only bit 4 comes from the latch.
+  REQUIRE(stat.data == 0x11);
   (void)ppu;
 }
 
@@ -1430,7 +1433,8 @@ TEST_CASE("Mode 3 follows every adjacent BG and OBJ priority boundary on both sc
   BusWrite(snes, sppu::regs::kCgadsub, 0x3FU, now++);
   REQUIRE(now < 1452U);
 
-  ppu.CatchUpTo(kFrameEndNtsc);
+  // Inspect the settled frame: sprite 0 was already sampled during setup on line 0.
+  ppu.CatchUpTo(2U * kFrameEndNtsc);
   const FrameBufferView view = ppu.BuildFrontView();
   // Identical main/sub winners add to twice the selected channel.
   constexpr uint16_t kExpected[] = {0x0100U, 8U, 0x0100U, 0x2000U, 0x0100U, 8U, 0x0100U, 0x2000U, 8U, 8U, 0x2000U};
@@ -1471,7 +1475,8 @@ TEST_CASE("Mode 3 zero BG1 pixels expose BG2 OBJ and backdrop despite palette bi
     BusWrite(snes, sppu::regs::kTm, 0x13U, now++);
     REQUIRE(now < 1452U);
 
-    ppu.CatchUpTo(kFrameEndNtsc);
+    // Inspect the settled frame: sprite 0 was already sampled during setup on line 0.
+    ppu.CatchUpTo(2U * kFrameEndNtsc);
     const FrameBufferView view = ppu.BuildFrontView();
     REQUIRE(view.pixels[0] == 0x03E0U);  // BG2 remains indexed even with direct color enabled.
     REQUIRE(view.pixels[1] == 0x7C00U);  // OBJ remains indexed.
@@ -2142,7 +2147,8 @@ TEST_CASE("Offset modes preserve every adjacent BG and OBJ priority boundary on 
     f.Write(sppu::regs::kCgwsel, 2U);
     f.Write(sppu::regs::kCgadsub, 0x3FU);
     REQUIRE(f.now < 1452U);
-    f.Render();
+    // Allow the line-ahead OBJ pipeline to see the complete fixture.
+    f.snes.GetPpu().CatchUpTo(2U * kFrameEndNtsc);
     constexpr uint16_t kExpected[] = {0x0100U, 8U, 0x0100U, 0x2000U, 0x0100U, 8U, 0x0100U, 0x2000U, 8U, 8U, 0x2000U};
     for (uint32_t column = 0; column < 11U; ++column) {
       CAPTURE(column);
@@ -3433,12 +3439,13 @@ TEST_CASE("Every BG priority competes with every OBJ priority on both screens", 
           BusWrite(snes, sppu::regs::kCgwsel, sppu::regs::kCgwselSubScreenEnableMask, now++);
           BusWrite(snes, sppu::regs::kCgadsub, 0x3FU, now++);
           REQUIRE(now < 1452U);
-          ppu.CatchUpTo(1456U);
+          // Test the next row, after OBJ preparation has consumed the setup.
+          ppu.CatchUpTo(2820U);
           const bool bg_wins = kBgRanks[mode_index][bg][bg_priority] > kObjRanks[mode_index][obj_priority];
           // Both screens have the same winner. OBJ palette 4 enables its
           // color math, so the selected red/green channel doubles to 14.
           const uint16_t expected = bg_wins ? 14U : (14U << 5U);
-          const uint32_t index = sppu::regs::kFrameBufferWidth + sppu::regs::kVisibleHStart;
+          const uint32_t index = 2U * sppu::regs::kFrameBufferWidth + sppu::regs::kVisibleHStart;
           REQUIRE(ppu.GetBackBuffer()[index] == expected);
         }
       }
@@ -3639,10 +3646,9 @@ TEST_CASE("Mid-line VRAM write to BG1 tile data propagates to subsequent pixels"
 
 TEST_CASE("OBJ list latched per scanline — mid-line OAM write does not unrender sprite", "[unit][ppu]") {
   // Per-scanline OAM evaluation invariant: once a line's sprite list is
-  // latched at line start, an OAM write that lands mid-line must NOT alter
-  // the sprite drawn on that line. On hardware the evaluation pass runs in
-  // the tail of the previous scanline, so by the time visible pixels start
-  // emitting the list is fixed.
+  // prepared on the previous line, an OAM write that lands mid-line must NOT
+  // alter the sprite drawn on that line. Selection runs during dots 0..255,
+  // followed by graphics fetching near the end of the previous scanline.
   SNES snes;
   Ppu& ppu = snes.GetPpu();
   ppu.Reset();
@@ -3921,7 +3927,8 @@ TEST_CASE("Mode 7 EXTBG and OBJ priorities resolve independently on both screens
               f.Write(sppu::regs::kCgwsel, 2);
               f.Write(sppu::regs::kCgadsub, 0x20);  // black main backdrop + sub-screen winner.
             }
-            f.Render();
+            // Allow the line-ahead OBJ pipeline to see the complete fixture.
+            f.snes.GetPpu().CatchUpTo(2U * kFrameEndNtsc);
             // Explicit highest-first ladders, separate from the renderer's ranks.
             uint16_t expected = 19;
             const bool bg1 = (bg_mask & 1U) != 0U && texel != 0U;
@@ -4472,4 +4479,458 @@ TEST_CASE("OBJ window masking does not postpone the scanline OAM snapshot", "[un
   f.Render();
   REQUIRE(f.Pixel(65) == 1);
   REQUIRE(f.Pixel(67) == 15);
+}
+
+namespace {
+
+// Test scenes use the same limit/flip/X=-256 cases as the hardware diagnostic:
+// https://github.com/undisbeliever/snes-test-roms/blob/master/src/hardware-tests/object-dropout-test.asm
+// Colors identify tile columns without depending on that ROM's artwork.
+struct ObjLimitFixture {
+  SNES snes;
+  TimeMasterT now = 1;
+  std::array<uint8_t, 544> oam{};
+  static constexpr uint8_t kY = 40;
+  static constexpr TimeMasterT kAfterLine = 42U * 1364U;
+
+  ObjLimitFixture() {
+    snes.GetPpu().Reset();
+    Write(sppu::regs::kVmain, 0x80U);
+    for (uint8_t color = 1; color <= 8U; ++color) {
+      WriteCgramWord(snes, static_cast<uint8_t>(0x80U + color), color, now);
+      uint8_t pixels[64];
+      for (auto& pixel : pixels) pixel = color;
+      WriteTile4bpp(snes, 0U, static_cast<uint16_t>(color - 1U), pixels, now);
+    }
+    // Fully off-screen, unlike X=-256 which still consumes sprite/tile slots.
+    for (uint8_t obj = 0; obj < 128U; ++obj) Sprite(obj, -255);
+    Write(sppu::regs::kTm, sppu::regs::kTmObjMask);
+  }
+
+  void Write(uint16_t reg, uint8_t value) { BusWrite(snes, reg, value, now++); }
+  void Sprite(uint8_t index, int16_t x, bool large = false, uint8_t tile = 0, uint8_t attr = 0, uint8_t y = kY) {
+    const auto base = static_cast<std::size_t>(index) * 4U;
+    oam[base] = static_cast<uint8_t>(x);
+    oam[base + 1U] = y;
+    oam[base + 2U] = tile;
+    oam[base + 3U] = attr;
+    const unsigned shift = (index & 3U) * 2U;
+    auto& high = oam[512U + index / 4U];
+    high = static_cast<uint8_t>((high & ~(3U << shift)) |
+                                ((static_cast<unsigned>(x < 0) | (static_cast<unsigned>(large) << 1U)) << shift));
+  }
+  void Start(uint8_t size = 0, uint8_t first = 0, bool rotate = false, bool blank = false) {
+    SetOamByteAddress(snes, 0U, now);
+    for (uint8_t byte : oam) Write(sppu::regs::kOamData, byte);
+    Write(sppu::regs::kObsel, static_cast<uint8_t>(size << 5U));
+    Write(sppu::regs::kOamAddL, static_cast<uint8_t>(first * 2U));
+    Write(sppu::regs::kOamAddH, rotate ? 0x80U : 0U);
+    Write(sppu::regs::kInidisp, blank ? 0x8FU : 0x0FU);
+    REQUIRE(now < 40U * 1364U);
+  }
+  uint8_t Flags(TimeMasterT time = kAfterLine) { return BusRead(snes, sppu::regs::kStat77, time).data & 0xC0U; }
+  void Render() { snes.GetPpu().CatchUpTo(kFrameEndNtsc); }
+  uint16_t Pixel(uint32_t x, uint32_t y = kY) const {
+    const auto view = snes.GetPpu().BuildFrontView();
+    return view.pixels[y * view.stride + x];
+  }
+};
+
+}  // namespace
+
+TEST_CASE("OBJ range limit selects 32 sprites without time-over", "[unit][ppu][obj-limits]") {
+  for (uint8_t count : std::array<uint8_t, 2>{32U, 33U}) {
+    ObjLimitFixture f;
+    for (uint8_t i = 0; i < 32U; ++i) f.Sprite(i, 0);
+    // The rejected 33rd sprite must not contribute its eight tiles.
+    if (count == 33U) f.Sprite(32, 80, true, 1);
+    f.Start(2);
+    REQUIRE(f.Flags() == (count == 33U ? 0x40U : 0U));
+    f.Render();
+    REQUIRE(f.Pixel(0) == 1U);
+    REQUIRE(f.Pixel(80) == 0U);
+  }
+}
+
+TEST_CASE("OBJ rotation wraps selection and pixel priority through sprite 127", "[unit][ppu][obj-limits]") {
+  ObjLimitFixture f;
+  for (uint8_t i = 0; i < 32U; ++i) f.Sprite(i, 0);
+  f.Sprite(31, 80, false, 1);
+  f.Sprite(127, 0, false, 2);
+  bool rotate = false;
+  SECTION("disabled ignores OAM address") {}
+  SECTION("enabled starts at sprite 127") { rotate = true; }
+  f.Start(0, 127, rotate);
+  REQUIRE(f.Flags() == 0x40U);
+  f.Render();
+  REQUIRE(f.Pixel(0) == (rotate ? 3U : 1U));
+  REQUIRE(f.Pixel(80) == (rotate ? 0U : 2U));
+}
+
+TEST_CASE("OBJ rotation follows OAM port increments and VBlank address reload", "[unit][ppu][obj-limits]") {
+  ObjLimitFixture f;
+  f.Sprite(0, 0, false, 0);
+  f.Sprite(1, 0, false, 1);
+  f.Start(0, 0, true);
+  SECTION("read increments") {
+    for (int i = 0; i < 4; ++i) (void)BusRead(f.snes, sppu::regs::kRdOam, f.now++);
+  }
+  SECTION("write increments") {
+    for (int i = 0; i < 4; ++i) f.Write(sppu::regs::kOamData, f.oam[static_cast<std::size_t>(i)]);
+  }
+  f.Render();
+  REQUIRE(f.Pixel(0) == 2U);
+  REQUIRE(f.snes.GetPpu().GetOamByteAddr() == 0U);
+  f.snes.GetPpu().CatchUpTo(kFrameEndNtsc * 2U);
+  REQUIRE(f.Pixel(0) == 1U);
+}
+
+TEST_CASE("OBJ fetch limit keeps the last selected sprites and leftmost columns", "[unit][ppu][obj-limits]") {
+  ObjLimitFixture f;
+  bool flipped = false;
+  SECTION("normal") {}
+  SECTION("horizontal flip still drops screen-right columns") { flipped = true; }
+  // Four later 64-pixel sprites cost 32 tiles. Only two columns of sprite 0 fit.
+  f.Sprite(0, 0, true, 0, flipped ? 0x40U : 0U);
+  for (uint8_t i = 1; i <= 4U; ++i) f.Sprite(i, 128, true);
+  f.Start(2);
+  REQUIRE(f.Flags() == 0x80U);
+  f.Render();
+  REQUIRE(f.Pixel(0) == (flipped ? 8U : 1U));
+  REQUIRE(f.Pixel(8) == (flipped ? 7U : 2U));
+  REQUIRE(f.Pixel(15) == (flipped ? 7U : 2U));
+  REQUIRE(f.Pixel(16) == 0U);
+  REQUIRE(f.Pixel(63) == 0U);
+  REQUIRE(f.Pixel(128) == 1U);
+}
+
+TEST_CASE("OBJ time-over requires a 35th tile and counts transparent tiles", "[unit][ppu][obj-limits]") {
+  for (uint8_t extra : std::array<uint8_t, 2>{2U, 3U}) {
+    ObjLimitFixture f;
+    for (uint8_t i = 0; i < 4U; ++i) f.Sprite(i, 128, true);
+    // Tile 32 is zero-filled (transparent), but each fetch still consumes time.
+    for (uint8_t i = 0; i < extra; ++i) f.Sprite(static_cast<uint8_t>(4U + i), 0, false, 32);
+    f.Start(2);
+    REQUIRE(f.Flags() == (extra == 3U ? 0x80U : 0U));
+    f.Render();
+    REQUIRE(f.Pixel(0) == 0U);
+    // First sprite's last column is missing at 35, revealing the next sprite.
+    REQUIRE(f.Pixel(128) == 1U);
+  }
+}
+
+TEST_CASE("OBJ fetch order reverses the rotated selection order", "[unit][ppu][obj-limits]") {
+  ObjLimitFixture f;
+  f.Sprite(127, 0, true);
+  for (uint8_t i = 0; i < 4U; ++i) f.Sprite(i, 128, true);
+  f.Start(2, 127, true);
+  REQUIRE(f.Flags() == 0x80U);
+  f.Render();
+  REQUIRE(f.Pixel(8) == 2U);
+  REQUIRE(f.Pixel(16) == 0U);
+}
+
+TEST_CASE("OBJ off-screen clipping counts only eligible sprites and tile columns", "[unit][ppu][obj-limits]") {
+  SECTION("fully hidden sprites do not exhaust the range limit") {
+    ObjLimitFixture f;
+    for (uint8_t i = 0; i < 32U; ++i) f.Sprite(i, -8);
+    f.Sprite(32, -7);
+    f.Start();
+    REQUIRE(f.Flags() == 0U);
+    f.Render();
+    REQUIRE(f.Pixel(0) == 1U);
+    REQUIRE(f.Pixel(1) == 0U);
+  }
+  SECTION("wide sprites clipped at either edge cost one tile each") {
+    ObjLimitFixture f;
+    for (uint8_t i = 0; i < 32U; ++i) f.Sprite(i, i < 16U ? -63 : 255, true);
+    f.Start(2);
+    REQUIRE(f.Flags() == 0U);
+    f.Render();
+    REQUIRE(f.Pixel(0) == 8U);
+    REQUIRE(f.Pixel(1) == 0U);
+    REQUIRE(f.Pixel(254) == 0U);
+    REQUIRE(f.Pixel(255) == 1U);
+  }
+  SECTION("a tile ending at x=-1 is excluded but ending at x=0 counts") {
+    for (int16_t x : std::array<int16_t, 2>{-16, -15}) {
+      ObjLimitFixture f;
+      for (uint8_t i = 0; i < 8U; ++i) f.Sprite(i, 128, true);
+      f.Sprite(8, x, true);
+      f.Start(1);  // Eight 32px sprites = 32; left sprite contributes 2 or 3.
+      REQUIRE(f.Flags() == (x == -16 ? 0U : 0x80U));
+      f.Render();
+      REQUIRE(f.Pixel(0) == (x == -16 ? 3U : 2U));
+    }
+  }
+}
+
+TEST_CASE("OBJ X=-256 consumes slots and all tile columns without drawing", "[unit][ppu][obj-limits]") {
+  SECTION("range only") {
+    ObjLimitFixture f;
+    for (uint8_t i = 0; i < 32U; ++i) f.Sprite(i, -256);
+    f.Sprite(32, 80);
+    f.Start();
+    REQUIRE(f.Flags() == 0x40U);
+    f.Render();
+    REQUIRE(f.Pixel(0) == 0U);
+    REQUIRE(f.Pixel(80) == 0U);
+  }
+  SECTION("time only, including invisible wide sprites") {
+    ObjLimitFixture f;
+    f.Sprite(0, 0, true);
+    for (uint8_t i = 1; i <= 4U; ++i) f.Sprite(i, -256, true);
+    f.Start(2);
+    REQUIRE(f.Flags() == 0x80U);
+    f.Render();
+    REQUIRE(f.Pixel(8) == 2U);
+    REQUIRE(f.Pixel(16) == 0U);
+    REQUIRE(f.Pixel(128) == 0U);
+  }
+}
+
+TEST_CASE("STAT77 overflows latch across lines and reads until frame start", "[unit][ppu][obj-limits]") {
+  ObjLimitFixture f;
+  for (uint8_t i = 0; i < 33U; ++i) f.Sprite(i, 0, true);
+  f.Start();  // 32 selected 16px sprites exceed both limits.
+  REQUIRE(f.Flags() == 0xC0U);
+  REQUIRE(f.Flags(ObjLimitFixture::kAfterLine + 1U) == 0xC0U);
+  REQUIRE(f.Flags(100U * 1364U) == 0xC0U);  // Empty scanline.
+  REQUIRE(f.Flags(225U * 1364U) == 0xC0U);  // VBlank does not clear.
+  f.now = 226U * 1364U;
+  f.Write(sppu::regs::kInidisp, 0x8FU);
+  REQUIRE(f.Flags(227U * 1364U) == 0xC0U);  // Forced blank does not clear.
+  REQUIRE(f.Flags(262U * 1364U - 1U) == 0xC0U);
+  REQUIRE(f.Flags(262U * 1364U) == 0U);
+}
+
+TEST_CASE("OBJ overflow evaluation is independent of layer enables and windows", "[unit][ppu][obj-limits]") {
+  ObjLimitFixture f;
+  for (uint8_t i = 0; i < 33U; ++i) f.Sprite(i, 0, true);
+  bool blank = false;
+  SECTION("TM and TS disable OBJ") { f.Write(sppu::regs::kTm, 0U); }
+  SECTION("window hides OBJ") {
+    f.Write(sppu::regs::kWObjSel, 0x02U);
+    f.Write(sppu::regs::kWh0, 0U);
+    f.Write(sppu::regs::kWh1, 255U);
+    f.Write(sppu::regs::kTmw, sppu::regs::kTmObjMask);
+  }
+  SECTION("forced blank suppresses evaluation") { blank = true; }
+  f.Start(0, 0, false, blank);
+  REQUIRE(f.Flags() == (blank ? 0U : 0xC0U));
+  f.Render();
+  REQUIRE(f.Pixel(0) == 0U);
+}
+
+namespace {
+
+// Start of an NTSC dot, including the two long dots near the line end.
+TimeMasterT ObjDotTime(uint32_t line, uint32_t dot) {
+  return line * 1364U + dot * 4U + (dot > 323U ? 2U : 0U) + (dot > 327U ? 2U : 0U);
+}
+
+}  // namespace
+
+TEST_CASE("OBJ range-over asserts during the preceding line's 33rd selection", "[unit][ppu][obj-timing]") {
+  ObjLimitFixture f;
+  for (uint8_t i = 0; i < 33U; ++i) f.Sprite(i, 0);
+  f.Start();
+  // Index 32: position at dot 64, selection at dot 65. Reads observe
+  // completed dots, consistent with the PPU's partial-dot catch-up contract.
+  REQUIRE(f.Flags(ObjDotTime(40, 65)) == 0U);
+  REQUIRE(f.Flags(ObjDotTime(40, 66) - 1U) == 0U);
+  REQUIRE(f.Flags(ObjDotTime(40, 66)) == 0x40U);
+  REQUIRE(f.Flags(ObjDotTime(41, 0)) == 0x40U);
+}
+
+TEST_CASE("OBJ time-over distinguishes the 34th fetch from the 35th tile setup", "[unit][ppu][obj-timing]") {
+  ObjLimitFixture f;
+  for (uint8_t i = 0; i < 4U; ++i) f.Sprite(i, 0, true);
+  for (uint8_t i = 4; i < 7U; ++i) f.Sprite(i, 128);
+  f.Start(2);  // 4*8 + 3 = 35 tiles, no range overflow.
+  REQUIRE(f.Flags(ObjDotTime(40, 338)) == 0U);
+  REQUIRE(f.Flags(ObjDotTime(40, 339)) == 0U);
+  REQUIRE(f.Flags(ObjDotTime(41, 0)) == 0x80U);
+}
+
+TEST_CASE("OBJ selection retains indices and fetch resamples OAM before latching pixels", "[unit][ppu][obj-timing]") {
+  ObjLimitFixture f;
+  f.Sprite(0, 40);
+  f.Start();
+  // Selection already found sprite 0. Fetch must consume its later X/tile.
+  f.now = ObjDotTime(40, 100);
+  WriteOamLowEntry(f.snes, 0, 80, 40, 1, 0, f.now);
+  // After the fetch window, changes must leave the prepared line intact.
+  f.now = ObjDotTime(41, 0) + 1U;
+  WriteOamLowEntry(f.snes, 0, 120, 40, 2, 0, f.now);
+  f.Render();
+  REQUIRE(f.Pixel(40) == 0U);
+  REQUIRE(f.Pixel(80) == 2U);
+  REQUIRE(f.Pixel(120) == 0U);
+  REQUIRE(f.Pixel(80, 41) == 0U);
+  REQUIRE(f.Pixel(120, 41) == 3U);
+}
+
+TEST_CASE("OBJ changes after selection cannot add a sprite to the prepared line", "[unit][ppu][obj-timing]") {
+  ObjLimitFixture f;
+  f.Sprite(0, 40, false, 0, 0, 100);  // Vertically absent at selection.
+  f.Start();
+  f.now = ObjDotTime(40, 100);
+  WriteOamLowEntry(f.snes, 0, 40, 40, 0, 0, f.now);
+  f.Render();
+  REQUIRE(f.Pixel(40) == 0U);
+  REQUIRE(f.Pixel(40, 41) == 1U);
+}
+
+TEST_CASE("OBJ VRAM data is sampled as two words at fetch time", "[unit][ppu][obj-timing]") {
+  ObjLimitFixture f;
+  f.Sprite(0, 40);
+  f.Start();
+  // Park the write port on the low word of tile 0's first row. These tests
+  // exercise sampling independently of the still-simplified active VRAM port.
+  SetVramAddress(f.snes, 0U, f.now);
+  bool before = false;
+  SECTION("write before planes 0 and 1 are fetched") { before = true; }
+  SECTION("write after planes 0 and 1 are fetched") {}
+  f.now = ObjDotTime(40, 272) + (before ? 0U : 1U);
+  f.Write(sppu::regs::kVmDataL, 0U);
+  f.Render();
+  REQUIRE(f.Pixel(40) == (before ? 0U : 1U));
+}
+
+TEST_CASE("OBJ planes 2 and 3 are sampled one dot after planes 0 and 1", "[unit][ppu][obj-timing]") {
+  ObjLimitFixture f;
+  f.Sprite(0, 40);
+  f.Start();
+  SetVramAddress(f.snes, 8U, f.now);  // Tile 0's planes 2 and 3, first row.
+  f.now = ObjDotTime(40, 273);
+  f.Write(sppu::regs::kVmDataL, 0xFFU);
+  f.Render();
+  REQUIRE(f.Pixel(40) == 5U);  // Original plane 0 plus the newly written plane 2.
+}
+
+TEST_CASE("OBJ fetched rows survive visible-line VRAM and OBSEL changes", "[unit][ppu][obj-timing]") {
+  ObjLimitFixture f;
+  f.Sprite(0, 40);
+  f.Start();
+  SetVramAddress(f.snes, 0U, f.now);
+  f.now = ObjDotTime(41, 22U + 44U);
+  f.Write(sppu::regs::kVmDataL, 0U);
+  f.Write(sppu::regs::kObsel, 1U);  // Switch to a blank tile region.
+  f.Render();
+  REQUIRE(f.Pixel(40) == 1U);
+  REQUIRE(f.Pixel(47) == 1U);
+  REQUIRE(f.Pixel(40, 41) == 0U);
+}
+
+TEST_CASE("OBJ line buffers preserve live palette windows and screen enables", "[unit][ppu][obj-timing]") {
+  ObjLimitFixture f;
+  f.Sprite(0, 40);
+  f.Start();
+  SECTION("palette writes change already-fetched sprite colors") {
+    f.now = ObjDotTime(41, 22U + 42U);
+    WriteCgramWord(f.snes, 0x81U, 0x03E0U, f.now);
+    f.Render();
+    REQUIRE(f.Pixel(40) == 1U);
+    REQUIRE(f.Pixel(47) == 0x03E0U);
+  }
+  SECTION("TM changes expose already-fetched sprites") {
+    f.Write(sppu::regs::kTm, 0U);
+    f.now = ObjDotTime(41, 22U + 44U);
+    f.Write(sppu::regs::kTm, sppu::regs::kTmObjMask);
+    f.Render();
+    REQUIRE(f.Pixel(40) == 0U);
+    REQUIRE(f.Pixel(47) == 1U);
+  }
+  SECTION("window changes expose already-fetched sprites") {
+    f.Write(sppu::regs::kWObjSel, 0x02U);
+    f.Write(sppu::regs::kWh0, 0U);
+    f.Write(sppu::regs::kWh1, 255U);
+    f.Write(sppu::regs::kTmw, sppu::regs::kTmObjMask);
+    f.now = ObjDotTime(41, 22U + 44U);
+    f.Write(sppu::regs::kTmw, 0U);
+    f.Render();
+    REQUIRE(f.Pixel(40) == 0U);
+    REQUIRE(f.Pixel(47) == 1U);
+  }
+}
+
+TEST_CASE("OBJ enabling display after selection cannot retroactively populate a line", "[unit][ppu][obj-timing]") {
+  ObjLimitFixture f;
+  f.Sprite(0, 40);
+  f.Start(0, 0, false, true);
+  f.now = ObjDotTime(40, 260);
+  f.Write(sppu::regs::kInidisp, 0x0FU);
+  f.Render();
+  REQUIRE(f.Pixel(40) == 0U);
+  REQUIRE(f.Pixel(40, 41) == 1U);
+}
+
+TEST_CASE("OBJ forced blank during graphics fetch suppresses the fetched tile", "[unit][ppu][obj-timing]") {
+  ObjLimitFixture f;
+  f.Sprite(0, 40);
+  f.Start();
+  f.now = ObjDotTime(40, 272);
+  f.Write(sppu::regs::kInidisp, 0x8FU);
+  f.now = ObjDotTime(41, 0);
+  f.Write(sppu::regs::kInidisp, 0x0FU);
+  f.Render();
+  REQUIRE(f.Pixel(40) == 0U);
+  REQUIRE(f.Pixel(40, 41) == 1U);
+}
+
+TEST_CASE("OBJ rotation is latched at selection start rather than the first pixel", "[unit][ppu][obj-timing]") {
+  ObjLimitFixture f;
+  f.Sprite(0, 40, false, 0);
+  f.Sprite(1, 40, false, 1);
+  f.Start(0, 0, true);
+  f.now = ObjDotTime(40, 100);
+  f.Write(sppu::regs::kOamAddL, 2U);
+  f.Render();
+  REQUIRE(f.Pixel(40) == 1U);
+  REQUIRE(f.Pixel(40, 41) == 2U);
+}
+
+TEST_CASE("OBJ rectangular vertical flips preserve the order of square halves", "[unit][ppu][obj-timing]") {
+  ObjLimitFixture f;
+  uint8_t pixels[64];
+  for (uint16_t row = 0; row < 4U; ++row) {
+    std::fill(std::begin(pixels), std::end(pixels), static_cast<uint8_t>(row + 1U));
+    WriteTile4bpp(f.snes, 0, static_cast<uint16_t>(row * 16U), pixels, f.now);
+  }
+  f.Sprite(0, 40, false, 0, 0x80U);
+  f.Start(6);  // 16x32, top and bottom 16x16 halves each flip independently.
+  f.Render();
+  REQUIRE(f.Pixel(40, 40) == 2U);
+  REQUIRE(f.Pixel(40, 48) == 1U);
+  REQUIRE(f.Pixel(40, 56) == 4U);
+  REQUIRE(f.Pixel(40, 64) == 3U);
+}
+
+TEST_CASE("OBJ pipeline catch-up partitioning preserves fetched output and status", "[unit][ppu][obj-timing]") {
+  auto whole = std::make_unique<ObjLimitFixture>();
+  auto sliced = std::make_unique<ObjLimitFixture>();
+  for (auto* f : {whole.get(), sliced.get()}) {
+    for (uint8_t i = 0; i < 33U; ++i) f->Sprite(i, static_cast<int16_t>((i * 23U) % 256U), true);
+    f->Start(2, 17, true);
+    f->now = ObjDotTime(40, 100) + 1U;
+    WriteOamLowEntry(f->snes, 20, 180, 40, 2, 0x40, f->now);
+    f->now = ObjDotTime(40, 301) + 2U;
+    f->Write(sppu::regs::kObsel, 0x20U);
+    f->now = ObjDotTime(41, 50) + 3U;
+    WriteCgramWord(f->snes, 0x81, 0x03E0, f->now);
+  }
+  whole->snes.GetPpu().CatchUpTo(ObjDotTime(40, 0));
+  sliced->snes.GetPpu().CatchUpTo(ObjDotTime(40, 0));
+  // Include boundaries in both long dots and both fetch words, one cycle at a time.
+  for (TimeMasterT t = ObjDotTime(40, 0) + 1U; t <= ObjDotTime(42, 0); ++t) {
+    sliced->snes.GetPpu().CatchUpTo(t);
+  }
+  whole->snes.GetPpu().CatchUpTo(ObjDotTime(42, 0));
+  REQUIRE(whole->Flags() == sliced->Flags());
+  whole->Render();
+  sliced->Render();
+  for (uint32_t y = 0; y < 224U; ++y) {
+    for (uint32_t x = 0; x < 256U; ++x) REQUIRE(whole->Pixel(x, y) == sliced->Pixel(x, y));
+  }
 }

@@ -380,35 +380,41 @@ class Ppu : public Device {
     bool hflip = false;
   };
 
-  // OBJ pixel at screen-space (x, y). Iterates the per-scanline OAM evaluation
-  // list — built lazily by EvaluateObjLine the first time a new scanline asks
-  // for an OBJ pixel — so the 128-sprite walk happens once per line rather
-  // than once per dot. Lowest OAM index with non-transparent color wins.
-  // `cgram_index` is absolute (already in the OBJ palette region $80-$FF).
-  // The hardware 32-OBJ-per-line cap IS enforced (kObjLineCap).
   struct ObjPixel {
     uint8_t cgram_index;
     bool transparent;
     uint8_t priority;
   };
-  [[nodiscard]] ObjPixel FetchObjPixel(uint32_t screen_x, uint32_t screen_y) const;
 
-  // One sprite that overlaps the line cached in `obj_line_list_`. Stores the
-  // per-line constants so per-pixel evaluation just iterates X-ranges + fetches
-  // plane bytes. y_internal is `(screen_y - y_raw) & 0xFF` clipped to height —
-  // already known to fall inside the sprite's vertical extent.
-  struct ObjLineEntry {
-    int16_t x;  // signed 9-bit X origin (sign-extended into int16_t)
-    uint8_t y_internal;
+  struct ObjPosition {
+    int16_t x;
+    uint8_t y;
     uint8_t width;
     uint8_t height;
-    uint16_t base_tile;  // 9-bit tile number (bit 8 = region select)
-    uint8_t attr;        // OAM byte 3: hflip/vflip/palette/priority
+  };
+  struct ObjFetchedTile {
+    uint32_t pixels;
+    int16_t x;
+    uint16_t palette_priority;
+    bool hflip;
+  };
+  struct ObjTileFetch {
+    uint32_t byte_address = 0;
+    uint32_t pixels = 0;  // eight 4-bit lanes, filled by two timed VRAM word reads
+    int16_t x = 0;
+    uint16_t palette_priority = 0;
+    bool hflip = false;
+    bool valid = false;
   };
   static constexpr std::size_t kObjLineCap = 32;
-  // (Re)build `obj_line_list_` for the given visible scanline. Called lazily
-  // by FetchObjPixel when obj_line_v_ doesn't match the current line.
-  void EvaluateObjLine(uint32_t screen_y) const;
+  static constexpr uint8_t kObjTileCap = 34;
+  static constexpr uint32_t kObjFetchStart = 270;
+  [[nodiscard]] ObjPosition ReadObjPosition(uint8_t index) const;
+  void SyncObjPipeline(uint32_t end_dot);
+  void StepObjPipeline();
+  void PrepareObjTile();
+  void FinishObjTile();
+  void BuildObjPixels();
 
   // Output of a single-screen (main or sub) pixel resolution. `layer_id` runs
   // 0..3 = BG1..BG4, 4 = OBJ, 5 = backdrop (no opaque layer rendered).
@@ -577,14 +583,26 @@ class Ppu : public Device {
   // when target lands mid-dot — no overshoot permitted.
   TimeMasterDeltaT partial_dot_cycles_ = 0;
 
-  // --- Per-scanline OAM evaluation cache ---
-  // `obj_line_v_` is the screen_y the cache was built for (or -1 to force a
-  // rebuild). `obj_line_count_` is how many entries are populated, capped at
-  // kObjLineCap. Mutable so FetchObjPixel can stay const while lazily
-  // rebuilding — the eval result is pure derived state.
-  mutable std::array<ObjLineEntry, kObjLineCap> obj_line_list_{};
-  mutable uint8_t obj_line_count_ = 0;
-  mutable int32_t obj_line_v_ = -1;
+  // OBJ works one line ahead. Keep palette indices/priority, not RGB, so
+  // live CGRAM, windows, TM/TS, brightness, and color math still apply per dot.
+  std::array<std::array<uint16_t, sppu::regs::kLogicalWidth>, 2> obj_pixel_lines_{};
+  std::array<std::array<ObjFetchedTile, kObjTileCap>, 2> obj_fetched_tiles_{};
+  std::array<uint8_t, 2> obj_fetched_count_{};
+  uint16_t* obj_output_ = nullptr;
+  bool obj_output_ready_ = false;
+  std::array<uint8_t, kObjLineCap> obj_selected_{};
+  uint32_t obj_next_dot_ = 0;  // next internal sprite operation
+  uint32_t obj_sync_dot_ = 0;  // begin/end-of-line fence in the main dot loop
+  uint8_t obj_first_ = 0;
+  uint8_t obj_selected_count_ = 0;
+  uint8_t obj_fetch_remaining_ = 0;
+  uint8_t obj_fetch_column_ = 0;
+  uint8_t obj_tile_count_ = 0;
+  ObjPosition obj_position_{};
+  bool obj_fetch_position_valid_ = false;
+  ObjTileFetch obj_tile_fetch_{};
+  bool obj_range_over_ = false;
+  bool obj_time_over_ = false;
 
   // --- Per-BG row cache ---
   // Reuses a decoded tilemap entry and row while pixels stay inside the same
