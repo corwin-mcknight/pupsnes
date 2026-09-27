@@ -58,18 +58,42 @@ TEST_CASE("$4218/$4219 read the current P1 button bitmask", "[unit][joypad]") {
   REQUIRE(BusRead(snes, 0x00'4218U) == 0x80U);  // low byte: bit 7 (A)
   REQUIRE(BusRead(snes, 0x00'4219U) == 0x88U);  // high byte: bits 15 (B), 11 (Up)
 
-  // Other JOY result registers (P2/P3/P4) stay zero.
+  // Other JOY result registers stay zero when no other buttons are held.
   for (uint32_t addr = 0x421AU; addr <= 0x421FU; ++addr) {
     REQUIRE(BusRead(snes, addr) == 0x00U);
   }
 }
 
-TEST_CASE("$4017 always reads 0 on the data line (no P2 controller)", "[unit][joypad]") {
+TEST_CASE("P2 auto-read and manual serial state are independent of P1", "[unit][joypad]") {
   SNES snes;
   snes.Reset();
-  // Even with P1 fully pressed, $4017 carries P2's data line which is unwired.
-  snes.GetJoypad().SetButton(Joypad::Button::kB, true);
-  REQUIRE((BusRead(snes, 0x00'4017U) & 0x01U) == 0x00U);
+  Joypad& pad = snes.GetJoypad();
+  pad.SetButton(Joypad::Button::kB, true);
+  pad.SetButton(Joypad::Button::kY, true, 1);
+  pad.SetButton(Joypad::Button::kA, true, 1);
+  REQUIRE(pad.GetP1State() == 0x8000U);
+  REQUIRE(pad.GetP2State() == 0x4080U);
+  REQUIRE(BusRead(snes, 0x00'4218U) == 0x00U);
+  REQUIRE(BusRead(snes, 0x00'4219U) == 0x80U);
+  REQUIRE(BusRead(snes, 0x00'421AU) == 0x80U);
+  REQUIRE(BusRead(snes, 0x00'421BU) == 0x40U);
+
+  BusWrite(snes, 0x00'4016U, 1);
+  BusWrite(snes, 0x00'4016U, 0);
+  REQUIRE((BusRead(snes, 0x00'4016U) & 1U) == 1U);
+  REQUIRE((BusRead(snes, 0x00'4017U) & 1U) == 0U);
+  REQUIRE((BusRead(snes, 0x00'4017U) & 1U) == 1U);
+  pad.SetButton(Joypad::Button::kB, true, 1);
+  REQUIRE((BusRead(snes, 0x00'4017U) & 1U) == 0U);
+  BusWrite(snes, 0x00'4016U, 1);
+  REQUIRE((BusRead(snes, 0x00'4017U) & 1U) == 1U);
+  BusWrite(snes, 0x00'4016U, 0);
+  for (int i = 0; i < 16; ++i) (void)BusRead(snes, 0x00'4017U);
+  REQUIRE((BusRead(snes, 0x00'4017U) & 1U) == 1U);
+
+  pad.ReleaseAll(1);
+  REQUIRE(pad.GetP2State() == 0);
+  REQUIRE(pad.GetP1State() == 0x8000U);
 }
 
 TEST_CASE("$4016 manual serial: strobe + 16 reads clock out P1 state MSB-first", "[unit][joypad]") {
@@ -124,6 +148,7 @@ TEST_CASE("Joypad::Reset clears the manual shift state but not button presses", 
   SNES snes;
   Joypad& pad = snes.GetJoypad();
   pad.SetButton(Joypad::Button::kB, true);
+  pad.SetButton(Joypad::Button::kY, true, 1);
 
   // Start a manual read mid-sequence.
   BusWrite(snes, 0x00'4016U, 0x01U);
@@ -134,6 +159,7 @@ TEST_CASE("Joypad::Reset clears the manual shift state but not button presses", 
 
   // Button state is owned by the UI/user and survives Reset.
   REQUIRE(pad.GetButton(Joypad::Button::kB));
+  REQUIRE(pad.GetButton(Joypad::Button::kY, 1));
 
   // A fresh latch sequence after reset clocks out bit 15 of the live state
   // (B = 1), proving the strobe edge re-snapshots p1_state_.

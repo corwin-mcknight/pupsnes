@@ -65,6 +65,21 @@ constexpr std::array<KeyMapping, 13> kP1KeyMap{{
     {ImGuiKey_RightShift, Joypad::Button::kSelect, "RShift"},
 }};
 
+constexpr std::array<KeyMapping, 12> kP2KeyMap{{
+    {ImGuiKey_I, Joypad::Button::kUp, "I"},
+    {ImGuiKey_K, Joypad::Button::kDown, "K"},
+    {ImGuiKey_J, Joypad::Button::kLeft, "J"},
+    {ImGuiKey_L, Joypad::Button::kRight, "L"},
+    {ImGuiKey_N, Joypad::Button::kB, "N"},
+    {ImGuiKey_M, Joypad::Button::kA, "M"},
+    {ImGuiKey_V, Joypad::Button::kY, "V"},
+    {ImGuiKey_C, Joypad::Button::kX, "C"},
+    {ImGuiKey_U, Joypad::Button::kL, "U"},
+    {ImGuiKey_O, Joypad::Button::kR, "O"},
+    {ImGuiKey_H, Joypad::Button::kStart, "H"},
+    {ImGuiKey_G, Joypad::Button::kSelect, "G"},
+}};
+
 }  // namespace
 
 DebuggerApp::DebuggerApp()
@@ -598,6 +613,7 @@ void DebuggerApp::RenderMenuBar() {
       ImGui::MenuItem("Bus", nullptr, &ui_state_.show_bus_panel);
       ImGui::MenuItem("Log", nullptr, &ui_state_.show_log_panel);
       ImGui::MenuItem("P1 Controller", nullptr, &ui_state_.show_controller_panel);
+      ImGui::MenuItem("P2 Controller", nullptr, &ui_state_.show_p2_controller_panel);
       ImGui::MenuItem("SNES", nullptr, &ui_state_.show_snes_panel);
       ImGui::EndMenu();
     }
@@ -692,7 +708,7 @@ struct StringField {
   std::string UiState::* member;
 };
 
-constexpr std::array<BoolField, 17> kBoolFields{{
+constexpr std::array<BoolField, 18> kBoolFields{{
     {"persist_sram", &UiState::persist_sram},
     {"show_registers_panel", &UiState::show_registers_panel},
     {"show_disasm_panel", &UiState::show_disasm_panel},
@@ -709,6 +725,7 @@ constexpr std::array<BoolField, 17> kBoolFields{{
     {"show_bus_panel", &UiState::show_bus_panel},
     {"show_log_panel", &UiState::show_log_panel},
     {"show_controller_panel", &UiState::show_controller_panel},
+    {"show_p2_controller_panel", &UiState::show_p2_controller_panel},
     {"show_snes_panel", &UiState::show_snes_panel},
 }};
 
@@ -818,6 +835,13 @@ void DebuggerApp::PollGameInput() {
     if (down != p1_key_was_down_[i]) {
       joypad.SetButton(kP1KeyMap[i].button, down);
       p1_key_was_down_[i] = down;
+    }
+  }
+  for (size_t i = 0; i < kP2KeyMap.size(); ++i) {
+    const bool down = !suppress && ImGui::IsKeyDown(kP2KeyMap[i].key);
+    if (down != p2_key_was_down_[i]) {
+      joypad.SetButton(kP2KeyMap[i].button, down, 1);
+      p2_key_was_down_[i] = down;
     }
   }
 }

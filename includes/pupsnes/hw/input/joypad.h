@@ -6,20 +6,20 @@
 
 namespace pupsnes {
 
-// SNES standard controller, port 1 only.
+// Two SNES standard controllers, one on each port.
 //
-// Holds the 16-bit auto-joypad word for P1 and implements both access paths a
-// game might use:
+// Holds the 16-bit auto-joypad words for P1 and P2 and implements both access
+// paths a game might use:
 //
-//   * Auto-joypad read ($4218 = JOY1L low byte, $4219 = JOY1H high byte). v1
+//   * Auto-joypad read ($4218-$421B for JOY1 and JOY2). Currently this
 //     returns the current button state on demand — no $4200.0 gate, no
 //     VBlank-edge latching, no 4224-mcyc busy window. Good enough for a debug
 //     controller window where the user holds buttons for whole frames at a
 //     time.
 //   * Manual serial read ($4016 strobe + shift). Standard sequence: write 1
-//     then 0 to $4016 to latch, then read $4016 sixteen times to clock out
-//     bits MSB-first (B first). Reads past the 16-bit window return 1, matching
-//     the open data line on real hardware.
+//     then 0 to $4016 to latch both pads, then read $4016 or $4017 sixteen
+//     times to clock out that port's bits MSB-first (B first). Reads past the
+//     16-bit window return 1, matching the open data line on real hardware.
 //
 // Bit layout (matches the auto-joypad word the hardware returns):
 //
@@ -55,27 +55,35 @@ class Joypad : public Device {
   // source of truth, not the machine.
   void Reset();
 
-  // Frontend API. The UI panel calls these.
-  void SetButton(Button button, bool pressed);
-  [[nodiscard]] bool GetButton(Button button) const;
-  void ReleaseAll() { p1_state_ = 0; }
-  [[nodiscard]] uint16_t GetP1State() const { return p1_state_; }
+  // Port is 0 for P1 or 1 for P2. Defaults preserve existing P1 callers.
+  void SetButton(Button button, bool pressed, unsigned port = 0);
+  [[nodiscard]] bool GetButton(Button button, unsigned port = 0) const;
+  void ReleaseAll(unsigned port);
+  void ReleaseAll() {
+    ReleaseAll(0);
+    ReleaseAll(1);
+  }
+  [[nodiscard]] uint16_t GetP1State() const { return states_[0]; }
+  [[nodiscard]] uint16_t GetP2State() const { return states_[1]; }
 
   // CpuMmio dispatches the joypad register offsets here. Manual reads return a
   // single bit in bit 0 with bits 7-1 left as open-bus (driven_mask=0x01).
   // Auto-joypad reads drive all 8 bits.
   [[nodiscard]] uint8_t ReadJoySer0();
-  [[nodiscard]] uint8_t ReadJoySer1() const { return 0x00U; }  // no P2
-  void WriteJoySer0(uint8_t data);                             // strobe write — only bit 0 matters
+  [[nodiscard]] uint8_t ReadJoySer1();
+  void WriteJoySer0(uint8_t data);  // strobe write — only bit 0 matters
 
-  [[nodiscard]] uint8_t ReadJoy1L() const { return static_cast<uint8_t>(p1_state_ & 0xFFU); }
-  [[nodiscard]] uint8_t ReadJoy1H() const { return static_cast<uint8_t>((p1_state_ >> 8U) & 0xFFU); }
+  [[nodiscard]] uint8_t ReadJoy1L() const { return static_cast<uint8_t>(states_[0] & 0xFFU); }
+  [[nodiscard]] uint8_t ReadJoy1H() const { return static_cast<uint8_t>(states_[0] >> 8U); }
+  [[nodiscard]] uint8_t ReadJoy2L() const { return static_cast<uint8_t>(states_[1] & 0xFFU); }
+  [[nodiscard]] uint8_t ReadJoy2H() const { return static_cast<uint8_t>(states_[1] >> 8U); }
 
  private:
-  uint16_t p1_state_ = 0;        // current button bitmask (auto-joypad layout)
-  uint16_t shift_register_ = 0;  // latched snapshot used by manual serial reads
-  uint8_t shift_count_ = 0;      // number of bits already clocked out (0..16)
-  bool strobe_high_ = false;     // last bit-0 written to $4016
+  uint16_t states_[2]{};  // current button bitmasks (auto-joypad layout)
+  uint16_t shift_registers_[2]{};
+  uint8_t shift_counts_[2]{};
+  bool strobe_high_ = false;  // last bit-0 written to $4016
+  [[nodiscard]] uint8_t ReadSerial(unsigned port);
 };
 
 }  // namespace pupsnes

@@ -17,15 +17,15 @@ constexpr ImVec2 kShoulderBtnSize{40.0F, 22.0F};
 
 // A completed click toggles the latched Joypad state. Mouse-down and dragging
 // away without clicking do not change the pad state.
-void RenderPadButton(Joypad& joypad, Joypad::Button button, const char* label, ImVec2 size) {
-  const bool latched = joypad.GetButton(button);
+void RenderPadButton(Joypad& joypad, unsigned port, Joypad::Button button, const char* label, ImVec2 size) {
+  const bool latched = joypad.GetButton(button, port);
   if (latched) {
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.537F, 0.408F, 0.722F, 1.0F));  // purple accent
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.65F, 0.50F, 0.82F, 1.0F));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.75F, 0.62F, 0.92F, 1.0F));
   }
   if (ImGui::Button(label, size)) {
-    joypad.SetButton(button, !latched);
+    joypad.SetButton(button, !latched, port);
   }
   if (latched) {
     ImGui::PopStyleColor(3);
@@ -34,19 +34,19 @@ void RenderPadButton(Joypad& joypad, Joypad::Button button, const char* label, I
 
 }  // namespace
 
-void RenderControllerPanel(DebuggerApp& app) {
-  ScopedPanel panel("P1 Controller", app.GetUiState().show_controller_panel);
+void RenderController(DebuggerApp& app, unsigned port, bool& visible) {
+  ScopedPanel panel(port == 0 ? "P1 Controller" : "P2 Controller", visible);
   if (!panel) return;
 
   Joypad& joypad = app.GetSnes().GetJoypad();
 
   // Shoulder row: L far-left, R far-right.
-  RenderPadButton(joypad, Joypad::Button::kL, "L", kShoulderBtnSize);
+  RenderPadButton(joypad, port, Joypad::Button::kL, "L", kShoulderBtnSize);
   {
     const float row_width = ImGui::GetContentRegionAvail().x;
     ImGui::SameLine(row_width - kShoulderBtnSize.x);
   }
-  RenderPadButton(joypad, Joypad::Button::kR, "R", kShoulderBtnSize);
+  RenderPadButton(joypad, port, Joypad::Button::kR, "R", kShoulderBtnSize);
 
   ImGui::Dummy(ImVec2(0.0F, 6.0F));
 
@@ -59,17 +59,17 @@ void RenderControllerPanel(DebuggerApp& app) {
     // D-pad: 3x3 with corners empty.
     ImGui::Dummy(kDPadBtnSize);
     ImGui::SameLine();
-    RenderPadButton(joypad, Joypad::Button::kUp, "^", kDPadBtnSize);
+    RenderPadButton(joypad, port, Joypad::Button::kUp, "^", kDPadBtnSize);
 
-    RenderPadButton(joypad, Joypad::Button::kLeft, "<", kDPadBtnSize);
+    RenderPadButton(joypad, port, Joypad::Button::kLeft, "<", kDPadBtnSize);
     ImGui::SameLine();
     ImGui::Dummy(kDPadBtnSize);
     ImGui::SameLine();
-    RenderPadButton(joypad, Joypad::Button::kRight, ">", kDPadBtnSize);
+    RenderPadButton(joypad, port, Joypad::Button::kRight, ">", kDPadBtnSize);
 
     ImGui::Dummy(kDPadBtnSize);
     ImGui::SameLine();
-    RenderPadButton(joypad, Joypad::Button::kDown, "v", kDPadBtnSize);
+    RenderPadButton(joypad, port, Joypad::Button::kDown, "v", kDPadBtnSize);
   }
   ImGui::EndGroup();
 
@@ -78,9 +78,9 @@ void RenderControllerPanel(DebuggerApp& app) {
   ImGui::BeginGroup();
   {
     ImGui::Dummy(ImVec2(0.0F, kDPadBtnSize.y * 0.5F));
-    RenderPadButton(joypad, Joypad::Button::kSelect, "Select", kCenterBtnSize);
+    RenderPadButton(joypad, port, Joypad::Button::kSelect, "Select", kCenterBtnSize);
     ImGui::SameLine();
-    RenderPadButton(joypad, Joypad::Button::kStart, "Start", kCenterBtnSize);
+    RenderPadButton(joypad, port, Joypad::Button::kStart, "Start", kCenterBtnSize);
   }
   ImGui::EndGroup();
 
@@ -92,32 +92,42 @@ void RenderControllerPanel(DebuggerApp& app) {
     // SNES face layout so muscle memory works when clicking.
     ImGui::Dummy(kFaceBtnSize);
     ImGui::SameLine();
-    RenderPadButton(joypad, Joypad::Button::kX, "X", kFaceBtnSize);
+    RenderPadButton(joypad, port, Joypad::Button::kX, "X", kFaceBtnSize);
 
-    RenderPadButton(joypad, Joypad::Button::kY, "Y", kFaceBtnSize);
+    RenderPadButton(joypad, port, Joypad::Button::kY, "Y", kFaceBtnSize);
     ImGui::SameLine();
     ImGui::Dummy(kFaceBtnSize);
     ImGui::SameLine();
-    RenderPadButton(joypad, Joypad::Button::kA, "A", kFaceBtnSize);
+    RenderPadButton(joypad, port, Joypad::Button::kA, "A", kFaceBtnSize);
 
     ImGui::Dummy(kFaceBtnSize);
     ImGui::SameLine();
-    RenderPadButton(joypad, Joypad::Button::kB, "B", kFaceBtnSize);
+    RenderPadButton(joypad, port, Joypad::Button::kB, "B", kFaceBtnSize);
   }
   ImGui::EndGroup();
 
   ImGui::Dummy(ImVec2(0.0F, 8.0F));
   if (ImGui::Button("Release All", ImVec2(0.0F, 0.0F))) {
-    joypad.ReleaseAll();
+    joypad.ReleaseAll(port);
   }
   ImGui::SameLine();
-  ImGui::TextDisabled("state: $%04X", static_cast<unsigned>(joypad.GetP1State()));
+  ImGui::TextDisabled("state: $%04X", static_cast<unsigned>(port == 0 ? joypad.GetP1State() : joypad.GetP2State()));
 
-  // Keyboard binding hint. Must stay in sync with kP1KeyMap in app.cpp.
+  // Keyboard binding hints must stay in sync with the maps in app.cpp.
   ImGui::Dummy(ImVec2(0.0F, 4.0F));
   ImGui::TextDisabled("Keyboard:");
-  ImGui::TextDisabled("  D-pad: arrows   B: Z   A: X   Y: A   X: S");
-  ImGui::TextDisabled("  L: Q   R: W   Start: Enter   Select: Right Shift");
+  if (port == 0) {
+    ImGui::TextDisabled("  D-pad: arrows   B: Z   A: X   Y: A   X: S");
+    ImGui::TextDisabled("  L: Q   R: W   Start: Enter   Select: Right Shift");
+  } else {
+    ImGui::TextDisabled("  D-pad: IJKL   B: N   A: M   Y: V   X: C");
+    ImGui::TextDisabled("  L: U   R: O   Start: H   Select: G");
+  }
+}
+
+void RenderControllerPanel(DebuggerApp& app) {
+  RenderController(app, 0, app.GetUiState().show_controller_panel);
+  RenderController(app, 1, app.GetUiState().show_p2_controller_panel);
 }
 
 }  // namespace pupsnes::debugger

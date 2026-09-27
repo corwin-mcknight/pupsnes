@@ -94,6 +94,7 @@ struct UiState {
   bool show_bus_panel = true;
   bool show_log_panel = true;
   bool show_controller_panel = true;
+  bool show_p2_controller_panel = false;
   bool show_snes_panel = false;
   bool persist_sram = true;
   // Emulated SNES time per real time. 1.0 = 100% real-hardware speed. Always
@@ -203,6 +204,7 @@ class DebuggerApp {
   // Edge-detection state for keyboard → P1 polling. Index lines up with the
   // mapping table in app.cpp.
   std::array<bool, 13> p1_key_was_down_{};
+  std::array<bool, 12> p2_key_was_down_{};
 };
 
 }  // namespace pupsnes::debugger
