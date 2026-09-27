@@ -45,3 +45,5 @@ The remaining work is tracked in these focused follow-ups:
 | Sub-dot forced-blank collisions and hardware validation of phase edges | [#18](https://github.com/corwin-mcknight/pupsnes/issues/18) |
 
 Performance experiments and the temporary every-dot differential reference belong under ignored `build/profiles/obj-timing/`; they are not alternate production renderers or user-selectable accuracy modes.
+
+The measured preparation overhead in hidden and forced-blank scenes is tracked in [#20](https://github.com/corwin-mcknight/pupsnes/issues/20). Any optimization must retain selection, overflow reporting, sampled graphics, and late display enabling.
