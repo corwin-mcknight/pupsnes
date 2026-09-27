@@ -26,14 +26,14 @@ build/dev/pupsnes_tests "[integration]"
 
 ## CI
 
-CI should use the `ci-verify.sh` script (preferred):
+Use `ci-verify.sh` for local CI-style verification:
 
 ```sh
 ./ci-verify.sh
 ```
 
-The script can also run individual phases, which the GitHub Actions workflow
-uses to show each test group as a separate step:
+The script can also run individual phases. GitHub Actions invokes the build and
+test phases separately so each test group has its own step:
 
 ```sh
 ./ci-verify.sh configure
@@ -41,18 +41,17 @@ uses to show each test group as a separate step:
 ./ci-verify.sh test-unit
 ./ci-verify.sh test-integration
 ./ci-verify.sh test-additional
-./ci-verify.sh lint
 ```
 
-The default all-in-one command treats the existing lint backlog as
-non-blocking. The standalone `lint` phase returns the linter status. GitHub
-Actions runs it as a separate non-blocking job, so its result remains visible
-without delaying or failing the build-and-test check.
+The default all-in-one command also runs lint locally and treats the existing
+lint backlog as non-blocking. Run `./ci-verify.sh lint` to get the standalone
+linter status. GitHub Actions does not run lint.
 
-GitHub Actions caches both Conan packages and Ccache compiler outputs. Local
-builds already reuse Ninja's `build/` directory; developers with Ccache
-installed can additionally set `CMAKE_CXX_COMPILER_LAUNCHER=ccache` when
-configuring a fresh build directory.
+GitHub Actions runs for pull requests and pushes to `main`. It caches Conan
+packages and Ccache compiler outputs; builds on `main` seed the compiler cache
+for future pull requests. Local builds already reuse Ninja's `build/`
+directory; developers with Ccache installed can additionally set
+`CMAKE_CXX_COMPILER_LAUNCHER=ccache` when configuring a fresh build directory.
 
 If you need to run steps manually, use the `ci` preset and run CTest:
 
