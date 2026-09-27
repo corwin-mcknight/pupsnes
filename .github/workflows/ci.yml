@@ -86,6 +86,9 @@ jobs:
           restore-keys: |
             ccache-${{ runner.os }}-${{ runner.arch }}-
 
+      - name: Reset compiler cache statistics
+        run: ccache --zero-stats
+
       - name: Create Conan profile
         run: conan profile detect --force
 
