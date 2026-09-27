@@ -124,7 +124,7 @@ void RenderPeripheralsSection() {
     ImGui::TableNextColumn();
     ImGui::TextDisabled("Controller 2");
     ImGui::TableNextColumn();
-    ImGui::TextUnformatted("None");
+    ImGui::TextUnformatted("Standard Joypad");
 
     ImGui::TableNextRow();
     ImGui::TableNextColumn();

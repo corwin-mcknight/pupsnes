@@ -10,7 +10,7 @@ This roadmap describes where the project stands and what each milestone will mak
 
 The CPU implements all 256 instructions, and the core supports cartridge loading, memory, interrupts, and DMA/HDMA transfers. Mode 0, Mode 1, and Mode 7 backgrounds are implemented, along with sprites, window masking, and color blending. LoROM, HiROM, and ExHiROM cartridges are supported, and the debugger provides live inspection, execution traces, and screenshots.
 
-Super Castlevania IV and The Legend of Zelda: A Link to the Past reached playable gameplay with the former APU handshake stub, though neither was tested through to completion. The stub has been replaced by a complete SPC700 instruction set, timers, and the S-DSP voice and effects pipeline. Both frontends can play the resulting audio, and a command-line tool can capture it to WAV. Commercial-game sound still needs broader validation; several graphics effects are missing, and controller support is limited to player one.
+Super Castlevania IV and The Legend of Zelda: A Link to the Past reached playable gameplay with the former APU handshake stub, though neither was tested through to completion. The stub has been replaced by a complete SPC700 instruction set, timers, and the S-DSP voice and effects pipeline. Both frontends can play the resulting audio, and a command-line tool can capture it to WAV. Commercial-game sound still needs broader validation; several graphics effects are missing, and controller support is limited to two standard controllers.
 
 | Milestone | Status |
 | --- | --- |
@@ -71,7 +71,7 @@ The emulator and debugger provide volume, mute, output-device, and latency contr
 
 **Partially complete.** DMA/HDMA, interrupts, FastROM, and the main cartridge formats already support running games. Player-one input works through both serial reads and automatic-read registers, although automatic polling still needs the hardware’s capture and busy timing.
 
-The next input improvements are accurate automatic polling and a second standard controller. Multitap, mouse, and Super Scope support remain further possibilities.
+The next input improvement is accurate automatic polling. Multitap, mouse, and Super Scope support remain further possibilities.
 
 Cartridge support currently covers LoROM, HiROM, and ExHiROM, including battery-backed SRAM saves. Additional layouts and enhancement chips such as SA-1, SuperFX, and DSP-n will open up more of the SNES library. Each chip family is a substantial project with its own compatibility targets.
 

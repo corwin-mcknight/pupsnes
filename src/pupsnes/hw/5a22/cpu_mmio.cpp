@@ -140,8 +140,7 @@ MmioReadResult CpuMmio::ReadRegister(uint32_t offset, TimeMasterT current_time) 
       return {snes_->joypad->ReadJoySer0(), 0x01U};
 
     case kJoySer1Offset:
-      // P2 manual serial port. No P2 controller, so the data line reads 0 with
-      // bit 0 driven; bits 7-1 stay open-bus.
+      // P2 manual serial port; bits 7-1 stay open-bus.
       return {snes_->joypad->ReadJoySer1(), 0x01U};
 
     case kAutoJoyResultFirst: {
@@ -156,9 +155,12 @@ MmioReadResult CpuMmio::ReadRegister(uint32_t offset, TimeMasterT current_time) 
       return {value, 0xFFU};
     }
 
+    case kAutoJoyResultFirst + 2U: return {snes_->joypad->ReadJoy2L(), 0xFFU};
+    case kAutoJoyResultFirst + 3U: return {snes_->joypad->ReadJoy2H(), 0xFFU};
+
     default:
-      if (reg > kAutoJoyResultFirst + 1U && reg <= kAutoJoyResultLast) {
-        // $421A-$421F: JOY2/JOY3/JOY4. No P2-P4 controllers; drive zero so
+      if (reg > kAutoJoyResultFirst + 3U && reg <= kAutoJoyResultLast) {
+        // $421C-$421F: JOY3/JOY4. No P3-P4 controllers; drive zero so
         // polling doesn't pick up open-bus garbage as phantom button presses.
         return {0x00U, 0xFFU};
       }

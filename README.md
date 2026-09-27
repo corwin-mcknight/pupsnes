@@ -30,7 +30,7 @@ Legend: ✅ implemented · ⚠️ partial · ❌ not yet
 | **PPU — sprites (OBJ)** | ✅ | Fully implemented. 32-per-line hardware cap enforced |
 | **PPU — color math & screen** | ⚠️ | Windows, color math, mosaic, Mode 3/4/7 direct color, and Mode 2/4 offset-per-tile implemented; hi-res/interlace remain |
 | **Audio — APU (SPC700 + S-DSP)** | ⚠️ | All SPC700 opcodes, real IPL upload, timers, eight-voice synthesis, stereo playback and WAV capture; timing and compatibility work continues. |
-| **Input** | ⚠️ | Player 1 standard controller ✅; P2, multitap, mouse, Super Scope ❌ |
+| **Input** | ⚠️ | Two standard controllers ✅; multitap, mouse, Super Scope ❌ |
 | **Cartridge / mappers** | ⚠️ | No coprocessors (SA-1, SuperFX, DSP-n…) |
 | **Save states / rewind** | ❌ | Designed in [docs/architecture.md](docs/architecture.md), not yet implemented |
 | **Deterministic scheduling** | ✅ | Signal-horizon scheduler with a total order over events |
@@ -50,7 +50,7 @@ What to expect right now:
 
 - 🔊 **Stereo audio at 100% speed** — volume, mute, device, latency, and interpolation controls are available in both frontends. Pausing, debugger stepping, and other speeds are silent.
 - 🌀 **Mode 7 rendering** — rotation, scaling, scrolling, wrapping, EXTBG priorities, and BG1 direct color are implemented. A test ROM covers HDMA scale changes; commercial-game scenes still need broader validation.
-- 🎮 **Player 1 only** — no second controller or peripherals.
+- 🎮 **Two standard controllers** — independent P1 and P2 keyboard layouts; no other peripherals.
 - 💾 **No save states or rewind** yet (battery SRAM *does* persist to `.srm`). In the debugger, **SNES → Cartridge → Persist SRAM** controls save loading and automatic writes; it defaults on and is remembered across launches. Saves live beside the ROM. Turning persistence off leaves save files untouched; enabling it mid-session saves the current SRAM, with existing saves loaded when opening a ROM. **File → Clear SRAM** clears the cartridge's save memory, resets and pauses the SNES, and immediately updates the save file if persistence is enabled.
 - 📦 **LoROM / HiROM / ExHiROM only** — no SA-1 / SuperFX / DSP enhancement-chip games.
 
@@ -95,8 +95,10 @@ A finer-grained checklist for the curious.
 - See [Audio](docs/audio.md) for controls and capture commands, and [APU](docs/apu.md) for behavior and timing limitations.
 
 **Input**
-- ✅ Player 1 standard controller — auto-read (`$4218`/`$4219`) and serial (`$4016`)
-- ❌ Player 2, multitap, mouse, Super Scope
+- ✅ Two standard controllers — auto-read (`$4218`–`$421B`) and serial (`$4016`/`$4017`)
+- ❌ Multitap, mouse, Super Scope
+
+P1 uses arrows for the D-pad, Z/X for B/A, A/S for Y/X, Q/W for L/R, Enter for Start, and Right Shift for Select. P2 uses I/J/K/L for Up/Left/Down/Right, N/M for B/A, V/C for Y/X, U/O for L/R, H for Start, and G for Select. The debugger also provides separate on-screen panels for both controllers.
 
 **Cartridge / mappers**
 - ✅ LoROM, ✅ HiROM, ✅ ExHiROM

@@ -71,19 +71,34 @@ std::array<uint32_t, kMaxLogicalPixels>& GetScratchBuffer() {
 //   Q/W   → L/R        Enter → Start, R-Shift → Select
 void ApplyKeyboardToJoypad(GLFWwindow* window, Joypad& joypad) {
   using Btn = Joypad::Button;
-  const auto press = [&](int key, Btn b) { joypad.SetButton(b, glfwGetKey(window, key) == GLFW_PRESS); };
-  press(GLFW_KEY_UP, Btn::kUp);
-  press(GLFW_KEY_DOWN, Btn::kDown);
-  press(GLFW_KEY_LEFT, Btn::kLeft);
-  press(GLFW_KEY_RIGHT, Btn::kRight);
-  press(GLFW_KEY_Z, Btn::kB);
-  press(GLFW_KEY_X, Btn::kA);
-  press(GLFW_KEY_A, Btn::kY);
-  press(GLFW_KEY_S, Btn::kX);
-  press(GLFW_KEY_Q, Btn::kL);
-  press(GLFW_KEY_W, Btn::kR);
-  press(GLFW_KEY_ENTER, Btn::kStart);
-  press(GLFW_KEY_RIGHT_SHIFT, Btn::kSelect);
+  const auto press = [&](int key, Btn b, unsigned port) {
+    joypad.SetButton(b, glfwGetKey(window, key) == GLFW_PRESS, port);
+  };
+  press(GLFW_KEY_UP, Btn::kUp, 0);
+  press(GLFW_KEY_DOWN, Btn::kDown, 0);
+  press(GLFW_KEY_LEFT, Btn::kLeft, 0);
+  press(GLFW_KEY_RIGHT, Btn::kRight, 0);
+  press(GLFW_KEY_Z, Btn::kB, 0);
+  press(GLFW_KEY_X, Btn::kA, 0);
+  press(GLFW_KEY_A, Btn::kY, 0);
+  press(GLFW_KEY_S, Btn::kX, 0);
+  press(GLFW_KEY_Q, Btn::kL, 0);
+  press(GLFW_KEY_W, Btn::kR, 0);
+  press(GLFW_KEY_ENTER, Btn::kStart, 0);
+  press(GLFW_KEY_RIGHT_SHIFT, Btn::kSelect, 0);
+  // P2: IJKL D-pad, N/M B/A, V/C Y/X, U/O L/R, H/G Start/Select.
+  press(GLFW_KEY_I, Btn::kUp, 1);
+  press(GLFW_KEY_K, Btn::kDown, 1);
+  press(GLFW_KEY_J, Btn::kLeft, 1);
+  press(GLFW_KEY_L, Btn::kRight, 1);
+  press(GLFW_KEY_N, Btn::kB, 1);
+  press(GLFW_KEY_M, Btn::kA, 1);
+  press(GLFW_KEY_V, Btn::kY, 1);
+  press(GLFW_KEY_C, Btn::kX, 1);
+  press(GLFW_KEY_U, Btn::kL, 1);
+  press(GLFW_KEY_O, Btn::kR, 1);
+  press(GLFW_KEY_H, Btn::kStart, 1);
+  press(GLFW_KEY_G, Btn::kSelect, 1);
 }
 
 }  // namespace
@@ -279,7 +294,7 @@ void EmulatorApp::PollControllerInput() {
   }
   const ImGuiIO& io = ImGui::GetIO();
   // Don't steal keys while the user is typing in an ImGui text widget.
-  if (io.WantCaptureKeyboard) {
+  if (io.WantCaptureKeyboard || io.KeyCtrl || io.KeyAlt || io.KeySuper) {
     snes_.GetJoypad().ReleaseAll();
     return;
   }
