@@ -33,7 +33,7 @@ CI should use the `ci-verify.sh` script (preferred):
 ```
 
 The script can also run individual phases, which the GitHub Actions workflow
-uses to show each test group and lint as separate steps:
+uses to show each test group as a separate step:
 
 ```sh
 ./ci-verify.sh configure
@@ -45,8 +45,14 @@ uses to show each test group and lint as separate steps:
 ```
 
 The default all-in-one command treats the existing lint backlog as
-non-blocking. The standalone `lint` phase returns the linter status so CI can
-display it while allowing the verification job to pass.
+non-blocking. The standalone `lint` phase returns the linter status. GitHub
+Actions runs it as a separate non-blocking job, so its result remains visible
+without delaying or failing the build-and-test check.
+
+GitHub Actions caches both Conan packages and Ccache compiler outputs. Local
+builds already reuse Ninja's `build/` directory; developers with Ccache
+installed can additionally set `CMAKE_CXX_COMPILER_LAUNCHER=ccache` when
+configuring a fresh build directory.
 
 If you need to run steps manually, use the `ci` preset and run CTest:
 
