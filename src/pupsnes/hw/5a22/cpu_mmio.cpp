@@ -129,7 +129,7 @@ MmioReadResult CpuMmio::ReadRegister(uint32_t offset, TimeMasterT current_time) 
       uint8_t value = 0;
       if (status.vblank) value = static_cast<uint8_t>(value | kHvbJoyVblankMask);
       if (status.hblank) value = static_cast<uint8_t>(value | kHvbJoyHblankMask);
-      // Auto-joypad busy bit stays 0 until the joypad auto-read controller lands.
+      if (snes_->joypad->AutoReadBusy(current_time)) value = static_cast<uint8_t>(value | kHvbJoyAutoJoypadMask);
       return {value, kHvbJoyDrivenMask};
     }
 
@@ -137,26 +137,30 @@ MmioReadResult CpuMmio::ReadRegister(uint32_t offset, TimeMasterT current_time) 
       // Manual serial port for P1. Only bit 0 carries pad data; leave bits 7-1
       // as open-bus rather than fabricating zeros — real hardware exposes a few
       // open I/O pins in that window.
+      snes_->joypad->CatchUpTo(current_time);
       return {snes_->joypad->ReadJoySer0(), 0x01U};
 
     case kJoySer1Offset:
       // P2 manual serial port; bits 7-1 stay open-bus.
+      snes_->joypad->CatchUpTo(current_time);
       return {snes_->joypad->ReadJoySer1(), 0x01U};
 
     case kAutoJoyResultFirst: {
+      snes_->joypad->CatchUpTo(current_time);
       // $4218 JOY1L — A, X, L, R in bits 7..4, controller-type ID in bits 3..0.
       const uint8_t value = snes_->joypad->ReadJoy1L();
       return {value, 0xFFU};
     }
 
     case kAutoJoyResultFirst + 1U: {
+      snes_->joypad->CatchUpTo(current_time);
       // $4219 JOY1H — B, Y, Select, Start, Up, Down, Left, Right.
       const uint8_t value = snes_->joypad->ReadJoy1H();
       return {value, 0xFFU};
     }
 
-    case kAutoJoyResultFirst + 2U: return {snes_->joypad->ReadJoy2L(), 0xFFU};
-    case kAutoJoyResultFirst + 3U: return {snes_->joypad->ReadJoy2H(), 0xFFU};
+    case kAutoJoyResultFirst + 2U: snes_->joypad->CatchUpTo(current_time); return {snes_->joypad->ReadJoy2L(), 0xFFU};
+    case kAutoJoyResultFirst + 3U: snes_->joypad->CatchUpTo(current_time); return {snes_->joypad->ReadJoy2H(), 0xFFU};
 
     default:
       if (reg > kAutoJoyResultFirst + 3U && reg <= kAutoJoyResultLast) {
@@ -210,6 +214,7 @@ void CpuMmio::WriteRegister(uint32_t offset, uint8_t data, TimeMasterT current_t
     return;
   }
   if (reg == kNmiTimenOffset) {
+    snes_->joypad->CatchUpTo(current_time);
     const uint8_t prev = nmitimen_;
     nmitimen_ = data;
     // NMI-enable transitions trigger the two NMITIMEN.7 quirks (0→1
@@ -280,6 +285,7 @@ void CpuMmio::WriteRegister(uint32_t offset, uint8_t data, TimeMasterT current_t
     return;
   }
   if (reg == kJoySer0Offset) {
+    snes_->joypad->CatchUpTo(current_time);
     // $4016 write — bit 0 is the manual-serial strobe for both controller
     // ports. Bits 7-1 are programmable I/O pins on the controller connector;
     // ignored here because we don't model the I/O port.

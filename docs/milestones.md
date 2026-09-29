@@ -69,9 +69,9 @@ The emulator and debugger provide volume, mute, output-device, and latency contr
 
 ## Milestone 5: Controllers and cartridges
 
-**Partially complete.** DMA/HDMA, interrupts, FastROM, and the main cartridge formats already support running games. Player-one input works through both serial reads and automatic-read registers, although automatic polling still needs the hardware’s capture and busy timing.
+**Partially complete.** DMA/HDMA, interrupts, FastROM, and the main cartridge formats already support running games. Two standard controllers work through manual serial reads and timed automatic polling, including the capture and busy window.
 
-The next input improvement is accurate automatic polling. Multitap, mouse, and Super Scope support remain further possibilities.
+Multitap, mouse, and Super Scope support remain further possibilities.
 
 Cartridge support currently covers LoROM, HiROM, and ExHiROM, including battery-backed SRAM saves. Additional layouts and enhancement chips such as SA-1, SuperFX, and DSP-n will open up more of the SNES library. Each chip family is a substantial project with its own compatibility targets.
 

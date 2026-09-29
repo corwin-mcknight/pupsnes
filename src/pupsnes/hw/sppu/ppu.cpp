@@ -10,6 +10,7 @@
 #include "pupsnes/core/snes.h"
 #include "pupsnes/hw/5a22/cpu_mmio.h"
 #include "pupsnes/hw/apu/apu.h"
+#include "pupsnes/hw/input/joypad.h"
 #include "pupsnes/memory/systembus.h"
 #include "pupsnes/memory/wram.h"
 
@@ -334,6 +335,7 @@ bool Ppu::PeekNmiLine() const {
 }
 
 void Ppu::OnVblankNmiBoundarySignal(TimeMasterT master_time) {
+  snes_->joypad->OnVblankStart(master_time);
   // One frame period between consecutive /NMI falling edges. Frame length is
   // kLinesPerFrameNtsc × kNormalLineCycles master cycles, minus 4 when the
   // short line at V=240 with field_==true lies within that frame. At boundary

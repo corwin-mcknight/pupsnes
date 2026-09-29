@@ -11,11 +11,9 @@ namespace pupsnes {
 // Holds the 16-bit auto-joypad words for P1 and P2 and implements both access
 // paths a game might use:
 //
-//   * Auto-joypad read ($4218-$421B for JOY1 and JOY2). Currently this
-//     returns the current button state on demand — no $4200.0 gate, no
-//     VBlank-edge latching, no 4224-mcyc busy window. Good enough for a debug
-//     controller window where the user holds buttons for whole frames at a
-//     time.
+//   * Auto-joypad read ($4218-$421B for JOY1 and JOY2). VBlank schedules a
+//     4224-master-cycle serial poll, gated by $4200.0. Results accumulate as
+//     bits arrive and remain latched until the next enabled poll.
 //   * Manual serial read ($4016 strobe + shift). Standard sequence: write 1
 //     then 0 to $4016 to latch both pads, then read $4016 or $4017 sixteen
 //     times to clock out that port's bits MSB-first (B first). Reads past the
@@ -54,6 +52,12 @@ class Joypad : public Device {
   // user-driven button state survives — the UI owns it and the user is the
   // source of truth, not the machine.
   void Reset();
+  void CatchUpTo(TimeMasterT target) override;
+
+  // Called by the PPU's VBlank scheduler fence, including frames with auto
+  // polling disabled, to retain the free-running 256-cycle start phase.
+  void OnVblankStart(TimeMasterT boundary);
+  [[nodiscard]] bool AutoReadBusy(TimeMasterT current_time);
 
   // Port is 0 for P1 or 1 for P2. Defaults preserve existing P1 callers.
   void SetButton(Button button, bool pressed, unsigned port = 0);
@@ -73,16 +77,24 @@ class Joypad : public Device {
   [[nodiscard]] uint8_t ReadJoySer1();
   void WriteJoySer0(uint8_t data);  // strobe write — only bit 0 matters
 
-  [[nodiscard]] uint8_t ReadJoy1L() const { return static_cast<uint8_t>(states_[0] & 0xFFU); }
-  [[nodiscard]] uint8_t ReadJoy1H() const { return static_cast<uint8_t>(states_[0] >> 8U); }
-  [[nodiscard]] uint8_t ReadJoy2L() const { return static_cast<uint8_t>(states_[1] & 0xFFU); }
-  [[nodiscard]] uint8_t ReadJoy2H() const { return static_cast<uint8_t>(states_[1] >> 8U); }
+  [[nodiscard]] uint8_t ReadJoy1L() const { return static_cast<uint8_t>(auto_results_[0] & 0xFFU); }
+  [[nodiscard]] uint8_t ReadJoy1H() const { return static_cast<uint8_t>(auto_results_[0] >> 8U); }
+  [[nodiscard]] uint8_t ReadJoy2L() const { return static_cast<uint8_t>(auto_results_[1] & 0xFFU); }
+  [[nodiscard]] uint8_t ReadJoy2H() const { return static_cast<uint8_t>(auto_results_[1] >> 8U); }
 
  private:
   uint16_t states_[2]{};  // current button bitmasks (auto-joypad layout)
+  uint16_t auto_results_[2]{};
   uint16_t shift_registers_[2]{};
   uint8_t shift_counts_[2]{};
   bool strobe_high_ = false;  // last bit-0 written to $4016
+  bool auto_sequence_active_ = false;
+  bool auto_start_seen_ = false;
+  TimeMasterT last_auto_start_ = 0;
+  TimeMasterT next_auto_edge_ = 0;
+  uint8_t auto_edge_ = 0;
+  uint8_t sampled_bits_[2]{};
+  void StartAutoRead(TimeMasterT start);
   [[nodiscard]] uint8_t ReadSerial(unsigned port);
 };
 
