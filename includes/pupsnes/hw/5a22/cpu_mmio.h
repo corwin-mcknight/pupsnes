@@ -26,7 +26,7 @@ class CpuMmio : public Device {
   //        CPU::OnNmiTimenChanged — see CpuMmio::WriteRegister).
   // bits 5:4: H/V-IRQ trigger mode — 00 disabled, 01 H-only, 10 V-only,
   //           11 both. Mode 00 clears the TIMEUP latch and de-asserts /IRQ.
-  // bit 0: auto-joypad read enable (deferred).
+  // bit 0: auto-joypad read enable.
   static constexpr uint32_t kNmiTimenOffset = 0x4200U;
   static constexpr uint8_t kNmiTimenNmiEnableMask = 0x80U;
   static constexpr uint8_t kNmiTimenVIrqEnableMask = 0x20U;
@@ -76,7 +76,7 @@ class CpuMmio : public Device {
   static constexpr uint8_t kRdNmiDrivenMask = kRdNmiVblankFlagMask | kRdNmiVersionMask;
 
   // HVBJOY ($4212): bit 7 = V-Blank flag, bit 6 = H-Blank flag, bit 0 = auto-
-  // joypad busy. Bit-0 stays 0 until auto-joypad read is modeled. Computed
+  // joypad busy. Computed
   // on demand from PPU dot/scanline state via Ppu::QueryHvbStatus so polling
   // loops see state current to the read's master cycle.
   static constexpr uint32_t kHvbJoyOffset = 0x4212U;
@@ -85,9 +85,8 @@ class CpuMmio : public Device {
   static constexpr uint8_t kHvbJoyAutoJoypadMask = 0x01U;
   static constexpr uint8_t kHvbJoyDrivenMask = kHvbJoyVblankMask | kHvbJoyHblankMask | kHvbJoyAutoJoypadMask;
 
-  // JOYSER0/JOYSER1 ($4016/$4017) — serial joypad ports. Joypad provides P1
-  // serial data and the JOY1 result bytes; absent P2-P4 controllers read zero.
-  // The timed auto-read sequence and HVBJOY busy interval remain unmodeled.
+  // JOYSER0/JOYSER1 ($4016/$4017) — serial joypad ports. Joypad provides P1/P2
+  // serial data and the JOY1/JOY2 result bytes; absent P3/P4 read zero.
   static constexpr uint32_t kJoySer0Offset = 0x4016U;
   static constexpr uint32_t kJoySer1Offset = 0x4017U;
   static constexpr uint32_t kAutoJoyResultFirst = 0x4218U;

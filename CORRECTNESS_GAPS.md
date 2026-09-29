@@ -1,11 +1,5 @@
 # Correctness gaps
 
-## Automatic controller polling
-
-**The automatic-read path is a stub.** The result registers return the current button state directly. They do not honor the automatic-polling enable bit, capture a timed snapshot, perform the polling sequence, or expose its busy period. This can appear correct when someone holds a button for several frames while still exposing behavior that differs from the console.
-
-Implement the polling state machine, including enable transitions, capture and shift timing, result-register updates, busy status, and interaction with manual controller reads. Tests should change input around polling boundaries and observe the registers during the sequence, rather than checking only a completed button word.
-
 ## PPU memory access and sampling phases
 
 **The PPU lacks hardware-specific access and fetch phases.** VRAM writes currently update memory regardless of whether rendering is active. OAM and CGRAM accesses likewise use simplified port behavior. The renderer consumes state through dot-based replay without separately modeling the hardware's memory fetch and register-latching phases.
@@ -38,9 +32,11 @@ Establish bus ownership, pending transfers, legal interruption points, alignment
 
 **Graphics and region support are incomplete.** Background Modes 0–4 and 7 have rendering paths; Modes 5 and 6 currently resolve to backdrop color. High-resolution and interlaced output are absent. The PPU uses NTSC frame timing even though cartridge detection records a PAL region, and `$213F` reports NTSC. Add the missing modes and output formats, then select region-specific timing from the loaded cartridge.
 
-**Cartridge and controller support is limited.** Only plain LoROM, HiROM, and ExHiROM builders are registered; detected enhancement chips are rejected. ExHiROM currently uses HiROM SRAM placement despite a documented board variant requiring another mapping. When a ROM header has no usable map-mode byte or checksum, detection assumes LoROM, which can misclassify ambiguous images. The manual serial interface supports only Player 1; Player 2 and other controller peripherals are absent. Extend these as general device and board implementations, and test ambiguous headers explicitly.
+**Cartridge and controller support is limited.** Only plain LoROM, HiROM, and ExHiROM builders are registered; detected enhancement chips are rejected. ExHiROM currently uses HiROM SRAM placement despite a documented board variant requiring another mapping. When a ROM header has no usable map-mode byte or checksum, detection assumes LoROM, which can misclassify ambiguous images. The two standard controller ports are supported; other peripherals are absent. Extend these as general device and board implementations, and test ambiguous headers explicitly.
 
 ## Recently resolved
+
+**Timed automatic controller polling — September 28, 2026.** When enabled through `$4200.0`, polling begins on a 256-master-cycle phase shortly after VBlank entry. It latches both standard controllers, clocks 16 serial bits over 4,224 master cycles, exposes the busy interval in `$4212.0`, and retains the completed `$4218–$421B` words until another enabled poll. Manual reads use the same serial position; disabling mid-poll stops further shifts. Focused tests inspect start/end boundaries, partial results, input changes after latching, enable transitions, and manual-read interference. The phase and edge model follow [measured SNES timing](https://wiki.superfamicom.org/timing) and the [bsnes poll state machine](https://github.com/bsnes-emu/bsnes/blob/master/bsnes/sfc/cpu/timing.cpp); these tests are emulator behavior checks, not a new hardware measurement.
 
 **Sprite selection, fetch limits, and STAT77 — September 27, 2026.** Rotated OAM selection, the 32-sprite limit, reverse-order fetching with a separate 34-tile budget, off-screen clipping and X=-256 handling are implemented. Selection and two-word graphics fetches now run on the preceding line's dot timeline. Sampled tile rows remain latched; palette, screen/window enables and color math remain live. STAT77 raises overflow during preparation, preserves it through reads and VBlank, and clears it at frame start. OAM port increments affect rotation, and non-forced VBlank entry reloads the OAM address.
 

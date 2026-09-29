@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <cstdint>
 
+#include "pupsnes/core/scheduler.h"
 #include "pupsnes/core/snes.h"
 #include "pupsnes/hw/input/joypad.h"
 #include "pupsnes/memory/systembus.h"
@@ -9,15 +10,28 @@ using namespace pupsnes;  // NOLINT(google-build-using-namespace)
 
 namespace {
 
-uint8_t BusRead(SNES& snes, uint32_t addr) {
+uint8_t BusRead(SNES& snes, uint32_t addr, TimeMasterT now = 0) {
   BusPlan plan = snes.system_bus->Plan(addr, BusAccessType::kRead);
-  return snes.system_bus->Follow(plan, /*current_time=*/0, 0).data;
+  return snes.system_bus->Follow(plan, now, 0).data;
 }
 
-void BusWrite(SNES& snes, uint32_t addr, uint8_t data) {
+void BusWrite(SNES& snes, uint32_t addr, uint8_t data, TimeMasterT now = 0) {
   BusPlan plan = snes.system_bus->Plan(addr, BusAccessType::kWrite, data);
-  (void)snes.system_bus->Follow(plan, /*current_time=*/0, 0);
+  (void)snes.system_bus->Follow(plan, now, 0);
 }
+
+void RunToTime(SNES& snes, TimeMasterT target) {
+  while (snes.GetScheduler().NextEventMasterTime() <= target) {
+    const TimeMasterT next = snes.GetScheduler().NextEventMasterTime();
+    snes.MachineSync(next);
+    snes.GetScheduler().FireEventsThrough(next);
+  }
+  snes.MachineSync(target);
+}
+
+constexpr TimeMasterT kVblankStart = 225U * 1364U;
+constexpr TimeMasterT kFirstPollStart = kVblankStart + 298U;
+constexpr TimeMasterT kFirstPollEnd = kFirstPollStart + 4224U;
 
 }  // namespace
 
@@ -45,7 +59,7 @@ TEST_CASE("Joypad::SetButton sets the matching bit in the 16-bit state", "[unit]
   REQUIRE(pad.GetP1State() == 0x0000U);
 }
 
-TEST_CASE("$4218/$4219 read the current P1 button bitmask", "[unit][joypad]") {
+TEST_CASE("$4218/$4219 latch P1 at the end of auto polling", "[unit][joypad]") {
   SNES snes;
   snes.Reset();
   Joypad& pad = snes.GetJoypad();
@@ -55,12 +69,15 @@ TEST_CASE("$4218/$4219 read the current P1 button bitmask", "[unit][joypad]") {
   pad.SetButton(Joypad::Button::kUp, true);
   pad.SetButton(Joypad::Button::kA, true);
 
-  REQUIRE(BusRead(snes, 0x00'4218U) == 0x80U);  // low byte: bit 7 (A)
-  REQUIRE(BusRead(snes, 0x00'4219U) == 0x88U);  // high byte: bits 15 (B), 11 (Up)
+  REQUIRE(BusRead(snes, 0x00'4218U) == 0x00U);
+  BusWrite(snes, 0x00'4200U, 0x01U);
+  RunToTime(snes, kFirstPollEnd);
+  REQUIRE(BusRead(snes, 0x00'4218U, kFirstPollEnd) == 0x80U);  // low byte: bit 7 (A)
+  REQUIRE(BusRead(snes, 0x00'4219U, kFirstPollEnd) == 0x88U);  // high byte: bits 15 (B), 11 (Up)
 
   // Other JOY result registers stay zero when no other buttons are held.
   for (uint32_t addr = 0x421AU; addr <= 0x421FU; ++addr) {
-    REQUIRE(BusRead(snes, addr) == 0x00U);
+    REQUIRE(BusRead(snes, addr, kFirstPollEnd) == 0x00U);
   }
 }
 
@@ -73,27 +90,106 @@ TEST_CASE("P2 auto-read and manual serial state are independent of P1", "[unit][
   pad.SetButton(Joypad::Button::kA, true, 1);
   REQUIRE(pad.GetP1State() == 0x8000U);
   REQUIRE(pad.GetP2State() == 0x4080U);
-  REQUIRE(BusRead(snes, 0x00'4218U) == 0x00U);
-  REQUIRE(BusRead(snes, 0x00'4219U) == 0x80U);
-  REQUIRE(BusRead(snes, 0x00'421AU) == 0x80U);
-  REQUIRE(BusRead(snes, 0x00'421BU) == 0x40U);
+  BusWrite(snes, 0x00'4200U, 0x01U);
+  RunToTime(snes, kFirstPollEnd);
+  REQUIRE(BusRead(snes, 0x00'4218U, kFirstPollEnd) == 0x00U);
+  REQUIRE(BusRead(snes, 0x00'4219U, kFirstPollEnd) == 0x80U);
+  REQUIRE(BusRead(snes, 0x00'421AU, kFirstPollEnd) == 0x80U);
+  REQUIRE(BusRead(snes, 0x00'421BU, kFirstPollEnd) == 0x40U);
 
-  BusWrite(snes, 0x00'4016U, 1);
-  BusWrite(snes, 0x00'4016U, 0);
-  REQUIRE((BusRead(snes, 0x00'4016U) & 1U) == 1U);
-  REQUIRE((BusRead(snes, 0x00'4017U) & 1U) == 0U);
-  REQUIRE((BusRead(snes, 0x00'4017U) & 1U) == 1U);
+  BusWrite(snes, 0x00'4016U, 1, kFirstPollEnd);
+  BusWrite(snes, 0x00'4016U, 0, kFirstPollEnd);
+  REQUIRE((BusRead(snes, 0x00'4016U, kFirstPollEnd) & 1U) == 1U);
+  REQUIRE((BusRead(snes, 0x00'4017U, kFirstPollEnd) & 1U) == 0U);
+  REQUIRE((BusRead(snes, 0x00'4017U, kFirstPollEnd) & 1U) == 1U);
   pad.SetButton(Joypad::Button::kB, true, 1);
-  REQUIRE((BusRead(snes, 0x00'4017U) & 1U) == 0U);
-  BusWrite(snes, 0x00'4016U, 1);
-  REQUIRE((BusRead(snes, 0x00'4017U) & 1U) == 1U);
-  BusWrite(snes, 0x00'4016U, 0);
-  for (int i = 0; i < 16; ++i) (void)BusRead(snes, 0x00'4017U);
-  REQUIRE((BusRead(snes, 0x00'4017U) & 1U) == 1U);
+  REQUIRE((BusRead(snes, 0x00'4017U, kFirstPollEnd) & 1U) == 0U);
+  BusWrite(snes, 0x00'4016U, 1, kFirstPollEnd);
+  REQUIRE((BusRead(snes, 0x00'4017U, kFirstPollEnd) & 1U) == 1U);
+  BusWrite(snes, 0x00'4016U, 0, kFirstPollEnd);
+  for (int i = 0; i < 16; ++i) (void)BusRead(snes, 0x00'4017U, kFirstPollEnd);
+  REQUIRE((BusRead(snes, 0x00'4017U, kFirstPollEnd) & 1U) == 1U);
 
   pad.ReleaseAll(1);
   REQUIRE(pad.GetP2State() == 0);
   REQUIRE(pad.GetP1State() == 0x8000U);
+}
+
+TEST_CASE("Automatic poll exposes a delayed busy window and incremental results", "[unit][joypad]") {
+  SNES snes;
+  snes.Reset();
+  auto& pad = snes.GetJoypad();
+  pad.SetButton(Joypad::Button::kB, true);
+  pad.SetButton(Joypad::Button::kA, true);
+  pad.SetButton(Joypad::Button::kY, true, 1);
+  BusWrite(snes, 0x4200U, 1U);
+
+  RunToTime(snes, kFirstPollStart - 1U);
+  REQUIRE((BusRead(snes, 0x4212U, kFirstPollStart - 1U) & 1U) == 0U);
+  REQUIRE(BusRead(snes, 0x4219U, kFirstPollStart - 1U) == 0U);
+
+  RunToTime(snes, kFirstPollStart);
+  REQUIRE((BusRead(snes, 0x4212U, kFirstPollStart) & 1U) == 1U);
+  REQUIRE(BusRead(snes, 0x4219U, kFirstPollStart) == 0U);
+
+  RunToTime(snes, kFirstPollStart + 383U);
+  REQUIRE(BusRead(snes, 0x4219U, kFirstPollStart + 383U) == 0U);
+  RunToTime(snes, kFirstPollStart + 384U);
+  REQUIRE(BusRead(snes, 0x4218U, kFirstPollStart + 384U) == 1U);
+  REQUIRE(BusRead(snes, 0x421AU, kFirstPollStart + 384U) == 0U);
+
+  pad.SetButton(Joypad::Button::kB, false);
+  pad.SetButton(Joypad::Button::kRight, true, 1);
+  RunToTime(snes, kFirstPollEnd - 1U);
+  REQUIRE((BusRead(snes, 0x4212U, kFirstPollEnd - 1U) & 1U) == 1U);
+  RunToTime(snes, kFirstPollEnd);
+  REQUIRE((BusRead(snes, 0x4212U, kFirstPollEnd) & 1U) == 0U);
+  REQUIRE(BusRead(snes, 0x4218U, kFirstPollEnd) == 0x80U);
+  REQUIRE(BusRead(snes, 0x4219U, kFirstPollEnd) == 0x80U);
+  REQUIRE(BusRead(snes, 0x421AU, kFirstPollEnd) == 0U);
+  REQUIRE(BusRead(snes, 0x421BU, kFirstPollEnd) == 0x40U);
+}
+
+TEST_CASE("Automatic polling obeys enable transitions and holds completed results", "[unit][joypad]") {
+  SNES snes;
+  snes.Reset();
+  auto& pad = snes.GetJoypad();
+  pad.SetButton(Joypad::Button::kB, true);
+  RunToTime(snes, kFirstPollEnd);
+  REQUIRE(BusRead(snes, 0x4219U, kFirstPollEnd) == 0U);
+
+  // Enabling after this frame's start does not retroactively start a read.
+  BusWrite(snes, 0x4200U, 1U, kFirstPollEnd);
+  const TimeMasterT next_vblank = kVblankStart + 262U * 1364U;
+  RunToTime(snes, next_vblank + 130U);
+  REQUIRE((BusRead(snes, 0x4212U, next_vblank + 130U) & 1U) == 0U);
+  RunToTime(snes, next_vblank + 306U + 4224U);
+  REQUIRE(BusRead(snes, 0x4219U, next_vblank + 306U + 4224U) == 0x80U);
+
+  pad.SetButton(Joypad::Button::kB, false);
+  BusWrite(snes, 0x4200U, 0U, next_vblank + 306U + 4224U);
+  RunToTime(snes, next_vblank + 262U * 1364U + 4224U);
+  REQUIRE(BusRead(snes, 0x4219U, next_vblank + 262U * 1364U + 4224U) == 0x80U);
+}
+
+TEST_CASE("Manual reads during automatic polling share the serial shift position", "[unit][joypad]") {
+  SNES snes;
+  snes.Reset();
+  auto& pad = snes.GetJoypad();
+  pad.SetButton(Joypad::Button::kB, true);
+  pad.SetButton(Joypad::Button::kY, true);
+  BusWrite(snes, 0x4200U, 1U);
+  RunToTime(snes, kFirstPollStart + 384U);
+  REQUIRE(BusRead(snes, 0x4218U, kFirstPollStart + 384U) == 1U);
+  REQUIRE((BusRead(snes, 0x4016U, kFirstPollStart + 390U) & 1U) == 1U);
+  RunToTime(snes, kFirstPollStart + 640U);
+  REQUIRE(BusRead(snes, 0x4218U, kFirstPollStart + 640U) == 2U);
+
+  BusWrite(snes, 0x4200U, 0U, kFirstPollStart + 640U);
+  REQUIRE((BusRead(snes, 0x4212U, kFirstPollStart + 640U) & 1U) == 0U);
+  RunToTime(snes, kFirstPollStart + 768U);
+  REQUIRE((BusRead(snes, 0x4212U, kFirstPollStart + 768U) & 1U) == 0U);
+  REQUIRE(BusRead(snes, 0x4218U, kFirstPollStart + 768U) == 2U);
 }
 
 TEST_CASE("$4016 manual serial: strobe + 16 reads clock out P1 state MSB-first", "[unit][joypad]") {

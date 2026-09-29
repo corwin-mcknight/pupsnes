@@ -13,6 +13,7 @@ enum class SignalKind : uint16_t {
   kFrameEnd = 0,           // PPU frame wrap; swap buffers, fire frame callback
   kVblankNmiBoundary = 1,  // start of vblank; checks NMI enable and raises CPU NMI
   kHIrqMatch = 2,          // H/V timer match; checks IRQ enable and raises CPU IRQ
+  kAutoJoypadStart = 3,    // first VBlank line; starts the timed controller poll
 
   kApuSampleDeadline = 16,  // Reserved; audio advances inside APU catch-up.
   kDmaBurstComplete = 32,   // Reserved; not fired in v1.
