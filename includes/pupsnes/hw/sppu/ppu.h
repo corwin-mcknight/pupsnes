@@ -562,6 +562,10 @@ class Ppu : public Device {
   bool opvct_read_high_ = false;
   bool hv_latch_flag_ = false;
 
+  // Last byte read from $2134-$2136, $2138-$213A, or $213E.
+  // STAT77's floating bit 4 belongs to this domain, not the CPU bus latch.
+  uint8_t ppu1_read_latch_ = 0;
+
   // Mode 7 matrix/multiplier state. All parameters share the M7_old byte latch
   // for their write-twice protocol. Centers and scroll use only signed low
   // 13 bits; the matrix uses signed 16-bit 8.8 values. The product retains its

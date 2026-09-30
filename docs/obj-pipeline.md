@@ -39,7 +39,7 @@ The remaining work is tracked in these focused follow-ups:
 | --- | --- |
 | Active-display OAM address redirection | [#13](https://github.com/corwin-mcknight/pupsnes/issues/13), under the memory-port investigation in #9 |
 | VRAM port access restrictions | [#14](https://github.com/corwin-mcknight/pupsnes/issues/14), under #9 |
-| Separate PPU1 and PPU2 open-bus domains | [#15](https://github.com/corwin-mcknight/pupsnes/issues/15) |
+| Complete PPU open-bus domains: STAT77 bit 4 uses a PPU1 read latch; write-only PPU1 readback and PPU2 remain | [#15](https://github.com/corwin-mcknight/pupsnes/issues/15) |
 | Odd-address OAM priority rotation | [#16](https://github.com/corwin-mcknight/pupsnes/issues/16) |
 | Interlaced OBJ selection and fetching | [#17](https://github.com/corwin-mcknight/pupsnes/issues/17), coordinated with interlaced presentation in #6 |
 | Sub-dot forced-blank collisions and hardware validation of phase edges | [#18](https://github.com/corwin-mcknight/pupsnes/issues/18) |

@@ -93,6 +93,8 @@ void Ppu::MapSystemBus(SystemBus& bus) {
 
 void Ppu::Reset() {
   shadow_.fill(0);
+  // Deterministic emulator reset value; hardware power-on charge is unspecified.
+  ppu1_read_latch_ = 0;
   // INIDISP power-on: forced blank set, brightness 0. ROMs disable forced
   // blank and ramp brightness in their init code.
   forced_blank_ = true;
@@ -401,10 +403,14 @@ MmioReadResult Ppu::ReadRegister(uint32_t offset, TimeMasterT current_time) {
     return {0x00U, 0x00U};
   }
 
+  const auto read_ppu1 = [this](uint8_t value) -> MmioReadResult {
+    ppu1_read_latch_ = value;
+    return {value, 0xFFU};
+  };
   switch (reg) {
-    case sppu::regs::kMpyL: return {static_cast<uint8_t>(m7_product_ & 0xFFU), 0xFFU};
-    case sppu::regs::kMpyM: return {static_cast<uint8_t>((m7_product_ >> 8U) & 0xFFU), 0xFFU};
-    case sppu::regs::kMpyH: return {static_cast<uint8_t>((m7_product_ >> 16U) & 0xFFU), 0xFFU};
+    case sppu::regs::kMpyL: return read_ppu1(static_cast<uint8_t>(m7_product_ & 0xFFU));
+    case sppu::regs::kMpyM: return read_ppu1(static_cast<uint8_t>((m7_product_ >> 8U) & 0xFFU));
+    case sppu::regs::kMpyH: return read_ppu1(static_cast<uint8_t>((m7_product_ >> 16U) & 0xFFU));
     case sppu::regs::kSlhv: {
       // Dummy-read latches the current H/V counters into OPHCT/OPVCT and
       // sets the latch flag (STAT78.bit6). Per fullsnes the gating condition
@@ -417,17 +423,17 @@ MmioReadResult Ppu::ReadRegister(uint32_t offset, TimeMasterT current_time) {
     case sppu::regs::kRdOam: {
       const uint8_t value = ReadOamByte(oam_byte_addr_);
       oam_byte_addr_ = static_cast<uint16_t>((oam_byte_addr_ + 1U) & 0x3FFU);
-      return {value, 0xFFU};
+      return read_ppu1(value);
     }
     case sppu::regs::kRdVramL: {
       const uint8_t value = static_cast<uint8_t>(vram_prefetch_ & 0xFFU);
       MaybeAdvanceVramReadOnPort(/*is_high_port=*/false);
-      return {value, 0xFFU};
+      return read_ppu1(value);
     }
     case sppu::regs::kRdVramH: {
       const uint8_t value = static_cast<uint8_t>((vram_prefetch_ >> 8) & 0xFFU);
       MaybeAdvanceVramReadOnPort(/*is_high_port=*/true);
-      return {value, 0xFFU};
+      return read_ppu1(value);
     }
     case sppu::regs::kRdCgram: {
       const uint16_t word = (*cgram_)[cgadd_];
@@ -446,12 +452,13 @@ MmioReadResult Ppu::ReadRegister(uint32_t offset, TimeMasterT current_time) {
     case sppu::regs::kOpvct: return ReadOpct(opvct_, opvct_read_high_);
     case sppu::regs::kStat77: {
       SyncObjPipeline(h_);
-      // Reading does not clear overflow. Bit 4 floats; bit 5 is master/slave (0).
+      // Reading does not clear overflow. Bit 4 retains PPU1 open bus, not CPU
+      // open bus; bit 5 is master/slave (0). See Anomie's register document:
+      // https://raw.githubusercontent.com/gilligan/snesdev/master/docs/snes_registers.txt
       const uint8_t value = static_cast<uint8_t>(0x01U | (obj_range_over_ ? sppu::regs::kStat77RangeOverMask : 0U) |
                                                  (obj_time_over_ ? sppu::regs::kStat77TimeOverMask : 0U));
-      const uint8_t driven = sppu::regs::kStat77VersionMask | sppu::regs::kStat77MasterSlaveMask |
-                             sppu::regs::kStat77RangeOverMask | sppu::regs::kStat77TimeOverMask;
-      return {value, driven};
+      return read_ppu1(
+          static_cast<uint8_t>(static_cast<uint32_t>(value) | (static_cast<uint32_t>(ppu1_read_latch_) & 0x10U)));
     }
     case sppu::regs::kStat78: {
       // Bits 3:0 = PPU2 version (3 on real HW; use 3), bit 4 = NTSC/PAL

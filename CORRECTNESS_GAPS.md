@@ -24,7 +24,7 @@ Establish bus ownership, pending transfers, legal interruption points, alignment
 
 ## Other observable state and hardware scope
 
-**PPU open bus uses the wrong level of shared state.** Floating bits are merged from the CPU's data-bus latch instead of separate PPU1 and PPU2 latch domains. Model the relevant latch ownership and updates so cross-register read sequences produce the appropriate values.
+**PPU open bus remains partially implemented ([#15](https://github.com/corwin-mcknight/pupsnes/issues/15)).** STAT77 bit 4 now comes from a PPU1 read latch updated by reads of `$2134–$2136`, `$2138–$213A`, and `$213E`, following [Anomie's register documentation](https://raw.githubusercontent.com/gilligan/snesdev/master/docs/snes_registers.txt). CPU bus activity, PPU writes, and PPU2 reads do not replace this latch. Emulator reset initializes it to zero for determinism; this is not a measured hardware power-on value. PPU1 write-only register readback and separate PPU2 latch behavior remain unimplemented; other floating bits still use the CPU latch. Those remaining register sequences and latch ownership rules stay in #15.
 
 **Reset policies are conflated.** Current reset paths use cold-start initialization, including deterministic memory/register seeds in several devices. Separate power-on, reset-button, and deterministic test initialization policies, preserving state where the selected hardware reset requires it.
 
