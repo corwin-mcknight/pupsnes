@@ -310,17 +310,71 @@ TEST_CASE("OAM high-table even writes set the shared word buffer", "[unit][ppu][
   }
 }
 
-TEST_CASE("STAT77 drives version and cleared overflow flags while bit 4 floats", "[unit][ppu]") {
+TEST_CASE("STAT77 bit 4 retains the last PPU1 read independently of CPU bus activity", "[unit][ppu]") {
+  for (uint16_t source : std::array<uint16_t, 6>{sppu::regs::kMpyL, sppu::regs::kMpyM, sppu::regs::kMpyH,
+                                                 sppu::regs::kRdOam, sppu::regs::kRdVramL, sppu::regs::kRdVramH}) {
+    for (bool set : {false, true}) {
+      CAPTURE(source, set);
+      SNES snes;
+      TimeMasterT now = 0;
+      const uint8_t seed = set ? 0x10U : 0x00U;
+      // $1234 * -2 = $FFDB98: bit 4 is set in all three product bytes.
+      BusWrite(snes, sppu::regs::kM7A, 0x34, now++);
+      BusWrite(snes, sppu::regs::kM7A, 0x12, now++);
+      BusWrite(snes, sppu::regs::kM7B, set ? 0xFEU : 0x00U, now++);
+      BusWrite(snes, sppu::regs::kOamData, seed, now++);
+      BusWrite(snes, sppu::regs::kOamData, seed, now++);
+      BusWrite(snes, sppu::regs::kOamAddL, 0, now++);
+      BusWrite(snes, sppu::regs::kVmain, 0x80, now++);
+      BusWrite(snes, sppu::regs::kVmDataL, seed, now++);
+      BusWrite(snes, sppu::regs::kVmDataH, seed, now++);
+      BusWrite(snes, sppu::regs::kVmAddL, 0, now++);
+      BusWrite(snes, sppu::regs::kVmAddH, 0, now++);
+      REQUIRE((BusRead(snes, source, now++).data & 0x10U) == seed);
+
+      // PPU writes and PPU2 reads must not replace the PPU1 read latch.
+      BusWrite(snes, sppu::regs::kInidisp, set ? 0x80U : 0x90U, now++);
+      (void)BusRead(snes, sppu::regs::kStat78, now++);
+      BusWrite(snes, 0x7E0000, set ? 0x00U : 0xFFU, now++);
+      REQUIRE(BusRead(snes, sppu::regs::kStat77, now++).data == (set ? 0x11U : 0x01U));
+      BusWrite(snes, 0x7E0000, set ? 0x00U : 0xFFU, now++);
+      REQUIRE(BusRead(snes, sppu::regs::kStat77, now++).data == (set ? 0x11U : 0x01U));
+    }
+  }
+}
+
+TEST_CASE("STAT77 bit 4 is cleared by a subsequent read from a different PPU1 source", "[unit][ppu]") {
+  SNES snes;
+  TimeMasterT now = 0;
+  BusWrite(snes, sppu::regs::kM7A, 0x10, now++);
+  BusWrite(snes, sppu::regs::kM7A, 0x00, now++);
+  BusWrite(snes, sppu::regs::kM7B, 0x01, now++);
+  BusWrite(snes, sppu::regs::kOamData, 0x00, now++);
+  BusWrite(snes, sppu::regs::kOamData, 0x00, now++);
+  BusWrite(snes, sppu::regs::kOamAddL, 0, now++);
+
+  REQUIRE(BusRead(snes, sppu::regs::kMpyL, now++).data == 0x10U);
+  REQUIRE(BusRead(snes, sppu::regs::kStat77, now++).data == 0x11U);
+  REQUIRE(BusRead(snes, sppu::regs::kRdOam, now++).data == 0x00U);
+  // Keep CPU open-bus bit 4 high so only the replacement PPU1 latch can clear it.
+  BusWrite(snes, 0x7E0000, 0x10, now++);
+  REQUIRE(BusRead(snes, sppu::regs::kStat77, now++).data == 0x01U);
+}
+
+TEST_CASE("STAT77 reset does not inherit a previously seeded PPU1 latch", "[unit][ppu]") {
   SNES snes;
   Ppu& ppu = snes.GetPpu();
   ppu.Reset();
 
-  // Prime the latch with 0xF0 so we can tell driven vs floating bits apart.
-  BusWrite(snes, 0x7E0000, 0xF0, /*now=*/0);
-  BusFollowResult stat = BusRead(snes, sppu::regs::kStat77, /*now=*/1);
-  // Version 1, master/slave and overflow zero; only bit 4 comes from the latch.
-  REQUIRE(stat.data == 0x11);
-  (void)ppu;
+  TimeMasterT now = 0;
+  BusWrite(snes, sppu::regs::kM7A, 0x10, now++);
+  BusWrite(snes, sppu::regs::kM7A, 0x00, now++);
+  BusWrite(snes, sppu::regs::kM7B, 0x01, now++);
+  REQUIRE(BusRead(snes, sppu::regs::kMpyL, now++).data == 0x10U);
+  ppu.Reset();
+  // Reset uses a deterministic zero latch; this is not a hardware power-on claim.
+  BusWrite(snes, 0x7E0000, 0xF0, now++);
+  REQUIRE(BusRead(snes, sppu::regs::kStat77, now++).data == 0x01U);
 }
 
 TEST_CASE("STAT78 surfaces version, PAL=0, field toggle, and open-bus bits", "[unit][ppu]") {
