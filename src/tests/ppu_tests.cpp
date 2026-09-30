@@ -343,6 +343,24 @@ TEST_CASE("STAT77 bit 4 retains the last PPU1 read independently of CPU bus acti
   }
 }
 
+TEST_CASE("STAT77 bit 4 is cleared by a subsequent read from a different PPU1 source", "[unit][ppu]") {
+  SNES snes;
+  TimeMasterT now = 0;
+  BusWrite(snes, sppu::regs::kM7A, 0x10, now++);
+  BusWrite(snes, sppu::regs::kM7A, 0x00, now++);
+  BusWrite(snes, sppu::regs::kM7B, 0x01, now++);
+  BusWrite(snes, sppu::regs::kOamData, 0x00, now++);
+  BusWrite(snes, sppu::regs::kOamData, 0x00, now++);
+  BusWrite(snes, sppu::regs::kOamAddL, 0, now++);
+
+  REQUIRE(BusRead(snes, sppu::regs::kMpyL, now++).data == 0x10U);
+  REQUIRE(BusRead(snes, sppu::regs::kStat77, now++).data == 0x11U);
+  REQUIRE(BusRead(snes, sppu::regs::kRdOam, now++).data == 0x00U);
+  // Keep CPU open-bus bit 4 high so only the replacement PPU1 latch can clear it.
+  BusWrite(snes, 0x7E0000, 0x10, now++);
+  REQUIRE(BusRead(snes, sppu::regs::kStat77, now++).data == 0x01U);
+}
+
 TEST_CASE("STAT77 reset does not inherit a previously seeded PPU1 latch", "[unit][ppu]") {
   SNES snes;
   Ppu& ppu = snes.GetPpu();
